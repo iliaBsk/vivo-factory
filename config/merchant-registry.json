@@ -1,0 +1,36 @@
+{
+  "merchants": [
+    {
+      "merchant_id": "zara-es",
+      "domain": "zara.com",
+      "country": "ES",
+      "currency": "EUR",
+      "categories": ["beachwear", "sportswear", "casualwear"],
+      "adapter_type": "html",
+      "discovery_config": {
+        "listing_url": "https://www.zara.com/es/"
+      },
+      "product_extractors": {
+        "title": ".product-title",
+        "price": ".price-current",
+        "image": "img"
+      },
+      "affiliate_url_template": "https://aff.example.com/redirect?target={{url}}",
+      "disclosure_template": "Affiliate links included. Selection curated by Vivo Factory.",
+      "enabled": true
+    }
+  ],
+  "audienceOverrides": [
+    {
+      "audience_id": "bald-high-man-early-40s-barcelona",
+      "allowed_merchants": ["zara-es"],
+      "blocked_merchants": [],
+      "category_weights": {
+        "beachwear": 3,
+        "sportswear": 2
+      },
+      "price_band": "mid-range",
+      "style_bias": ["beach", "sport"]
+    }
+  ]
+}

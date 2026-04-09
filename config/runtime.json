@@ -1,0 +1,59 @@
+{
+  "server_port": 4310,
+  "compose_file": "generated/docker-compose.yml",
+  "plugin_base_url_default": "http://127.0.0.1:5400",
+  "openclaw_image": "ghcr.io/openclaw/openclaw:latest",
+  "profile_plugin_path": "/plugins/user-profile",
+  "audiences": {
+    "bald-high-man-early-40s-barcelona": {
+      "plugin_base_url": "http://127.0.0.1:5401",
+      "openclaw_admin_url": "http://127.0.0.1:7601",
+      "openclaw_chat_path": "/operator/chat",
+      "openclaw_report_path": "/operator/report",
+      "openclaw_health_path": "/healthz",
+      "telegram_bot_token": "replace-me-bald-bot-token",
+      "telegram_chat_id": "-1000000000001",
+      "telegram_report_chat_id": "-1000000000101"
+    },
+    "creative-single-woman-in-early-30s-madrid": {
+      "plugin_base_url": "http://127.0.0.1:5402",
+      "openclaw_admin_url": "http://127.0.0.1:7602",
+      "openclaw_chat_path": "/operator/chat",
+      "openclaw_report_path": "/operator/report",
+      "openclaw_health_path": "/healthz",
+      "telegram_bot_token": "replace-me-creative-bot-token",
+      "telegram_chat_id": "-1000000000002",
+      "telegram_report_chat_id": "-1000000000102"
+    },
+    "remote-working-father-30s-valencia": {
+      "plugin_base_url": "http://127.0.0.1:5403",
+      "openclaw_admin_url": "http://127.0.0.1:7603",
+      "openclaw_chat_path": "/operator/chat",
+      "openclaw_report_path": "/operator/report",
+      "openclaw_health_path": "/healthz",
+      "telegram_bot_token": "replace-me-remote-bot-token",
+      "telegram_chat_id": "-1000000000003",
+      "telegram_report_chat_id": "-1000000000103"
+    },
+    "luxury-traveler-couple-in-early-50s-marbella": {
+      "plugin_base_url": "http://127.0.0.1:5404",
+      "openclaw_admin_url": "http://127.0.0.1:7604",
+      "openclaw_chat_path": "/operator/chat",
+      "openclaw_report_path": "/operator/report",
+      "openclaw_health_path": "/healthz",
+      "telegram_bot_token": "replace-me-luxury-bot-token",
+      "telegram_chat_id": "-1000000000004",
+      "telegram_report_chat_id": "-1000000000104"
+    },
+    "young-parents-seville-with-two-children": {
+      "plugin_base_url": "http://127.0.0.1:5405",
+      "openclaw_admin_url": "http://127.0.0.1:7605",
+      "openclaw_chat_path": "/operator/chat",
+      "openclaw_report_path": "/operator/report",
+      "openclaw_health_path": "/healthz",
+      "telegram_bot_token": "replace-me-family-bot-token",
+      "telegram_chat_id": "-1000000000005",
+      "telegram_report_chat_id": "-1000000000105"
+    }
+  }
+}

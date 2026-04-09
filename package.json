@@ -1,0 +1,13 @@
+{
+  "name": "vivo-factory",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test",
+    "start": "node src/server.js",
+    "bootstrap": "node src/bootstrap.js",
+    "generate:stacks": "node src/generate-stacks.js",
+    "deploy:stacks": "node src/deploy-stacks.js"
+  }
+}

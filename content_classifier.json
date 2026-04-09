@@ -1,0 +1,20 @@
+[
+  {
+    "category": "fashion_lifestyle",
+    "subcategory": "style_trends",
+    "is_local": false,
+    "is_event": false,
+    "is_deal": false,
+    "is_time_sensitive": false,
+    "sentiment": "neutral",
+    "tags": [
+      "quiet_luxury",
+      "fashion_trends",
+      "style"
+    ],
+    "confidence": 0.85,
+    "one_liner": "Quiet luxury continues to thrive with a focus on minimalism and quality for 2025.",
+    "reasoning": "The story discusses fashion trends related to quiet luxury and style, fitting into the fashion_lifestyle category.",
+    "classified_at": "2026-03-30T11:47:30.735Z"
+  }
+]

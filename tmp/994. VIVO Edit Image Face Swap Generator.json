@@ -1,0 +1,1488 @@
+{
+  "name": "994. VIVO Edit Image Face Swap Generator",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "manual-trigger",
+      "name": "When clicking ‘Execute workflow’",
+      "type": "n8n-nodes-base.manualTrigger",
+      "position": [
+        -2784,
+        -32
+      ],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "tableId": "vivo_stories",
+        "limit": 10,
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "status",
+              "condition": "eq",
+              "keyValue": "asset_generating"
+            }
+          ]
+        }
+      },
+      "id": "get-stories",
+      "name": "GetStoriesToProcess",
+      "type": "n8n-nodes-base.supabase",
+      "position": [
+        -2496,
+        -32
+      ],
+      "typeVersion": 1,
+      "credentials": {
+        "supabaseApi": {
+          "id": "0WLaj3uAF5TRP3Ej",
+          "name": "Vivo Supabase"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "story-loop",
+      "name": "Story Loop",
+      "type": "n8n-nodes-base.splitInBatches",
+      "position": [
+        -2208,
+        -32
+      ],
+      "typeVersion": 3
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "tableId": "vivo_audiences",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "id",
+              "keyValue": "={{ $('Story Loop').item.json.audience_id }}"
+            }
+          ]
+        }
+      },
+      "id": "get-audience",
+      "name": "GetAudienceProfile",
+      "type": "n8n-nodes-base.supabase",
+      "position": [
+        -1920,
+        -32
+      ],
+      "typeVersion": 1,
+      "credentials": {
+        "supabaseApi": {
+          "id": "0WLaj3uAF5TRP3Ej",
+          "name": "Vivo Supabase"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "tableId": "vivo_storage_objects",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "id",
+              "keyValue": "={{ $('GetAudienceProfile').first().json.hero_image_asset_storage_id }}"
+            }
+          ]
+        }
+      },
+      "id": "get-hero-image-storage-object",
+      "name": "GetHeroImageStorageObject",
+      "type": "n8n-nodes-base.supabase",
+      "position": [
+        -1776,
+        128
+      ],
+      "typeVersion": 1,
+      "credentials": {
+        "supabaseApi": {
+          "id": "0WLaj3uAF5TRP3Ej",
+          "name": "Vivo Supabase"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "tableId": "vivo_story_assets",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "story_id",
+              "keyValue": "={{ $('Story Loop').item.json.id }}"
+            }
+          ]
+        }
+      },
+      "id": "get-story-assets",
+      "name": "GetStoryAssets",
+      "type": "n8n-nodes-base.supabase",
+      "position": [
+        -1632,
+        -32
+      ],
+      "typeVersion": 1,
+      "credentials": {
+        "supabaseApi": {
+          "id": "0WLaj3uAF5TRP3Ej",
+          "name": "Vivo Supabase"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const story = $('Story Loop').item.json || {};\nconst audience = $('GetAudienceProfile').first().json || {};\nlet heroStorageObject = {};\ntry {\n  heroStorageObject = $('GetHeroImageStorageObject').first().json || {};\n} catch {\n  heroStorageObject = {};\n}\nconst profileSnapshot = audience.profile_snapshot || {};\nconst assets = $input.all().map((item) => item.json || {});\n\nfunction asString(value) {\n  return typeof value === 'string' ? value.trim() : '';\n}\n\nfunction isValidHttpUrl(value) {\n  if (typeof value !== 'string') return false;\n  const s = value.trim();\n  if (!s) return false;\n  if (s.startsWith('data:')) return false;\n  if (s.startsWith('blob:')) return false;\n  return s.startsWith('http://') || s.startsWith('https://');\n}\n\nfunction getByPath(obj, path) {\n  return path.reduce((acc, key) => (acc && typeof acc === 'object' ? acc[key] : undefined), obj);\n}\n\nfunction buildStoragePublicUrl(storageObject) {\n  const bucketName = asString(storageObject.bucket_name);\n  const objectPath = asString(storageObject.object_path);\n\n  if (!bucketName || !objectPath) return '';\n\n  const encodedPath = objectPath\n    .split('/')\n    .filter(Boolean)\n    .map((part) => encodeURIComponent(part))\n    .join('/');\n\n  if (!encodedPath) return '';\n\n  return `https://ujfcoveypojivevpepoo.supabase.co/storage/v1/object/public/${encodeURIComponent(bucketName)}/${encodedPath}`;\n}\n\nfunction collectFaceImageCandidates(obj) {\n  const candidates = [];\n  const seen = new Set();\n  const preferredPaths = [\n    ['hero_image_url'],\n    ['heroImageUrl'],\n    ['face_image_url'],\n    ['faceImageUrl'],\n    ['profile_image_url'],\n    ['profileImageUrl'],\n    ['profile_photo_url'],\n    ['profilePhotoUrl'],\n    ['avatar_url'],\n    ['avatarUrl'],\n    ['portrait_url'],\n    ['portraitUrl'],\n    ['headshot_url'],\n    ['headshotUrl'],\n    ['reference_image_url'],\n    ['referenceImageUrl'],\n    ['protagonist', 'image_url'],\n    ['protagonist', 'hero_image_url'],\n    ['protagonist', 'avatar_url'],\n    ['user_profile', 'image_url'],\n    ['user_profile', 'avatar_url']\n  ];\n\n  for (const path of preferredPaths) {\n    const value = asString(getByPath(obj, path));\n    if (isValidHttpUrl(value) && !seen.has(value)) {\n      seen.add(value);\n      candidates.push(value);\n    }\n  }\n\n  function walk(value, keyPath = []) {\n    if (Array.isArray(value)) {\n      value.forEach((entry, index) => walk(entry, keyPath.concat(String(index))));\n      return;\n    }\n\n    if (!value || typeof value !== 'object') return;\n\n    for (const [key, entry] of Object.entries(value)) {\n      const nextPath = keyPath.concat(key);\n      if (typeof entry === 'string') {\n        const normalized = entry.trim();\n        if (!isValidHttpUrl(normalized)) continue;\n        const pathText = nextPath.join('.').toLowerCase();\n        if (!/(hero|face|avatar|portrait|headshot|reference|profile.*(image|photo)|image|photo)/i.test(pathText)) {\n          continue;\n        }\n        if (seen.has(normalized)) continue;\n        seen.add(normalized);\n        candidates.push(normalized);\n        continue;\n      }\n\n      walk(entry, nextPath);\n    }\n  }\n\n  walk(obj);\n\n  return candidates;\n}\n\nconst faceCandidates = collectFaceImageCandidates(profileSnapshot);\nconst sourceFaceUrl =\n  buildStoragePublicUrl(heroStorageObject) ||\n  faceCandidates[0] ||\n  '';\n\nconst eligibleAssets = [];\nconst preflightErrors = [];\n\nfor (const asset of assets) {\n  if (asset.decision !== 'edit_image') continue;\n  if (['ready', 'skipped', 'failed'].includes(asset.status)) continue;\n\n  const sourceAssetUrl = asString(asset.source_asset_url);\n  if (!isValidHttpUrl(sourceAssetUrl)) {\n    preflightErrors.push(`Asset ${asset.id || asset.asset_slot || 'unknown'} is missing a valid source_asset_url`);\n    continue;\n  }\n\n  eligibleAssets.push({\n    asset_id: asset.id,\n    asset_slot: asset.asset_slot,\n    asset_type: asset.asset_type,\n    asset_status: asset.status,\n    decision: asset.decision,\n    is_required: !!asset.is_required,\n    source_asset_url: sourceAssetUrl,\n    personalization_angle: asString(asset.personalization_angle),\n    scene_description: asString(asset.scene_description)\n  });\n}\n\nif (eligibleAssets.length > 0 && !sourceFaceUrl) {\n  preflightErrors.unshift('Missing hero face image URL from vivo_audiences.hero_image_asset_storage_id or vivo_audiences.profile_snapshot');\n}\n\nreturn [{\n  json: {\n    story_id: story.id,\n    audience_id: story.audience_id,\n    story_status: story.status,\n    hero_image_asset_storage_id: audience.hero_image_asset_storage_id || null,\n    source_face_url: sourceFaceUrl,\n    eligible_assets: eligibleAssets,\n    eligible_asset_count: eligibleAssets.length,\n    has_preflight_error: preflightErrors.length > 0,\n    preflight_error: preflightErrors.join('; '),\n    profile_snapshot: profileSnapshot\n  }\n}];"
+      },
+      "id": "prepare-story-bundle",
+      "name": "Prepare Story Bundle",
+      "type": "n8n-nodes-base.code",
+      "position": [
+        -1344,
+        -32
+      ],
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.has_preflight_error }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-preflight-error",
+      "name": "If Preflight Error",
+      "type": "n8n-nodes-base.if",
+      "position": [
+        -1056,
+        -144
+      ],
+      "typeVersion": 2.3
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "tableId": "vivo_stories",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "id",
+              "condition": "eq",
+              "keyValue": "={{ $json.story_id }}"
+            }
+          ]
+        },
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "status",
+              "fieldValue": "failed"
+            }
+          ]
+        }
+      },
+      "id": "mark-story-failed",
+      "name": "Mark Story Failed",
+      "type": "n8n-nodes-base.supabase",
+      "position": [
+        -768,
+        -224
+      ],
+      "typeVersion": 1,
+      "credentials": {
+        "supabaseApi": {
+          "id": "0WLaj3uAF5TRP3Ej",
+          "name": "Vivo Supabase"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "tableId": "vivo_audit_events",
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "entity_type",
+              "fieldValue": "story"
+            },
+            {
+              "fieldId": "entity_id",
+              "fieldValue": "={{ $json.story_id }}"
+            },
+            {
+              "fieldId": "event_type",
+              "fieldValue": "asset_failed"
+            },
+            {
+              "fieldId": "actor_type",
+              "fieldValue": "automation"
+            },
+            {
+              "fieldId": "actor_id",
+              "fieldValue": "=n8n-{{ $workflow.name }}"
+            },
+            {
+              "fieldId": "payload",
+              "fieldValue": "={{ { stage: 'preflight', error_message: $json.preflight_error } }}"
+            }
+          ]
+        }
+      },
+      "id": "audit-preflight-failure",
+      "name": "Audit Preflight Failure",
+      "type": "n8n-nodes-base.supabase",
+      "position": [
+        -480,
+        -224
+      ],
+      "typeVersion": 1,
+      "credentials": {
+        "supabaseApi": {
+          "id": "0WLaj3uAF5TRP3Ej",
+          "name": "Vivo Supabase"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.eligible_asset_count }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-has-eligible-assets",
+      "name": "If Has Eligible Assets",
+      "type": "n8n-nodes-base.if",
+      "position": [
+        -768,
+        64
+      ],
+      "typeVersion": 2.3
+    },
+    {
+      "parameters": {
+        "jsCode": "const bundle = $input.first().json || {};\nconst assets = Array.isArray(bundle.eligible_assets) ? bundle.eligible_assets : [];\n\nreturn assets.map((asset) => ({\n  json: {\n    story_id: bundle.story_id,\n    audience_id: bundle.audience_id,\n    source_face_url: bundle.source_face_url,\n    asset_id: asset.asset_id,\n    asset_slot: asset.asset_slot,\n    asset_type: asset.asset_type,\n    asset_status: asset.asset_status,\n    decision: asset.decision,\n    is_required: !!asset.is_required,\n    source_asset_url: asset.source_asset_url,\n    personalization_angle: asset.personalization_angle || '',\n    scene_description: asset.scene_description || '',\n    face_swap_request: {\n      source_face_url: bundle.source_face_url,\n      target_video_url: asset.source_asset_url\n    }\n  }\n}));"
+      },
+      "id": "expand-eligible-assets",
+      "name": "Expand Eligible Assets",
+      "type": "n8n-nodes-base.code",
+      "position": [
+        -480,
+        160
+      ],
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "asset-loop",
+      "name": "Asset Loop",
+      "type": "n8n-nodes-base.splitInBatches",
+      "position": [
+        -192,
+        160
+      ],
+      "typeVersion": 3
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "tableId": "vivo_story_assets",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "id",
+              "condition": "eq",
+              "keyValue": "={{ $json.asset_id }}"
+            }
+          ]
+        },
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "status",
+              "fieldValue": "queued"
+            }
+          ]
+        }
+      },
+      "id": "update-asset-queued",
+      "name": "Update Asset Queued",
+      "type": "n8n-nodes-base.supabase",
+      "position": [
+        96,
+        160
+      ],
+      "typeVersion": 1,
+      "credentials": {
+        "supabaseApi": {
+          "id": "0WLaj3uAF5TRP3Ej",
+          "name": "Vivo Supabase"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "tableId": "vivo_pipeline_jobs",
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "story_id",
+              "fieldValue": "={{ $json.story_id }}"
+            },
+            {
+              "fieldId": "asset_id",
+              "fieldValue": "={{ $json.asset_id }}"
+            },
+            {
+              "fieldId": "job_type",
+              "fieldValue": "face_swap_edit_image"
+            },
+            {
+              "fieldId": "trigger_status",
+              "fieldValue": "asset_generating"
+            },
+            {
+              "fieldId": "status",
+              "fieldValue": "running"
+            },
+            {
+              "fieldId": "endpoint_name",
+              "fieldValue": "local_face_swap_server"
+            },
+            {
+              "fieldId": "request_payload",
+              "fieldValue": "={{ $json.face_swap_request }}"
+            }
+          ]
+        }
+      },
+      "id": "create-asset-job",
+      "name": "Create Asset Job",
+      "type": "n8n-nodes-base.supabase",
+      "position": [
+        384,
+        160
+      ],
+      "typeVersion": 1,
+      "credentials": {
+        "supabaseApi": {
+          "id": "0WLaj3uAF5TRP3Ej",
+          "name": "Vivo Supabase"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "tableId": "vivo_story_assets",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "id",
+              "condition": "eq",
+              "keyValue": "={{ $json.asset_id }}"
+            }
+          ]
+        },
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "status",
+              "fieldValue": "processing"
+            }
+          ]
+        }
+      },
+      "id": "update-asset-processing",
+      "name": "Update Asset Processing",
+      "type": "n8n-nodes-base.supabase",
+      "position": [
+        672,
+        160
+      ],
+      "typeVersion": 1,
+      "credentials": {
+        "supabaseApi": {
+          "id": "0WLaj3uAF5TRP3Ej",
+          "name": "Vivo Supabase"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first().json || {};\n\nconst apiBaseUrl = (process.env.FACE_SWAP_BASE_URL || 'http://192.168.1.79:13451').replace(/\\/+$/, '');\nconst apiKey = process.env.FACE_SWAP_API_KEY || process.env.GPU_API_KEY || 'YOUR_GPU_API_KEY';\nconst pollIntervalMs = Number(process.env.FACE_SWAP_POLL_INTERVAL_MS || 5000);\nconst maxPollAttempts = Number(process.env.FACE_SWAP_MAX_POLLS || 120);\n\nfunction asString(value) {\n  return typeof value === 'string' ? value.trim() : '';\n}\n\nfunction normalizeStatus(payload) {\n  const statusText = asString(\n    payload?.status ??\n    payload?.state ??\n    payload?.job_status ??\n    payload?.phase\n  ).toLowerCase();\n\n  const done = payload?.done === true || ['done', 'completed', 'complete', 'success', 'succeeded', 'finished', 'ready'].includes(statusText);\n  const failed = payload?.failed === true || payload?.ok === false || ['failed', 'error', 'errored', 'cancelled', 'canceled'].includes(statusText);\n  const message = asString(payload?.error || payload?.message || payload?.detail);\n\n  return { done, failed, statusText, message };\n}\n\nasync function requestJson(url, options = {}) {\n  const response = await fetch(url, options);\n  const text = await response.text();\n  let payload;\n\n  try {\n    payload = text ? JSON.parse(text) : {};\n  } catch {\n    payload = { raw_text: text };\n  }\n\n  if (!response.ok) {\n    throw new Error(`HTTP ${response.status} from ${url}: ${text.slice(0, 500)}`);\n  }\n\n  return payload;\n}\n\nasync function sleep(ms) {\n  await new Promise((resolve) => setTimeout(resolve, ms));\n}\n\nconst requestPayload = {\n  source_face_url: item.source_face_url,\n  target_video_url: item.source_asset_url\n};\n\nasync function main() {\n  let startPayload = null;\n  let statusPayload = null;\n  let jobId = '';\n\n  try {\n    startPayload = await requestJson(`${apiBaseUrl}/api/video/face-swap`, {\n      method: 'POST',\n      headers: {\n        'Content-Type': 'application/json',\n        'x-api-key': apiKey\n      },\n      body: JSON.stringify(requestPayload)\n    });\n\n    jobId = asString(startPayload?.job_id || startPayload?.id);\n    if (!jobId) {\n      throw new Error(`Face swap API did not return a job_id: ${JSON.stringify(startPayload).slice(0, 500)}`);\n    }\n\n    for (let attempt = 1; attempt <= maxPollAttempts; attempt++) {\n      statusPayload = await requestJson(`${apiBaseUrl}/status/${encodeURIComponent(jobId)}`, {\n        headers: {\n          'x-api-key': apiKey\n        }\n      });\n\n      const normalized = normalizeStatus(statusPayload);\n      if (normalized.failed) {\n        throw new Error(normalized.message || `Face swap job ${jobId} failed: ${JSON.stringify(statusPayload).slice(0, 500)}`);\n      }\n\n      if (normalized.done) {\n        return [{\n          json: {\n            ...item,\n            face_swap_ok: true,\n            face_swap_job_id: jobId,\n            face_swap_start_response: startPayload,\n            face_swap_status_response: statusPayload,\n            download_url: `${apiBaseUrl}/download/${encodeURIComponent(jobId)}`\n          }\n        }];\n      }\n\n      await sleep(pollIntervalMs);\n    }\n\n    throw new Error(`Face swap polling timed out after ${maxPollAttempts} attempts for job ${jobId}`);\n  } catch (error) {\n    return [{\n      json: {\n        ...item,\n        face_swap_ok: false,\n        face_swap_job_id: jobId,\n        face_swap_start_response: startPayload,\n        face_swap_status_response: statusPayload,\n        error_message: error?.message || String(error)\n      }\n    }];\n  }\n}\n\nreturn main();"
+      },
+      "id": "run-face-swap-job",
+      "name": "Run Face Swap Job",
+      "type": "n8n-nodes-base.code",
+      "position": [
+        960,
+        160
+      ],
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.face_swap_ok }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-face-swap-ok",
+      "name": "If Face Swap OK",
+      "type": "n8n-nodes-base.if",
+      "position": [
+        1248,
+        160
+      ],
+      "typeVersion": 2.3
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.download_url }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "={{ $env.FACE_SWAP_API_KEY || $env.GPU_API_KEY || 'YOUR_GPU_API_KEY' }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "download-result",
+      "name": "Download Result",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [
+        1536,
+        48
+      ],
+      "typeVersion": 4.3
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first();\nconst json = item.json || {};\nconst binary = item.binary || {};\nconst file = binary.data || {};\n\nconst extension = file.fileExtension ? `.${file.fileExtension}` : '';\nconst fileName = `${json.asset_slot}-faceswap-${json.asset_id}${extension}`;\n\nreturn [{\n  json: {\n    ...json,\n    file_name: fileName,\n    object_path: fileName,\n    mime_type: file.mimeType || 'application/octet-stream'\n  },\n  binary\n}];"
+      },
+      "id": "prepare-upload-metadata",
+      "name": "Prepare Upload Metadata",
+      "type": "n8n-nodes-base.code",
+      "position": [
+        1824,
+        48
+      ],
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "=https://ujfcoveypojivevpepoo.supabase.co/storage/v1/object/vivo-content/{{ $json.object_path }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-type",
+              "value": "={{ $json.mime_type }}"
+            },
+            {
+              "name": "x-upsert",
+              "value": "true"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "binaryData",
+        "inputDataFieldName": "data",
+        "options": {}
+      },
+      "id": "upload-to-supabase",
+      "name": "Upload To Supabase",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [
+        2112,
+        48
+      ],
+      "typeVersion": 4.3,
+      "credentials": {
+        "supabaseApi": {
+          "id": "0WLaj3uAF5TRP3Ej",
+          "name": "Vivo Supabase"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "tableId": "vivo_storage_objects",
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "bucket_name",
+              "fieldValue": "vivo-content"
+            },
+            {
+              "fieldId": "object_path",
+              "fieldValue": "={{ $('Prepare Upload Metadata').item.json.object_path }}"
+            },
+            {
+              "fieldId": "file_name",
+              "fieldValue": "={{ $('Prepare Upload Metadata').item.json.file_name }}"
+            },
+            {
+              "fieldId": "mime_type",
+              "fieldValue": "={{ $('Prepare Upload Metadata').item.json.mime_type }}"
+            }
+          ]
+        }
+      },
+      "id": "create-storage-object",
+      "name": "Create Storage Object",
+      "type": "n8n-nodes-base.supabase",
+      "position": [
+        2400,
+        48
+      ],
+      "typeVersion": 1,
+      "credentials": {
+        "supabaseApi": {
+          "id": "0WLaj3uAF5TRP3Ej",
+          "name": "Vivo Supabase"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "tableId": "vivo_story_assets",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "id",
+              "condition": "eq",
+              "keyValue": "={{ $('Asset Loop').item.json.asset_id }}"
+            }
+          ]
+        },
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "storage_object_id",
+              "fieldValue": "={{ $json.id }}"
+            },
+            {
+              "fieldId": "mime_type",
+              "fieldValue": "={{ $('Prepare Upload Metadata').item.json.mime_type }}"
+            },
+            {
+              "fieldId": "status",
+              "fieldValue": "ready"
+            }
+          ]
+        }
+      },
+      "id": "update-asset-ready",
+      "name": "Update Asset Ready",
+      "type": "n8n-nodes-base.supabase",
+      "position": [
+        2688,
+        48
+      ],
+      "typeVersion": 1,
+      "credentials": {
+        "supabaseApi": {
+          "id": "0WLaj3uAF5TRP3Ej",
+          "name": "Vivo Supabase"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "tableId": "vivo_pipeline_jobs",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "id",
+              "condition": "eq",
+              "keyValue": "={{ $('Create Asset Job').item.json.id }}"
+            }
+          ]
+        },
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "status",
+              "fieldValue": "succeeded"
+            },
+            {
+              "fieldId": "response_payload",
+              "fieldValue": "={{ $('Run Face Swap Job').item.json.face_swap_status_response || {} }}"
+            }
+          ]
+        }
+      },
+      "id": "update-job-success",
+      "name": "Update Job Success",
+      "type": "n8n-nodes-base.supabase",
+      "position": [
+        2976,
+        48
+      ],
+      "typeVersion": 1,
+      "credentials": {
+        "supabaseApi": {
+          "id": "0WLaj3uAF5TRP3Ej",
+          "name": "Vivo Supabase"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "tableId": "vivo_story_assets",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "id",
+              "condition": "eq",
+              "keyValue": "={{ $json.asset_id }}"
+            }
+          ]
+        },
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "status",
+              "fieldValue": "failed"
+            },
+            {
+              "fieldId": "error_message",
+              "fieldValue": "={{ $json.error_message }}"
+            }
+          ]
+        }
+      },
+      "id": "update-asset-failed",
+      "name": "Update Asset Failed",
+      "type": "n8n-nodes-base.supabase",
+      "position": [
+        1536,
+        272
+      ],
+      "typeVersion": 1,
+      "credentials": {
+        "supabaseApi": {
+          "id": "0WLaj3uAF5TRP3Ej",
+          "name": "Vivo Supabase"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "tableId": "vivo_pipeline_jobs",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "id",
+              "condition": "eq",
+              "keyValue": "={{ $('Create Asset Job').item.json.id }}"
+            }
+          ]
+        },
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "status",
+              "fieldValue": "failed"
+            },
+            {
+              "fieldId": "error_message",
+              "fieldValue": "={{ $json.error_message }}"
+            },
+            {
+              "fieldId": "response_payload",
+              "fieldValue": "={{ $json.face_swap_status_response || {} }}"
+            }
+          ]
+        }
+      },
+      "id": "update-job-failed",
+      "name": "Update Job Failed",
+      "type": "n8n-nodes-base.supabase",
+      "position": [
+        1824,
+        272
+      ],
+      "typeVersion": 1,
+      "credentials": {
+        "supabaseApi": {
+          "id": "0WLaj3uAF5TRP3Ej",
+          "name": "Vivo Supabase"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "tableId": "vivo_audit_events",
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "entity_type",
+              "fieldValue": "story"
+            },
+            {
+              "fieldId": "entity_id",
+              "fieldValue": "={{ $json.story_id }}"
+            },
+            {
+              "fieldId": "event_type",
+              "fieldValue": "asset_failed"
+            },
+            {
+              "fieldId": "actor_type",
+              "fieldValue": "automation"
+            },
+            {
+              "fieldId": "actor_id",
+              "fieldValue": "=n8n-{{ $workflow.name }}"
+            },
+            {
+              "fieldId": "payload",
+              "fieldValue": "={{ { asset_id: $json.asset_id, error_message: $json.error_message, face_swap_job_id: $json.face_swap_job_id } }}"
+            }
+          ]
+        }
+      },
+      "id": "audit-asset-failed",
+      "name": "Audit Asset Failed",
+      "type": "n8n-nodes-base.supabase",
+      "position": [
+        2112,
+        272
+      ],
+      "typeVersion": 1,
+      "credentials": {
+        "supabaseApi": {
+          "id": "0WLaj3uAF5TRP3Ej",
+          "name": "Vivo Supabase"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.is_required }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-required-asset",
+      "name": "If Required Asset",
+      "type": "n8n-nodes-base.if",
+      "position": [
+        2400,
+        272
+      ],
+      "typeVersion": 2.3
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "tableId": "vivo_stories",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "id",
+              "condition": "eq",
+              "keyValue": "={{ $json.story_id }}"
+            }
+          ]
+        },
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "status",
+              "fieldValue": "failed"
+            }
+          ]
+        }
+      },
+      "id": "update-story-failed-from-asset",
+      "name": "Update Story Failed From Asset",
+      "type": "n8n-nodes-base.supabase",
+      "position": [
+        2688,
+        272
+      ],
+      "typeVersion": 1,
+      "credentials": {
+        "supabaseApi": {
+          "id": "0WLaj3uAF5TRP3Ej",
+          "name": "Vivo Supabase"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "tableId": "vivo_story_assets",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "story_id",
+              "keyValue": "={{ $('Story Loop').item.json.id }}"
+            }
+          ]
+        }
+      },
+      "id": "get-final-story-assets",
+      "name": "Get Final Story Assets",
+      "type": "n8n-nodes-base.supabase",
+      "position": [
+        384,
+        432
+      ],
+      "typeVersion": 1,
+      "credentials": {
+        "supabaseApi": {
+          "id": "0WLaj3uAF5TRP3Ej",
+          "name": "Vivo Supabase"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const assets = $input.all().map((item) => item.json || {});\nconst story = $('Story Loop').item.json || {};\n\nconst publishableAssets = assets.filter((asset) => ['image', 'video'].includes(asset.asset_type));\nconst unreadyRequiredAssets = assets.filter((asset) => asset.is_required === true && asset.status !== 'ready');\n\nreturn [{\n  json: {\n    story_id: story.id,\n    should_mark_ready: publishableAssets.length > 0 && unreadyRequiredAssets.length === 0,\n    publishable_asset_count: publishableAssets.length,\n    unready_required_count: unreadyRequiredAssets.length\n  }\n}];"
+      },
+      "id": "check-story-ready",
+      "name": "Check Story Ready",
+      "type": "n8n-nodes-base.code",
+      "position": [
+        672,
+        432
+      ],
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.should_mark_ready }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-story-ready",
+      "name": "If Story Ready",
+      "type": "n8n-nodes-base.if",
+      "position": [
+        960,
+        432
+      ],
+      "typeVersion": 2.3
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "tableId": "vivo_stories",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "id",
+              "condition": "eq",
+              "keyValue": "={{ $json.story_id }}"
+            }
+          ]
+        },
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "status",
+              "fieldValue": "ready_to_publish"
+            }
+          ]
+        }
+      },
+      "id": "update-story-ready",
+      "name": "Update Story Ready",
+      "type": "n8n-nodes-base.supabase",
+      "position": [
+        1248,
+        432
+      ],
+      "typeVersion": 1,
+      "credentials": {
+        "supabaseApi": {
+          "id": "0WLaj3uAF5TRP3Ej",
+          "name": "Vivo Supabase"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "tableId": "vivo_audit_events",
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "entity_type",
+              "fieldValue": "story"
+            },
+            {
+              "fieldId": "entity_id",
+              "fieldValue": "={{ $json.story_id }}"
+            },
+            {
+              "fieldId": "event_type",
+              "fieldValue": "story_ready_to_publish"
+            },
+            {
+              "fieldId": "actor_type",
+              "fieldValue": "automation"
+            },
+            {
+              "fieldId": "actor_id",
+              "fieldValue": "=n8n-{{ $workflow.name }}"
+            },
+            {
+              "fieldId": "payload",
+              "fieldValue": "={{ { publishable_asset_count: $json.publishable_asset_count, unready_required_count: $json.unready_required_count } }}"
+            }
+          ]
+        }
+      },
+      "id": "audit-story-ready",
+      "name": "Audit Story Ready",
+      "type": "n8n-nodes-base.supabase",
+      "position": [
+        1536,
+        432
+      ],
+      "typeVersion": 1,
+      "credentials": {
+        "supabaseApi": {
+          "id": "0WLaj3uAF5TRP3Ej",
+          "name": "Vivo Supabase"
+        }
+      }
+    }
+  ],
+  "pinData": {
+    "When clicking ‘Execute workflow’": [
+      {
+        "json": {},
+        "pairedItem": {
+          "item": 0
+        }
+      }
+    ]
+  },
+  "connections": {
+    "When clicking ‘Execute workflow’": {
+      "main": [
+        [
+          {
+            "node": "GetStoriesToProcess",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GetStoriesToProcess": {
+      "main": [
+        [
+          {
+            "node": "Story Loop",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Story Loop": {
+      "main": [
+        [],
+        [
+          {
+            "node": "GetAudienceProfile",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GetAudienceProfile": {
+      "main": [
+        [
+          {
+            "node": "GetHeroImageStorageObject",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GetHeroImageStorageObject": {
+      "main": [
+        [
+          {
+            "node": "GetStoryAssets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GetStoryAssets": {
+      "main": [
+        [
+          {
+            "node": "Prepare Story Bundle",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Story Bundle": {
+      "main": [
+        [
+          {
+            "node": "If Preflight Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If Preflight Error": {
+      "main": [
+        [
+          {
+            "node": "Mark Story Failed",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "If Has Eligible Assets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark Story Failed": {
+      "main": [
+        [
+          {
+            "node": "Audit Preflight Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Audit Preflight Failure": {
+      "main": [
+        [
+          {
+            "node": "Story Loop",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If Has Eligible Assets": {
+      "main": [
+        [
+          {
+            "node": "Expand Eligible Assets",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Get Final Story Assets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Expand Eligible Assets": {
+      "main": [
+        [
+          {
+            "node": "Asset Loop",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Asset Loop": {
+      "main": [
+        [
+          {
+            "node": "Get Final Story Assets",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Update Asset Queued",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Asset Queued": {
+      "main": [
+        [
+          {
+            "node": "Create Asset Job",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Asset Job": {
+      "main": [
+        [
+          {
+            "node": "Update Asset Processing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Asset Processing": {
+      "main": [
+        [
+          {
+            "node": "Run Face Swap Job",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run Face Swap Job": {
+      "main": [
+        [
+          {
+            "node": "If Face Swap OK",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If Face Swap OK": {
+      "main": [
+        [
+          {
+            "node": "Download Result",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Update Asset Failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download Result": {
+      "main": [
+        [
+          {
+            "node": "Prepare Upload Metadata",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Upload Metadata": {
+      "main": [
+        [
+          {
+            "node": "Upload To Supabase",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload To Supabase": {
+      "main": [
+        [
+          {
+            "node": "Create Storage Object",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Storage Object": {
+      "main": [
+        [
+          {
+            "node": "Update Asset Ready",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Asset Ready": {
+      "main": [
+        [
+          {
+            "node": "Update Job Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Job Success": {
+      "main": [
+        [
+          {
+            "node": "Asset Loop",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Asset Failed": {
+      "main": [
+        [
+          {
+            "node": "Update Job Failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Job Failed": {
+      "main": [
+        [
+          {
+            "node": "Audit Asset Failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Audit Asset Failed": {
+      "main": [
+        [
+          {
+            "node": "If Required Asset",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If Required Asset": {
+      "main": [
+        [
+          {
+            "node": "Update Story Failed From Asset",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Asset Loop",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Story Failed From Asset": {
+      "main": [
+        [
+          {
+            "node": "Asset Loop",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Final Story Assets": {
+      "main": [
+        [
+          {
+            "node": "Check Story Ready",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Story Ready": {
+      "main": [
+        [
+          {
+            "node": "If Story Ready",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If Story Ready": {
+      "main": [
+        [
+          {
+            "node": "Update Story Ready",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Story Loop",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Story Ready": {
+      "main": [
+        [
+          {
+            "node": "Audit Story Ready",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Audit Story Ready": {
+      "main": [
+        [
+          {
+            "node": "Story Loop",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}

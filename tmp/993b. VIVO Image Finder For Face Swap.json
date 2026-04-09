@@ -1,0 +1,911 @@
+{
+  "name": "993b. VIVO Image Finder For Face Swap",
+  "nodes": [
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "gpt-4.1-mini",
+          "mode": "list",
+          "cachedResultName": "GPT-4.1-MINI"
+        },
+        "responses": {
+          "values": [
+            {
+              "role": "system",
+              "content": "You are an image search planner for an edit-image / face-swap workflow in a daily brief app. Given a classified story and a protagonist profile, produce an optimal image search plan.\n\nReturn ONLY a raw JSON object — no markdown, no code fences.\n\n## PRIMARY OBJECTIVE\nCreate the best search query set to fetch candidate images that GPT-4.1 will later review and curate for face-swap suitability.\n\nThe plan must optimize for:\n- relevance to the story\n- correct image type for the category\n- correct use of products vs events vs editorial imagery\n- strong candidate quality for a later face swap when the chosen image direction contains a person\n\n## FACE-SWAP PEOPLE RULES\nThis workflow is for edit_image selection. When the chosen image direction should contain a generic person, hero, model, athlete, performer, traveler, diner, shopper, or lifestyle subject, bias the search toward images that are suitable for a face swap.\n\nIf the image should include a person:\n- prefer a single clearly visible person\n- prefer front-facing or near-front-facing faces\n- prefer face-visible portraits, editorial photos, head-and-shoulders shots, waist-up shots, or clean full-body shots where the face is still clearly visible\n- avoid back views, heavy profile-only shots, hidden faces, face-obstructed shots, crowded scenes, and group photos\n- prefer the person's visible physical traits to match the protagonist as closely as possible\n\n## PROTAGONIST TRAIT MATCHING\nWhen a generic human subject is appropriate, infer and use relevant protagonist traits from the provided protagonist/profile data.\n\nPrioritize these trait matches when explicit or strongly inferable:\n- hair color and hair texture/style\n- skin tone / skin color / complexion\n- apparent ethnicity or racial presentation only when clearly stated or strongly implied\n- approximate age range\n- height / stature / build / body type\n- physical composure or visual vibe when useful\n- gender / presentation when relevant\n\nDo not invent precise traits that are not present or strongly inferable.\nDo not force trait terms into queries when the best image should not contain a person.\nDo not distort factual hard-news/event queries involving a real public figure, team, company, product, or event.\nFor factual event/news queries, relevance to the actual subject always overrides personalization.\n\n## IMAGE COUNT & FASHION TYPE RULES\n- world_news, global_events, politics, business_finance, technology, science, weather, education: image_count=1, fashion_type=\"none\"\n- fashion_deals_news with SPECIFIC PRODUCT (single shoe, jacket, bag): image_count=6, fashion_type=\"product\"\n- fashion_deals_news with NEW COLLECTION / BRAND LAUNCH / STYLE TREND: image_count=15, fashion_type=\"collection\"\n- home_deals_news with SPECIFIC PRODUCT: image_count=6, fashion_type=\"product\"\n- home_deals_news with RANGE/COLLECTION: image_count=10, fashion_type=\"collection\"\n- deals_hardware, deals_software with specific product: image_count=6, fashion_type=\"product\"\n- concert_news, entertainment, sports, travel, food_dining, local_events, local_news, national_news: image_count=6, fashion_type=\"none\"\n- all other categories: image_count=6, fashion_type=\"none\"\n\nNote: image_count is the candidate pool size per query to fetch before GPT-4.1 curates the best swap-ready images.\n\n## IMAGE TYPE RULES\n- world_news / global_events / politics / national_news / local_news:\n  prefer a representative editorial/news photo of the real event, place, person, crowd, stage, venue, protest, court, weather, disaster, or public scene\n- technology / science / business_finance:\n  prefer logos, product images, charts, company visuals, event photos, editorial photos, or software/security visuals depending on the story\n- deals_hardware / home_deals_news with specific product:\n  prefer the exact product image\n- fashion_deals_news product:\n  prefer product imagery from multiple angles, including on-model only when useful\n- fashion_deals_news collection:\n  prefer editorial/lookbook diversity with multiple looks\n- concert_news / entertainment / sports:\n  prefer performer, athlete, event, match, stage, or venue imagery\n- travel / food_dining:\n  prefer destination, venue, dish, restaurant, hotel, or lifestyle/editorial imagery\n\n## QUERY RULES\n- produce 1 to 3 queries, ordered best first\n- each query must be materially different, not trivial rewording\n- query 1 should be the strongest / most precise\n- product:\n  use the specific item name, brand, and view intent where useful\n- collection:\n  use broader editorial/lookbook wording for diversity\n- news/events:\n  use specific names, dates, locations, organizations, event names, and \"photo\" when useful\n- include the brand name when available\n- when a generic person is appropriate for edit_image, include useful face-swap-oriented terms such as \"single person\", \"portrait\", \"front view\", \"looking at camera\", \"editorial\", or similar phrasing when they improve retrieval\n- include protagonist trait terms only when they materially improve retrieval and do not distort the story subject\n- do not include gendered or physical-trait terms for hard-news/event queries unless the story naturally requires a person image and the query remains factually valid\n\n## CATEGORY-SPECIFIC PEOPLE RULES\n- fashion product:\n  if model imagery is likely useful, align model appearance with the protagonist\n- fashion collection:\n  align model appearance with the protagonist unless the story is explicitly mixed-gender or brand-wide\n- food_dining / travel / lifestyle / entertainment:\n  if a generic hero/person is appropriate, align visible physical traits with the protagonist\n- sports:\n  only use appearance terms if the sports image is generic and not tied to a specific real athlete/team/event\n- world_news / politics / business / technology:\n  do not personalize away from the actual subject of the story\n\n## OUTPUT SCHEMA\n{\"queries\":[\"string\"],\"image_count\":number,\"fashion_type\":\"product\"|\"collection\"|\"none\",\"reasoning\":\"string\"}"
+            },
+            {
+              "content": "=Plan image search for this story:\n\nWorkflow mode: edit_image face swap candidate search\n\nProtagonist:\n{{ $json.profile_snapshot.protagonist.toJsonString() }}\n\nProtagonist profile:\n{{ $json.profile_snapshot.user_profile.toJsonString() }}\n\nCategory: {{ $('Loop Over Items').item.json.current_category }}\nSubcategory: {{ $('Loop Over Items').item.json.current_subcategory }}\nIs deal: {{ $('Loop Over Items').item.json.is_deal }}\nOne-liner: {{ $('Loop Over Items').item.json.one_liner }}\n\nTitle: {{ $('Loop Over Items').item.json.title }}\nText: {{ $('Loop Over Items').item.json.story_text }}\n"
+            }
+          ]
+        },
+        "builtInTools": {},
+        "options": {
+          "textFormat": {
+            "textOptions": {
+              "type": "json_object"
+            }
+          },
+          "temperature": 0
+        }
+      },
+      "id": "6afd0fc7-e28e-4fd0-88f3-4f13cfab0b12",
+      "name": "Plan Search",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 2.1,
+      "position": [
+        -1152,
+        0
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "fHBUWzijU51B7OOg",
+          "name": "OpenAi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first().json;\nconst textField = item?.output?.[0]?.content?.[0]?.text;\nlet plan;\nif (textField && typeof textField === 'object') plan = textField;\nelse if (typeof textField === 'string') plan = JSON.parse(textField.replace(/```json|```/g, '').trim());\nelse throw new Error('Unexpected OpenAI response: ' + JSON.stringify(item).substring(0, 200));\nif (!Array.isArray(plan.queries) || !plan.queries.length) throw new Error('Plan missing queries');\n\nconst audience = $('GetAudienceProfile').first().json || {};\nconst storyItem = $('Loop Over Items').item.json || {};\nconst profileSnapshot = audience.profile_snapshot || {};\nconst protagonist = profileSnapshot.protagonist || {};\nconst userProfile = profileSnapshot.user_profile || {};\n\nconst classification = {\n  category: storyItem.current_category || '',\n  subcategory: storyItem.current_subcategory || '',\n  is_deal: !!storyItem.is_deal\n};\n\nreturn plan.queries.map(query => ({\n  json: {\n    query,\n    image_count: plan.image_count || 6,\n    fashion_type: plan.fashion_type || 'none',\n    reasoning: plan.reasoning || '',\n    classification,\n    category: storyItem.current_category || '',\n    subcategory: storyItem.current_subcategory || '',\n    is_deal: !!storyItem.is_deal,\n    one_liner: storyItem.one_liner || '',\n    story_title: storyItem.title || '',\n    story_text: storyItem.story_text || '',\n    story_content_strategy: storyItem.story_content_strategy || '',\n    story: {\n      title: storyItem.title || '',\n      text: storyItem.story_text || ''\n    },\n    profile_snapshot: profileSnapshot,\n    protagonist,\n    user_profile: userProfile\n  }\n}));"
+      },
+      "id": "4e8a6729-1937-44a1-8888-e911ea2974b4",
+      "name": "Parse Plan",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -800,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "google_images",
+        "q": "={{ $json.query }}",
+        "additionalFields": {},
+        "requestOptions": {}
+      },
+      "id": "27729924-f52e-42cd-a240-5d014c671140",
+      "name": "Google_images search",
+      "type": "n8n-nodes-serpapi.serpApi",
+      "typeVersion": 1,
+      "position": [
+        -576,
+        0
+      ],
+      "credentials": {
+        "serpApi": {
+          "id": "SqhzKITTXSL6MlXD",
+          "name": "SerpApi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\n\nfunction isValidHttpUrl(value) {\n  if (typeof value !== 'string') return false;\n  const s = value.trim();\n  if (!s) return false;\n  if (s.startsWith('data:')) return false;\n  if (s.startsWith('blob:')) return false;\n  if (s.startsWith('x-raw-image:')) return false;\n  return s.startsWith('http://') || s.startsWith('https://');\n}\n\nconst root = { ...items[0].json };\nconst images = [];\nconst seen = new Set();\n\nfor (let sourceIndex = 0; sourceIndex < items.length; sourceIndex++) {\n  const j = items[sourceIndex].json;\n  const candidates = Array.isArray(j.images_results) ? j.images_results : [];\n\n  for (const img of candidates) {\n    const reviewUrl =\n      img.original ||\n      img.link ||\n      img.image ||\n      img.thumbnail ||\n      img.url ||\n      '';\n\n    if (!isValidHttpUrl(reviewUrl)) continue;\n    if (seen.has(reviewUrl)) continue;\n\n    seen.add(reviewUrl);\n\n    images.push({\n      url: reviewUrl,\n      original_url: img.original || reviewUrl,\n      thumbnail_url: img.thumbnail || '',\n      title: img.title || '',\n      source: img.source || img.source_name || '',\n      position: img.position ?? null,\n      source_index: sourceIndex,\n      width: img.original_width ?? null,\n      height: img.original_height ?? null\n    });\n  }\n}\n\nimages.sort((a, b) => {\n  if (a.source_index !== b.source_index) {\n    return a.source_index - b.source_index;\n  }\n  return (a.position ?? 9999) - (b.position ?? 9999);\n});\n\nreturn [{\n  json: {\n    ...root,\n    raw_input_items: items.length,\n    raw_candidates_first_item: Array.isArray(items[0].json.images_results) ? items[0].json.images_results.length : 0,\n    image_count: images.length,\n    images\n  }\n}];"
+      },
+      "id": "74704558-93c8-4003-9042-7d1a205b9a56",
+      "name": "AggregateImages",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -352,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\n\nfunction isValidHttpUrl(value) {\n  if (typeof value !== 'string') return false;\n  const s = value.trim();\n  if (!s) return false;\n  if (s.startsWith('data:')) return false;\n  if (s.startsWith('blob:')) return false;\n  if (s.startsWith('x-raw-image:')) return false;\n  return s.startsWith('http://') || s.startsWith('https://');\n}\n\nfunction hasBlockedImageHost(value) {\n  if (typeof value !== 'string') return false;\n  const s = value.trim();\n  if (!s) return false;\n\n  const blockedHostPatterns = [\n    /(^|\\.)tiktok\\.com$/i,\n    /(^|\\.)tiktokcdn\\.com$/i,\n    /(^|\\.)muscdn\\.com$/i,\n    /(^|\\.)byteoversea\\.com$/i\n  ];\n\n  try {\n    const url = new URL(s);\n    return blockedHostPatterns.some((pattern) => pattern.test(url.hostname));\n  } catch {\n    return /tiktok/i.test(s);\n  }\n}\n\nfunction isBlockedImageCandidate(img) {\n  if (!img || typeof img !== 'object') return false;\n\n  if (typeof img.source === 'string' && /tiktok/i.test(img.source)) {\n    return true;\n  }\n\n  return [img.url, img.original_url, img.thumbnail_url].some(hasBlockedImageHost);\n}\n\nfunction selectReviewImageUrl(img) {\n  if (!img || typeof img !== 'object') return '';\n\n  const candidates = [img.thumbnail_url, img.url, img.original_url];\n\n  for (const candidate of candidates) {\n    if (!isValidHttpUrl(candidate)) continue;\n    if (hasBlockedImageHost(candidate)) continue;\n    return candidate.trim();\n  }\n\n  return '';\n}\n\nfunction asString(value) {\n  return typeof value === 'string' ? value.trim() : '';\n}\n\nfunction asArray(value) {\n  return Array.isArray(value) ? value : [];\n}\n\nfunction extractImagesFromItem(j, sourceIndexFallback = 0) {\n  const out = [];\n\n  if (Array.isArray(j.images)) {\n    for (const img of j.images) {\n      const reviewUrl =\n        typeof img === 'string'\n          ? img\n          : img?.original_url || img?.url || img?.original || img?.link || img?.image || img?.thumbnail || '';\n\n      out.push({\n        url: reviewUrl,\n        original_url: typeof img === 'object' ? (img.original_url || reviewUrl) : reviewUrl,\n        thumbnail_url: typeof img === 'object' ? (img.thumbnail_url || '') : '',\n        title: typeof img === 'object' ? (img.title || '') : '',\n        source: typeof img === 'object' ? (img.source || img.source_name || '') : '',\n        position: typeof img === 'object' ? (img.position ?? null) : null,\n        source_index: typeof img === 'object' ? (img.source_index ?? sourceIndexFallback) : sourceIndexFallback\n      });\n    }\n  } else if (Array.isArray(j.images_results)) {\n    for (const img of j.images_results) {\n      const reviewUrl = img.original || img.link || img.image || img.thumbnail || '';\n      out.push({\n        url: reviewUrl,\n        original_url: img.original || reviewUrl,\n        thumbnail_url: img.thumbnail || '',\n        title: img.title || '',\n        source: img.source || img.source_name || '',\n        position: img.position ?? null,\n        source_index: sourceIndexFallback\n      });\n    }\n  }\n\n  return out;\n}\n\nfunction pickFirst(obj, keys) {\n  for (const key of keys) {\n    const value = obj?.[key];\n    if (typeof value === 'string' && value.trim()) return value.trim();\n  }\n  return '';\n}\n\nconst first = items[0]?.json || {};\n\nconst classification = first.classification || {};\nconst userProfile = first.user_profile || {};\nconst protagonist = first.protagonist || {};\n\nconst storyTitle =\n  asString(first?.story?.title) ||\n  asString(first.story_title);\n\nconst storyText =\n  asString(first?.story?.text) ||\n  asString(first.article) ||\n  asString(first.text) ||\n  asString(first.story_text);\n\nconst story = [storyTitle, storyText].filter(Boolean).join('\\n\\n');\n\nconst category =\n  asString(classification.category) ||\n  asString(first.category) ||\n  'general';\n\nconst normalizedCategory = category.toLowerCase();\nconst isDeal = !!classification.is_deal || !!first.is_deal;\n\nconst isFashionCategory = normalizedCategory.includes('fashion');\nconst isTravelCategory = normalizedCategory.includes('travel');\nconst isFashionTravelDeal =\n  (isFashionCategory || isTravelCategory) &&\n  (isDeal || normalizedCategory.includes('deal'));\n\nconst targetSelectionCount = isFashionTravelDeal ? 5 : 3;\n\nconst protagonistDescription =\n  asString(protagonist.description) ||\n  asString(first.protagonist_description);\n\nconst protagonistTraits = {\n  gender: pickFirst(protagonist, ['gender', 'sex', 'presentation']),\n  hair_color: pickFirst(protagonist, ['hair_color', 'hairColour', 'hair']),\n  hair_style: pickFirst(protagonist, ['hair_style', 'hairStyle']),\n  skin_tone: pickFirst(protagonist, ['skin_tone', 'skinTone', 'skin_color', 'skinColor', 'complexion']),\n  age_range: pickFirst(protagonist, ['age_range', 'ageRange', 'age_group', 'ageGroup']),\n  height_or_stature: pickFirst(protagonist, ['height', 'stature', 'body_height']),\n  build_or_body_type: pickFirst(protagonist, ['body_type', 'bodyType', 'build', 'physique']),\n  ethnicity: pickFirst(protagonist, ['ethnicity', 'ethnic_background', 'race']),\n  physical_composure: pickFirst(protagonist, ['physical_composure', 'composure', 'vibe', 'presence']),\n  style: pickFirst(protagonist, ['style'])\n};\n\nconst protagonistSummary = [\n  protagonistDescription,\n  protagonistTraits.gender ? `gender/presentation: ${protagonistTraits.gender}` : '',\n  protagonistTraits.hair_color ? `hair_color: ${protagonistTraits.hair_color}` : '',\n  protagonistTraits.hair_style ? `hair_style: ${protagonistTraits.hair_style}` : '',\n  protagonistTraits.skin_tone ? `skin_tone: ${protagonistTraits.skin_tone}` : '',\n  protagonistTraits.age_range ? `age_range: ${protagonistTraits.age_range}` : '',\n  protagonistTraits.height_or_stature ? `height_or_stature: ${protagonistTraits.height_or_stature}` : '',\n  protagonistTraits.build_or_body_type ? `build_or_body_type: ${protagonistTraits.build_or_body_type}` : '',\n  protagonistTraits.ethnicity ? `ethnicity: ${protagonistTraits.ethnicity}` : '',\n  protagonistTraits.physical_composure ? `physical_composure: ${protagonistTraits.physical_composure}` : '',\n  protagonistTraits.style ? `style: ${protagonistTraits.style}` : ''\n].filter(Boolean).join('; ');\n\nconst userInterests = asArray(userProfile.interests)\n  .map(asString)\n  .filter(Boolean);\n\nconst userProfileSummary = [\n  userInterests.length ? `interests: ${userInterests.join(', ')}` : '',\n  asString(userProfile.location) ? `location: ${asString(userProfile.location)}` : '',\n  asString(userProfile.age_group) ? `age_group: ${asString(userProfile.age_group)}` : ''\n].filter(Boolean).join('; ');\n\nconst rawImages = items.flatMap((item, i) => extractImagesFromItem(item.json, i));\n\nconst seen = new Set();\nconst validImages = [];\nconst skippedImages = [];\n\nfor (const img of rawImages) {\n  const url = typeof img.url === 'string' ? img.url.trim() : '';\n\n  if (!isValidHttpUrl(url)) {\n    skippedImages.push({\n      raw_url: url || null,\n      reason: 'invalid_url',\n      source_index: img.source_index ?? null\n    });\n    continue;\n  }\n\n  if (isBlockedImageCandidate(img)) {\n    skippedImages.push({\n      raw_url: url || null,\n      reason: 'blocked_source',\n      source: img.source || null,\n      source_index: img.source_index ?? null\n    });\n    continue;\n  }\n\n  if (seen.has(url)) continue;\n  seen.add(url);\n\n  const originalUrl = img.original_url || url;\n  const thumbnailUrl = img.thumbnail_url || '';\n  const reviewImageUrl = selectReviewImageUrl({\n    url,\n    original_url: originalUrl,\n    thumbnail_url: thumbnailUrl\n  });\n\n  if (!reviewImageUrl) {\n    skippedImages.push({\n      raw_url: url || null,\n      reason: 'no_review_url',\n      source: img.source || null,\n      source_index: img.source_index ?? null\n    });\n    continue;\n  }\n\n  validImages.push({\n    url,\n    original_url: originalUrl,\n    thumbnail_url: thumbnailUrl,\n    review_image_url: reviewImageUrl,\n    title: img.title || '',\n    source: img.source || '',\n    position: img.position ?? null,\n    source_index: img.source_index ?? 0\n  });\n}\n\nvalidImages.sort((a, b) => {\n  if (a.source_index !== b.source_index) return a.source_index - b.source_index;\n  return (a.position ?? 9999) - (b.position ?? 9999);\n});\n\nconst selectedImages = validImages;\n\nif (selectedImages.length === 0) {\n  return [{\n    json: {\n      ...first,\n      image_count_raw: rawImages.length,\n      image_count_valid: 0,\n      image_count_sent: 0,\n      target_selection_count: targetSelectionCount,\n      is_fashion_travel_deal: isFashionTravelDeal,\n      skipped_images: skippedImages.slice(0, 20),\n      body: null,\n      error: 'No valid HTTP/HTTPS image URLs found'\n    }\n  }];\n}\n\nconst finalSelectionCount = Math.min(targetSelectionCount, selectedImages.length);\n\nconst candidateList = selectedImages\n  .map((img, i) => `${i + 1}. ${img.review_image_url}`)\n  .join('\\n');\n\nconst prompt = `\nYou are an expert selector for edit-image face-swap source photos.\n\nStory:\n\"${story}\"\n\nCategory:\n${category}\n\nUser profile:\n${userProfileSummary || 'none'}\n\nProtagonist description:\n${protagonistSummary || 'none'}\n\nProtagonist JSON:\n${JSON.stringify(protagonist || {}, null, 2)}\n\nCandidate images:\n${candidateList}\n\nSelection target:\nSelect exactly ${finalSelectionCount} images.\n\nTask:\nAnalyze every candidate image separately and choose the best images for a face swap.\n\nHard requirements:\n1. The image should contain exactly one clearly visible person.\n2. The face should be visible and front-facing or near-front-facing.\n3. The pose must be swappable: not from behind, not fully profile-only, not heavily cropped, not heavily obscured, not tiny, not motion-blurred.\n4. The person's visible physical traits should match the protagonist as closely as reasonably possible.\n\nTrait matching priority:\n- hair color\n- hair texture / hairstyle\n- skin tone / skin color / complexion\n- approximate age range\n- gender / presentation when relevant\n- height / stature / build / body type when inferable\n- physical composure / overall vibe when useful\n\nSelection logic:\n- Reject images with multiple people, no people, hidden faces, back views, masks covering the face, sunglasses hiding too much of the face, extreme angles, or unusable low-quality framing.\n- Prefer clean editorial/lifestyle/product-context images that still preserve a clearly swappable face.\n- If two images are similarly swappable, break ties using stronger protagonist trait match and then stronger story relevance.\n- For factual news about a specific real event, company, or public figure, keep story relevance important, but still reject unswappable photos.\n- Reject generic unrelated stock images.\n\nReturn exactly one result for each image URL listed above.\nPreserve the exact image_url string.\n\nScoring:\n- single_person_score: 0 to 1\n- face_visibility_score: 0 to 1\n- frontal_face_score: 0 to 1\n- physical_match_score: 0 to 1\n- story_fit_score: 0 to 1\n- swap_readiness_score: 0 to 1\n- overall_score: 0 to 1\n- confidence: 0 to 1\n\nRanking rules:\n- rank selected images from 1 to ${finalSelectionCount}\n- non-selected images must have rank = 0\n- selected must be true only for the top ${finalSelectionCount} images\n- decision must be \"ok\" for selected images and \"nok\" for non-selected images\n- swap_ready should be true only when the image is realistically usable for a face swap\n\nReasoning:\n- Keep reasoning short and specific.\n- Mention the acceptance/rejection cause directly.\n\nReturn JSON only.\n`.trim();\n\nconst content = [\n  { type: 'input_text', text: prompt },\n  ...selectedImages.map(img => ({\n    type: 'input_image',\n    image_url: img.review_image_url,\n    detail: 'low'\n  }))\n];\n\nconst body = {\n  model: 'gpt-4.1',\n  input: [\n    {\n      role: 'user',\n      content\n    }\n  ],\n  text: {\n    format: {\n      type: 'json_schema',\n      name: 'face_swap_image_rankings',\n      strict: true,\n      schema: {\n        type: 'object',\n        additionalProperties: false,\n        properties: {\n          results: {\n            type: 'array',\n            items: {\n              type: 'object',\n              additionalProperties: false,\n              properties: {\n                image_url: { type: 'string' },\n                decision: { type: 'string', enum: ['ok', 'nok'] },\n                selected: { type: 'boolean' },\n                rank: { type: 'integer' },\n                has_single_person: { type: 'boolean' },\n                face_visible: { type: 'boolean' },\n                frontal_or_near_frontal: { type: 'boolean' },\n                swap_ready: { type: 'boolean' },\n                single_person_score: { type: 'number' },\n                face_visibility_score: { type: 'number' },\n                frontal_face_score: { type: 'number' },\n                physical_match_score: { type: 'number' },\n                story_fit_score: { type: 'number' },\n                swap_readiness_score: { type: 'number' },\n                overall_score: { type: 'number' },\n                reasoning: { type: 'string' },\n                confidence: { type: 'number' }\n              },\n              required: [\n                'image_url',\n                'decision',\n                'selected',\n                'rank',\n                'has_single_person',\n                'face_visible',\n                'frontal_or_near_frontal',\n                'swap_ready',\n                'single_person_score',\n                'face_visibility_score',\n                'frontal_face_score',\n                'physical_match_score',\n                'story_fit_score',\n                'swap_readiness_score',\n                'overall_score',\n                'reasoning',\n                'confidence'\n              ]\n            }\n          },\n          selected_image_urls: {\n            type: 'array',\n            items: { type: 'string' }\n          }\n        },\n        required: ['results', 'selected_image_urls']\n      }\n    }\n  }\n};\n\nreturn [{\n  json: {\n    ...first,\n    is_fashion_travel_deal: isFashionTravelDeal,\n    target_selection_count: finalSelectionCount,\n    image_count_raw: rawImages.length,\n    image_count_valid: validImages.length,\n    image_count_sent: selectedImages.length,\n    skipped_images: skippedImages.slice(0, 20),\n    body\n  }\n}];"
+      },
+      "id": "11d3cfbb-9ffb-419b-80c4-98eca088707c",
+      "name": "Build GPT-4.1 Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -128,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/responses",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "openAiApi",
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ JSON.stringify($json.body) }}",
+        "options": {}
+      },
+      "id": "c15d4d93-c725-4545-920d-4ab0e10bf6d1",
+      "name": "Call GPT-4.1",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        96,
+        0
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "fHBUWzijU51B7OOg",
+          "name": "OpenAi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first().json;\n\nconst buildData = $('Build GPT-4.1 Request').first().json;\nconst imageLookup = {};\nfor (const img of (buildData.images || [])) {\n  const canonical = img.original_url || img.url;\n  for (const key of [img.url, img.original_url, img.thumbnail_url]) {\n    if (!key) continue;\n    imageLookup[key] = {\n      original_url: canonical,\n      thumbnail_url: img.thumbnail_url || img.url || canonical\n    };\n  }\n}\n\nlet parsed;\nlet rawText = '';\n\nif (item.output_text) {\n  rawText = item.output_text;\n} else if (item.output && Array.isArray(item.output)) {\n  const message = item.output.find(x => x.type === 'message');\n  if (message && Array.isArray(message.content)) {\n    const textPart = message.content.find(x => x.type === 'output_text');\n    rawText = textPart?.text || '';\n  }\n}\n\ntry {\n  parsed = JSON.parse(rawText);\n} catch (e) {\n  parsed = {\n    results: [],\n    parse_error: true,\n    raw_output: rawText\n  };\n}\n\nconst enriched = (parsed.results || []).map(r => {\n  const match = imageLookup[r.image_url] || {};\n  const originalUrl = match.original_url || r.image_url;\n  return {\n    ...r,\n    image_url: originalUrl,\n    original_url: originalUrl,\n    thumbnail_url: match.thumbnail_url || originalUrl\n  };\n});\n\nreturn [{\n  json: {\n    analysis: enriched,\n    selected_image_urls: parsed.selected_image_urls || [],\n    raw_output: rawText,\n    parse_error: !!parsed.parse_error\n  }\n}];"
+      },
+      "id": "e74f474e-f463-45c1-a5f5-af101fc36550",
+      "name": "Parse Analysis",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        272,
+        0
+      ]
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -2560,
+        -16
+      ],
+      "id": "f528a711-6e9f-4035-b1c5-e85b01747aed",
+      "name": "When clicking ‘Execute workflow’"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        -1616,
+        -16
+      ],
+      "id": "2cea5f9a-699e-4bd9-8c90-59b22eebee63",
+      "name": "Loop Over Items"
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "tableId": "vivo_stories",
+        "limit": 10,
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "status",
+              "condition": "eq",
+              "keyValue": "media_decided"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        -2256,
+        -16
+      ],
+      "id": "6bb55ce1-06ce-4c2f-984d-05ab85aab5d5",
+      "name": "GetStoriesToProcess",
+      "credentials": {
+        "supabaseApi": {
+          "id": "0WLaj3uAF5TRP3Ej",
+          "name": "Vivo Supabase"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "tableId": "vivo_audiences",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "id",
+              "keyValue": "={{ $json.audience_id }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        -1392,
+        0
+      ],
+      "id": "0ebea460-3e66-4d0b-b264-da98b4181cb4",
+      "name": "GetAudienceProfile",
+      "credentials": {
+        "supabaseApi": {
+          "id": "0WLaj3uAF5TRP3Ej",
+          "name": "Vivo Supabase"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "tableId": "vivo_audit_events",
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "entity_type",
+              "fieldValue": "story"
+            },
+            {
+              "fieldId": "entity_id",
+              "fieldValue": "={{ $('Loop Over Items').first().json.id }}"
+            },
+            {
+              "fieldId": "event_type",
+              "fieldValue": "edit_image_candidates_scored"
+            },
+            {
+              "fieldId": "actor_type",
+              "fieldValue": "automation"
+            },
+            {
+              "fieldId": "actor_id",
+              "fieldValue": "=n8n-{{ $workflow.name }}"
+            },
+            {
+              "fieldId": "payload",
+              "fieldValue": "={{ $json.raw_output }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        480,
+        0
+      ],
+      "id": "a138b74d-1f3c-442e-bae6-497d2992b090",
+      "name": "AuditEvent",
+      "credentials": {
+        "supabaseApi": {
+          "id": "0WLaj3uAF5TRP3Ej",
+          "name": "Vivo Supabase"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "tableId": "vivo_stories",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "id",
+              "condition": "eq",
+              "keyValue": "={{ $('Loop Over Items').first().json.id }}"
+            }
+          ]
+        },
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "status",
+              "fieldValue": "assets_collected"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        688,
+        0
+      ],
+      "id": "4d14a10a-edcb-40ad-90a3-0c53a9d3894c",
+      "name": "Update a row",
+      "credentials": {
+        "supabaseApi": {
+          "id": "0WLaj3uAF5TRP3Ej",
+          "name": "Vivo Supabase"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Loop over input items and add a new field called 'myNewField' to the JSON of each one\n\nconst analysis = $('Parse Analysis').first().json.analysis\n\n\nreturn analysis"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        944,
+        0
+      ],
+      "id": "f458ee05-c0dd-4e33-9e24-5a1fac5aece5",
+      "name": "GetAnalysisResults"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "e8f707dc-6118-4148-a2f1-f24a7e5090ca",
+              "leftValue": "={{ $json.selected }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1152,
+        0
+      ],
+      "id": "fe75972a-c02a-4484-b9ce-8675f792945d",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "tableId": "vivo_story_assets",
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "story_id",
+              "fieldValue": "={{ $('Loop Over Items').first().json.id }}"
+            },
+            {
+              "fieldId": "asset_slot",
+              "fieldValue": "={{ ($json.original_url || $json.image_url).split(\"/\").last() }}"
+            },
+            {
+              "fieldId": "asset_type",
+              "fieldValue": "image"
+            },
+            {
+              "fieldId": "decision",
+              "fieldValue": "edit_image"
+            },
+            {
+              "fieldId": "status",
+              "fieldValue": "pending"
+            },
+            {
+              "fieldId": "is_required",
+              "fieldValue": "true"
+            },
+            {
+              "fieldId": "source_asset_url",
+              "fieldValue": "={{ $json.original_url || $json.image_url }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        1584,
+        -16
+      ],
+      "id": "98e7cc5e-926d-4507-98b3-e7a17e8f35dc",
+      "name": "Create a row",
+      "credentials": {
+        "supabaseApi": {
+          "id": "0WLaj3uAF5TRP3Ej",
+          "name": "Vivo Supabase"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "={{ $('If').item.json.original_url || $('If').item.json.image_url }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        1792,
+        -16
+      ],
+      "id": "349ddfde-2785-402b-ae7e-ca1655db1d77",
+      "name": "DownloadAsset"
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "=https://ujfcoveypojivevpepoo.supabase.co/storage/v1/object/vivo-content/{{ $json.asset_slot }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-type",
+              "value": "={{ $binary.data.mimeType}}"
+            },
+            {
+              "name": "x-upsert",
+              "value": "true"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "binaryData",
+        "inputDataFieldName": "data",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        2000,
+        -16
+      ],
+      "id": "fe120aad-615e-4efd-a8e9-52216942ab62",
+      "name": "UploadToSupabase",
+      "credentials": {
+        "supabaseApi": {
+          "id": "0WLaj3uAF5TRP3Ej",
+          "name": "Vivo Supabase"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "tableId": "vivo_storage_objects",
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "bucket_name",
+              "fieldValue": "vivo-content"
+            },
+            {
+              "fieldId": "object_path",
+              "fieldValue": "={{ $json.Key }}"
+            },
+            {
+              "fieldId": "file_name",
+              "fieldValue": "={{ $('DownloadAsset').item.json.asset_slot }}"
+            },
+            {
+              "fieldId": "mime_type",
+              "fieldValue": "image"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        2208,
+        -16
+      ],
+      "id": "41d153c2-a4a7-49e5-b199-2919e379239d",
+      "name": "StorageObject",
+      "credentials": {
+        "supabaseApi": {
+          "id": "0WLaj3uAF5TRP3Ej",
+          "name": "Vivo Supabase"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "tableId": "vivo_story_assets",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "id",
+              "condition": "eq",
+              "keyValue": "={{ $('Create a row').item.json.id }}"
+            }
+          ]
+        },
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "storage_object_id",
+              "fieldValue": "={{ $json.id }}"
+            },
+            {
+              "fieldId": "status",
+              "fieldValue": "ready"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        2416,
+        -16
+      ],
+      "id": "120bf6d5-9ad3-44ee-ba39-5ccbd41a4e69",
+      "name": "UpdateStoryAssetStatus",
+      "credentials": {
+        "supabaseApi": {
+          "id": "0WLaj3uAF5TRP3Ej",
+          "name": "Vivo Supabase"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "aggregate": "aggregateAllItemData",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [
+        2624,
+        -16
+      ],
+      "id": "139d2fd5-ba5e-4ca1-bb3f-b6189caa41f2",
+      "name": "Aggregate"
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "tableId": "vivo_stories",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "id",
+              "condition": "eq",
+              "keyValue": "={{ $('Loop Over Items').first().json.id }}"
+            }
+          ]
+        },
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "status",
+              "fieldValue": "ready_to_publish"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        2864,
+        -16
+      ],
+      "id": "129a62ed-017d-4306-a7f5-6502f8a9e995",
+      "name": "UpdateStory",
+      "credentials": {
+        "supabaseApi": {
+          "id": "0WLaj3uAF5TRP3Ej",
+          "name": "Vivo Supabase"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "9a18d3e4-5e0d-4d83-963a-abe39eeadb6e",
+              "leftValue": "={{ $json.story_content_strategy }}",
+              "rightValue": "edit_image",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2.3,
+      "position": [
+        -1920,
+        -16
+      ],
+      "id": "24b21551-273c-4f14-b5a5-387c2a5694d6",
+      "name": "Filter"
+    }
+  ],
+  "pinData": {
+    "When clicking ‘Execute workflow’": [
+      {
+        "json": {},
+        "pairedItem": {
+          "item": 0
+        }
+      }
+    ]
+  },
+  "connections": {
+    "Plan Search": {
+      "main": [
+        [
+          {
+            "node": "Parse Plan",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Plan": {
+      "main": [
+        [
+          {
+            "node": "Google_images search",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google_images search": {
+      "main": [
+        [
+          {
+            "node": "AggregateImages",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AggregateImages": {
+      "main": [
+        [
+          {
+            "node": "Build GPT-4.1 Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build GPT-4.1 Request": {
+      "main": [
+        [
+          {
+            "node": "Call GPT-4.1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call GPT-4.1": {
+      "main": [
+        [
+          {
+            "node": "Parse Analysis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Analysis": {
+      "main": [
+        [
+          {
+            "node": "AuditEvent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "When clicking ‘Execute workflow’": {
+      "main": [
+        [
+          {
+            "node": "GetStoriesToProcess",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Items": {
+      "main": [
+        [],
+        [
+          {
+            "node": "GetAudienceProfile",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GetStoriesToProcess": {
+      "main": [
+        [
+          {
+            "node": "Filter",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GetAudienceProfile": {
+      "main": [
+        [
+          {
+            "node": "Plan Search",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AuditEvent": {
+      "main": [
+        [
+          {
+            "node": "Update a row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update a row": {
+      "main": [
+        [
+          {
+            "node": "GetAnalysisResults",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GetAnalysisResults": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "Create a row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create a row": {
+      "main": [
+        [
+          {
+            "node": "DownloadAsset",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DownloadAsset": {
+      "main": [
+        [
+          {
+            "node": "UploadToSupabase",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "UploadToSupabase": {
+      "main": [
+        [
+          {
+            "node": "StorageObject",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "StorageObject": {
+      "main": [
+        [
+          {
+            "node": "UpdateStoryAssetStatus",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "UpdateStoryAssetStatus": {
+      "main": [
+        [
+          {
+            "node": "Aggregate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aggregate": {
+      "main": [
+        [
+          {
+            "node": "UpdateStory",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "UpdateStory": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false,
+    "timeSavedMode": "fixed",
+    "errorWorkflow": "KiH_W_0ke75GS9N9NZ180"
+  },
+  "versionId": "c5683995-54a1-4ce3-bc33-b1cf054634f1",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "c796b106e3283ac90b9e198bc962983501d25e603ba2789acd18c38355bc2339"
+  },
+  "id": "jp6hrJ5HDaIWp8un",
+  "tags": []
+}
