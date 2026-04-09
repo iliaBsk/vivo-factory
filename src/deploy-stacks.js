@@ -1,13 +1,18 @@
-import { createInstanceManager } from "./instance-manager.js";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+
 import { loadJsonConfig } from "./runtime-config.js";
 
+const execFileAsync = promisify(execFile);
 const runtimeConfig = loadJsonConfig("config/runtime.json", {});
-const instanceManager = createInstanceManager(runtimeConfig);
-const result = await instanceManager.deployAll();
+const composeFile = runtimeConfig.compose_file ?? "generated/docker-compose.yml";
 
-if (result.exitCode !== 0) {
-  console.error(result.stderr || result.stdout || "docker deployment failed");
-  process.exit(result.exitCode);
+try {
+  const result = await execFileAsync("docker", ["compose", "-f", composeFile, "up", "-d", "--build"], {
+    encoding: "utf8"
+  });
+  console.log(result.stdout || "Stacks deployed");
+} catch (error) {
+  console.error(error.stderr || error.stdout || error.message || "docker deployment failed");
+  process.exit(error.code ?? 1);
 }
-
-console.log(result.stdout || "Stacks deployed");

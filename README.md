@@ -12,6 +12,25 @@ npm run deploy:stacks
 npm start
 ```
 
+## Dockerized Deployment
+
+The generated deployment now includes:
+
+- one `vivo-factory-dashboard` container built from this repo
+- one OpenClaw container per audience
+- one profile-engine sidecar per audience
+
+Remote host flow:
+
+```bash
+npm test
+npm run bootstrap
+npm run generate:stacks
+docker compose -f generated/docker-compose.yml up -d --build
+```
+
+Set real Supabase credentials in `.env` and real audience runtime values in `config/runtime.json` before bringing the stack up.
+
 ## Files
 
 - `audience_group.md`: bootstrap audience definitions, one `<audience>` block per group
@@ -29,7 +48,7 @@ npm start
 ## Notes
 
 - Audience/profile data is written through `user-profile-plugin` routes and intended to land in its knowledge graph.
-- The dashboard runs on loopback and assumes loopback plugin endpoints by default, matching the current `user-profile-plugin` restrictions.
+- The dashboard runs on loopback by default, but the containerized deployment binds it to `0.0.0.0` inside the dashboard container.
 - The generated compose file models the profile engine in the same network namespace as the OpenClaw runtime to stay compatible with the plugin’s loopback-only engine access.
 - The dashboard exposes live instance controls for deploy, health, report fetch, log fetch, and operator chat when `config/runtime.json` contains per-audience instance config.
 

@@ -72,6 +72,11 @@ test("renderDockerCompose emits separate services per audience", async () => {
   const manifests = generateStackManifests([{ audience_id: "aud-1" }, { audience_id: "aud-2" }], {
     openClawImage: "ghcr.io/openclaw/openclaw:latest",
     profilePluginPath: "/plugins/user-profile",
+    dashboard: {
+      imageName: "vivo-factory-dashboard",
+      containerPort: 4310,
+      hostPort: 4310
+    },
     audienceRuntimeConfig: {
       "aud-1": {
         telegram_bot_token: "token-1",
@@ -90,6 +95,14 @@ test("renderDockerCompose emits separate services per audience", async () => {
 
   const compose = renderDockerCompose(manifests);
 
+  assert.match(compose, /vivo-factory-dashboard:/);
+  assert.match(compose, /build:\s+\./);
+  assert.match(compose, /env_file:\s+- \.env/);
+  assert.match(compose, /- "\.\/config:\/app\/config:ro"/);
+  assert.match(compose, /- "\.\/generated:\/app\/generated"/);
+  assert.match(compose, /- "\.\/data:\/app\/data"/);
+  assert.match(compose, /restart: unless-stopped/);
+  assert.match(compose, /- "4310:4310"/);
   assert.match(compose, /aud-1-openclaw:/);
   assert.match(compose, /aud-2-openclaw:/);
   assert.match(compose, /network_mode: "service:aud-1-openclaw"/);

@@ -9,6 +9,12 @@ const audiences = extractAudiences(markdown).map((entry) => normalizeAudience(en
 const manifests = generateStackManifests(audiences, {
   openClawImage: runtimeConfig.openclaw_image ?? "ghcr.io/openclaw/openclaw:latest",
   profilePluginPath: runtimeConfig.profile_plugin_path ?? "/plugins/user-profile",
+  dashboard: {
+    serviceName: runtimeConfig.dashboard_service_name ?? "vivo-factory-dashboard",
+    imageName: runtimeConfig.dashboard_image_name ?? "vivo-factory-dashboard",
+    containerPort: runtimeConfig.server_port ?? 4310,
+    hostPort: runtimeConfig.server_port ?? 4310
+  },
   audienceRuntimeConfig: runtimeConfig.audiences ?? {}
 });
 

@@ -6,13 +6,18 @@ This repository currently provides:
 
 - audience bootstrap from `audience_group.md`
 - stack manifest generation for 5 isolated audience runtimes
-- Docker deployment CLI for generated audience stacks
-- operator dashboard server for:
+- a generated full-stack Docker Compose deployment with:
+  - one `vivo-factory-dashboard` container
+  - one OpenClaw container per audience
+  - one profile-engine sidecar per audience
+- operator dashboard for:
   - approval queue
-  - published post history
+  - story editor
+  - asset review and replacement
+  - audience drawer editing
+  - queued Telegram publications
   - analytics snapshot
   - audit log
-  - audience profile editing through `user-profile-plugin`
   - live instance deploy controls
   - live instance health checks
   - live instance report fetch
@@ -28,9 +33,8 @@ Install on the staging host:
 - Node.js 22+
 - npm 10+
 - Docker and Docker Compose
-- one reachable `user-profile-plugin` endpoint per audience, or one shared loopback endpoint for local testing
 
-Current `user-profile-plugin` integration is loopback-only by design. The factory client enforces `127.0.0.1` or `localhost` plugin URLs. For staging, run the plugin endpoint on the same host/network namespace as the factory process, or front it locally on loopback.
+The generated deployment already places one profile engine next to each OpenClaw audience container. The operator dashboard is built from this repo and joins the same compose deployment.
 
 ## 3. Copy The Repo
 
@@ -71,6 +75,7 @@ Minimum required fields:
 ```json
 {
   "server_port": 4310,
+  "server_host": "0.0.0.0",
   "compose_file": "generated/docker-compose.yml",
   "plugin_base_url_default": "http://127.0.0.1:5400",
   "openclaw_image": "ghcr.io/openclaw/openclaw:latest",
@@ -136,7 +141,15 @@ Expected result:
 
 ## 8. Bootstrap Audience Profiles Into The Knowledge Graph
 
-Before running the dashboard in staging, make sure the configured `user-profile-plugin` endpoint is already up and reachable on loopback.
+Before bringing the stack up, make sure `.env` contains real Supabase credentials:
+
+```env
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
+SUPABASE_STORAGE_BUCKET=vivo-content
+```
+
+Then bootstrap audience profiles into the per-audience profile engines.
 
 Then run:
 
@@ -153,11 +166,7 @@ Expected result:
 If this fails:
 
 - verify `config/runtime.json`
-- verify the plugin endpoint is reachable on `127.0.0.1` or `localhost`
-- verify the plugin exposes:
-  - `/user-profile/profile/facts`
-  - `/user-profile/profile/decisions`
-  - `/user-profile/graph/summary`
+- verify the target profile engine or plugin path is reachable from the generated deployment
 
 ## 9. Generate Staging Runtime Manifests
 
@@ -172,9 +181,11 @@ Expected files:
 - `generated/stacks.json`
 - `generated/docker-compose.yml`
 
-The generated compose file models one OpenClaw container and one profile engine container per audience, with the profile engine sharing the OpenClaw network namespace. That matches the current loopback-only constraint in `user-profile-plugin`.
+The generated compose file now models:
 
-Treat this compose file as a staging template. Review it before using it directly in infrastructure automation.
+- one `vivo-factory-dashboard` service built from this repo
+- one OpenClaw container per audience
+- one profile engine container per audience, sharing the OpenClaw network namespace
 
 The generated OpenClaw service environment now includes:
 
@@ -184,39 +195,44 @@ The generated OpenClaw service environment now includes:
 - `OPENCLAW_ADMIN_URL`
 - `USER_PROFILE_PLUGIN_PATH`
 
+The generated dashboard service includes:
+
+- `env_file: .env`
+- mounted `config/`, `generated/`, and `data/`
+- mounted Docker socket for runtime deploy/log controls
+- published dashboard port from `config/runtime.json`
+
 ## 10. Deploy The Stacks
 
 After generating the compose file:
 
 ```bash
+docker compose -f generated/docker-compose.yml up -d --build
+```
+
+Equivalent wrapper:
+
+```bash
 npm run deploy:stacks
 ```
 
-This runs:
-
-- `docker compose -f generated/docker-compose.yml up -d ...`
-
-This repository does not yet implement advanced rollout logic, health-gated deployment, or Docker cleanup. It performs direct compose deployment for the generated audience services.
+This runs the same `docker compose -f generated/docker-compose.yml up -d --build` command.
 
 ## 11. Start The Dashboard
 
-Run:
-
-```bash
-npm start
-```
-
 Expected result:
 
-- dashboard listens on `http://127.0.0.1:4310` unless changed in `config/runtime.json`
+- dashboard container listens on `http://<host>:4310` unless changed in `config/runtime.json`
 
 Dashboard capabilities:
 
-- review pending posts
-- inspect published posts
+- review story queues
+- edit story content
+- select and replace assets
+- edit audiences in the drawer
+- queue Telegram publications
 - inspect audit log
 - inspect analytics snapshot
-- edit audience profile facts and persist them through `user-profile-plugin`
 - deploy all instances or a single instance
 - fetch per-instance health
 - fetch per-instance report
@@ -228,35 +244,37 @@ Dashboard capabilities:
 Open:
 
 ```text
-http://127.0.0.1:4310
+http://<host>:4310
 ```
 
 Verify:
 
 - page renders
-- approval queue section renders
-- published posts section renders
-- profile edit form renders
+- story queue section renders
+- story editor section renders
+- asset panel renders
+- audience drawer toggle renders
+- publication queue section renders
 - live instances section renders
 - operator console section renders
 
 API smoke checks:
 
 ```bash
-curl http://127.0.0.1:4310/api/queue
+curl http://<host>:4310/api/stories
+curl http://<host>:4310/api/audiences
 curl http://127.0.0.1:4310/api/instances
-curl http://127.0.0.1:4310/api/published
-curl http://127.0.0.1:4310/api/audit
-curl http://127.0.0.1:4310/api/analytics
-curl http://127.0.0.1:4310/api/instances/<audience-id>/health
-curl http://127.0.0.1:4310/api/instances/<audience-id>/report
-curl "http://127.0.0.1:4310/api/instances/<audience-id>/logs?tail=100"
+curl http://<host>:4310/api/audit
+curl http://<host>:4310/api/analytics
+curl http://<host>:4310/api/instances/<audience-id>/health
+curl http://<host>:4310/api/instances/<audience-id>/report
+curl "http://<host>:4310/api/instances/<audience-id>/logs?tail=100"
 ```
 
 Operator chat smoke check:
 
 ```bash
-curl -X POST http://127.0.0.1:4310/api/instances/<audience-id>/chat \
+curl -X POST http://<host>:4310/api/instances/<audience-id>/chat \
   -H 'content-type: application/json' \
   -d '{"operator":"operator@example.com","message":"status report"}'
 ```
@@ -290,8 +308,7 @@ Run in this order:
 npm test
 npm run bootstrap
 npm run generate:stacks
-npm run deploy:stacks
-npm start
+docker compose -f generated/docker-compose.yml up -d --build
 ```
 
 ## 15. Known Staging Limits

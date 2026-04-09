@@ -1,5 +1,5 @@
 export function generateStackManifests(audiences, options) {
-  return audiences.map((audience, index) => {
+  const manifests = audiences.map((audience, index) => {
     const runtimeConfig = options.audienceRuntimeConfig?.[audience.audience_id];
     if (!runtimeConfig?.telegram_bot_token || !runtimeConfig?.telegram_chat_id || !runtimeConfig?.openclaw_admin_url) {
       throw new Error(`Missing runtime config for audience ${audience.audience_id}`);
@@ -26,9 +26,42 @@ export function generateStackManifests(audiences, options) {
       }
     };
   });
+
+  manifests.dashboard = {
+    service_name: options.dashboard?.serviceName ?? "vivo-factory-dashboard",
+    image_name: options.dashboard?.imageName ?? "vivo-factory-dashboard",
+    container_port: options.dashboard?.containerPort ?? 4310,
+    host_port: options.dashboard?.hostPort ?? 4310
+  };
+
+  return manifests;
 }
 
 export function renderDockerCompose(manifests) {
+  const dashboard = manifests.dashboard ?? {
+    service_name: "vivo-factory-dashboard",
+    image_name: "vivo-factory-dashboard",
+    container_port: 4310,
+    host_port: 4310
+  };
+  const dashboardService = `  ${dashboard.service_name}:
+    build: .
+    image: ${dashboard.image_name}
+    env_file:
+      - .env
+    environment:
+      HOST: 0.0.0.0
+      PORT: "${dashboard.container_port}"
+    ports:
+      - "${dashboard.host_port}:${dashboard.container_port}"
+    volumes:
+      - "./config:/app/config:ro"
+      - "./generated:/app/generated"
+      - "./data:/app/data"
+      - "./.env:/app/.env:ro"
+      - "/var/run/docker.sock:/var/run/docker.sock"
+    restart: unless-stopped`;
+
   const services = manifests
     .map((manifest) => {
       const openClawService = `${manifest.audience_id}-openclaw`;
@@ -60,5 +93,5 @@ export function renderDockerCompose(manifests) {
     .map((manifest) => `  ${manifest.runtime.profile.data_volume}:`)
     .join("\n");
 
-  return `services:\n${services}\nvolumes:\n${volumes}\n`;
+  return `services:\n${dashboardService}\n${services}\nvolumes:\n${volumes}\n`;
 }

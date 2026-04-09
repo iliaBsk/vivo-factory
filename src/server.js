@@ -47,9 +47,10 @@ const server = http.createServer(async (request, response) => {
   response.end(result.body);
 });
 
-const port = runtimeConfig.server_port ?? 4310;
-server.listen(port, "127.0.0.1", () => {
-  console.log(`Vivo Factory dashboard listening on http://127.0.0.1:${port}`);
+const port = Number(envConfig.PORT ?? runtimeConfig.server_port ?? 4310);
+const host = envConfig.HOST ?? runtimeConfig.server_host ?? "127.0.0.1";
+server.listen(port, host, () => {
+  console.log(`Vivo Factory dashboard listening on http://${host}:${port}`);
 });
 
 async function readRequestBody(request) {

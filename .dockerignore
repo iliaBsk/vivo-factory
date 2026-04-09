@@ -1,0 +1,7 @@
+.git
+.superpowers
+node_modules
+tmp
+data
+.env
+.DS_Store
