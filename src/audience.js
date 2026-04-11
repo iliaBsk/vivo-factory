@@ -12,7 +12,9 @@ export function normalizeAudience(description) {
     throw new Error("Audience description must not be empty");
   }
 
-  const normalized = input.replace(/\s+/g, " ");
+  const normalized = input
+    .replace(/\b(in)\s+(his|her|their)\s+early\s+(\d{2})s/gi, "$1 early $3s")
+    .replace(/\s+/g, " ");
   const age = normalized.match(/early\s+(\d{2})s/i)?.[1] ?? "40";
   const location = inferLocation(normalized);
   const label = normalized
@@ -57,11 +59,14 @@ function inferFamilyContext(input) {
 }
 
 function inferLocation(input) {
-  return (
-    input.match(/living in ([A-Za-zÀ-ÿ' -]+)/i)?.[1]?.split(/[,.]/)[0]?.trim() ??
-    input.match(/\bin ([A-Za-zÀ-ÿ' -]+)/i)?.[1]?.split(/[,.]/)[0]?.trim() ??
-    "Unknown"
-  );
+  const livingInMatch = input.match(/living in ([A-Za-zÀ-ÿ' -]+)/i)?.[1];
+  if (livingInMatch) {
+    return livingInMatch.split(/[,.]/)[0]?.trim() ?? "Unknown";
+  }
+
+  const genericMatches = [...input.matchAll(/\bin ([A-Za-zÀ-ÿ' -]+)/gi)];
+  const locationMatch = genericMatches.at(-1)?.[1];
+  return locationMatch?.split(/[,.]/)[0]?.trim() ?? "Unknown";
 }
 
 function buildGenericAudienceId(label, location, age) {

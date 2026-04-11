@@ -52,13 +52,21 @@ test("createInstanceManager exposes sanitized per-instance config and validates 
   assert.equal(instances.length, 1);
   assert.deepEqual(instances[0], {
     audience_id: "bald-high-man-early-40s-barcelona",
+    audience_key: "bald-high-man-early-40s-barcelona",
     service_name: "bald-high-man-early-40s-barcelona-openclaw",
     profile_service_name: "bald-high-man-early-40s-barcelona-profile",
     plugin_base_url: "http://127.0.0.1:5401",
     openclaw_admin_url: "http://127.0.0.1:7601",
     telegram_chat_id: "-1001111111111",
     telegram_report_chat_id: "-1002222222222",
-    telegram_bot_token_masked: "123456:SECR...OKEN"
+    telegram_bot_token_masked: "123456:SECR...OKEN",
+    commands: {
+      openclaw_shell: "docker compose -f /srv/vivo-factory/generated/docker-compose.yml exec bald-high-man-early-40s-barcelona-openclaw /bin/sh",
+      profile_shell: "docker compose -f /srv/vivo-factory/generated/docker-compose.yml exec bald-high-man-early-40s-barcelona-profile /bin/sh",
+      openclaw_env: "docker compose -f /srv/vivo-factory/generated/docker-compose.yml exec bald-high-man-early-40s-barcelona-openclaw env",
+      openclaw_logs: "docker compose -f /srv/vivo-factory/generated/docker-compose.yml logs --tail 200 bald-high-man-early-40s-barcelona-openclaw",
+      profile_logs: "docker compose -f /srv/vivo-factory/generated/docker-compose.yml logs --tail 200 bald-high-man-early-40s-barcelona-profile"
+    }
   });
 });
 
@@ -202,6 +210,7 @@ test("app exposes instance health, reports, deploy, and operator chat endpoints"
 
   assert.equal(instancesResponse.status, 200);
   assert.equal(JSON.parse(instancesResponse.body).items[0].telegram_bot_token_masked, "123456:SECR...OKEN");
+  assert.match(JSON.parse(instancesResponse.body).items[0].commands.openclaw_shell, /docker compose/);
   assert.equal(healthResponse.status, 200);
   assert.deepEqual(JSON.parse(healthResponse.body), { status: "ok", uptime_seconds: 42 });
   assert.equal(reportResponse.status, 200);

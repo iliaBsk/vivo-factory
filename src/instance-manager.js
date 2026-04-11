@@ -10,7 +10,10 @@ export function createInstanceManager(runtimeConfig, options = {}) {
 
   return {
     listInstances() {
-      return Object.entries(config.audiences).map(([audienceId, audienceConfig]) => sanitizeInstanceConfig(audienceId, audienceConfig));
+      return Object.entries(config.audiences).map(([audienceId, audienceConfig]) => sanitizeInstanceConfig(audienceId, audienceConfig, config.compose_file));
+    },
+    getInstanceCommands(audienceId) {
+      return buildInstanceCommands(config.compose_file, getInstanceConfig(config, audienceId));
     },
     async deployAll() {
       const services = this.listInstances().flatMap((instance) => [instance.service_name, instance.profile_service_name]);
@@ -83,7 +86,9 @@ function getInstanceConfig(runtimeConfig, audienceId) {
     throw new Error(`Unknown audience instance: ${audienceId}`);
   }
   return {
+    compose_file: runtimeConfig.compose_file,
     audience_id: audienceId,
+    audience_key: audienceId,
     service_name: `${audienceId}-openclaw`,
     profile_service_name: `${audienceId}-profile`,
     plugin_base_url: audienceConfig.plugin_base_url,
@@ -97,17 +102,34 @@ function getInstanceConfig(runtimeConfig, audienceId) {
   };
 }
 
-function sanitizeInstanceConfig(audienceId, audienceConfig) {
-  const instance = getInstanceConfig({ audiences: { [audienceId]: audienceConfig } }, audienceId);
+function sanitizeInstanceConfig(audienceId, audienceConfig, composeFile) {
+  const instance = getInstanceConfig({
+    compose_file: composeFile,
+    audiences: { [audienceId]: audienceConfig }
+  }, audienceId);
   return {
     audience_id: instance.audience_id,
+    audience_key: instance.audience_key,
     service_name: instance.service_name,
     profile_service_name: instance.profile_service_name,
     plugin_base_url: instance.plugin_base_url,
     openclaw_admin_url: instance.openclaw_admin_url,
     telegram_chat_id: instance.telegram_chat_id,
     telegram_report_chat_id: instance.telegram_report_chat_id,
-    telegram_bot_token_masked: maskToken(instance.telegram_bot_token)
+    telegram_bot_token_masked: maskToken(instance.telegram_bot_token),
+    commands: buildInstanceCommands(instance.compose_file ?? undefined, instance)
+  };
+}
+
+function buildInstanceCommands(composeFile, instance) {
+  const composeTarget = composeFile ?? "generated/docker-compose.yml";
+  const prefix = `docker compose -f ${composeTarget}`;
+  return {
+    openclaw_shell: `${prefix} exec ${instance.service_name} /bin/sh`,
+    profile_shell: `${prefix} exec ${instance.profile_service_name} /bin/sh`,
+    openclaw_env: `${prefix} exec ${instance.service_name} env`,
+    openclaw_logs: `${prefix} logs --tail 200 ${instance.service_name}`,
+    profile_logs: `${prefix} logs --tail 200 ${instance.profile_service_name}`
   };
 }
 

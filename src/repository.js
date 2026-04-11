@@ -531,6 +531,7 @@ export function createSupabaseRepository(options) {
 function normalizeState(seed) {
   return {
     audiences: new Map((seed.audiences ?? []).map((item) => [item.id, { ...item }])),
+    instances: new Map((seed.instances ?? []).map((item) => [item.id, { ...item }])),
     stories: new Map((seed.stories ?? []).map((item) => [item.id, { ...item }])),
     storyAssets: new Map((seed.storyAssets ?? []).map((item) => [item.id, { ...item }])),
     storageObjects: new Map((seed.storageObjects ?? []).map((item) => [item.id, { ...item }])),
@@ -547,6 +548,7 @@ function normalizeState(seed) {
 function exportState(state) {
   return {
     audiences: [...state.audiences.values()],
+    instances: [...state.instances.values()],
     stories: [...state.stories.values()],
     storyAssets: [...state.storyAssets.values()],
     storageObjects: [...state.storageObjects.values()],
@@ -569,6 +571,9 @@ function listStoriesFromState(state, filters) {
 
 function hydrateStory(state, story) {
   const audience = state.audiences.get(story.audience_id) ?? null;
+  const instance = story.instance_id
+    ? state.instances.get(story.instance_id) ?? null
+    : [...state.instances.values()].find((item) => item.audience_id === story.audience_id) ?? null;
   const assets = getStoryAssets(state, story.id).map((asset) => hydrateAsset(state, asset));
   const reviews = state.storyReviews
     .filter((entry) => entry.story_id === story.id)
@@ -580,6 +585,7 @@ function hydrateStory(state, story) {
   return {
     ...story,
     audience,
+    instance,
     assets,
     reviews,
     publications,
@@ -588,9 +594,12 @@ function hydrateStory(state, story) {
 }
 
 function hydrateAsset(state, asset) {
+  const storageObject = asset.storage_object_id ? state.storageObjects.get(asset.storage_object_id) ?? null : null;
   return {
     ...asset,
-    storage_object: asset.storage_object_id ? state.storageObjects.get(asset.storage_object_id) ?? null : null
+    storage_object: storageObject,
+    download_url: storageObject?.download_url ?? asset.source_asset_url ?? null,
+    preview_url: storageObject?.download_url ?? asset.source_asset_url ?? null
   };
 }
 
@@ -821,6 +830,31 @@ function createSupabaseClient(options) {
         throw new Error(await response.text());
       }
       return response.json().catch(() => ({}));
+    },
+    async signObjectUrl(bucketName, objectPath, expiresIn = 3600) {
+      const encodedSegments = objectPath
+        .split("/")
+        .map((segment) => encodeURIComponent(segment))
+        .join("/");
+      const response = await fetchImpl(`${baseUrl}/storage/v1/object/sign/${encodeURIComponent(bucketName)}/${encodedSegments}`, {
+        method: "POST",
+        headers: {
+          ...createSupabaseHeaders(serviceRoleKey),
+          "content-type": "application/json"
+        },
+        body: JSON.stringify({ expiresIn })
+      });
+      if (!response.ok) {
+        throw new Error(await response.text());
+      }
+      const payload = typeof response.json === "function"
+        ? await response.json()
+        : JSON.parse(await response.text());
+      const signedPath = payload.signedURL ?? payload.signedUrl ?? payload.url ?? "";
+      if (!signedPath) {
+        return null;
+      }
+      return signedPath.startsWith("http") ? signedPath : `${baseUrl}${signedPath}`;
     }
   };
 }
@@ -832,9 +866,11 @@ async function hydrateSupabaseStories(client, stories) {
 
   const storyIds = uniqueValues(stories.map((story) => story.id));
   const audienceIds = uniqueValues(stories.map((story) => story.audience_id));
+  const instanceIds = uniqueValues(stories.map((story) => story.instance_id).filter(Boolean));
 
-  const [audiences, assets, reviews, publications] = await Promise.all([
+  const [audiences, instances, assets, reviews, publications] = await Promise.all([
     audienceIds.length > 0 ? client.select("vivo_audiences", { id: `in.(${audienceIds.join(",")})` }) : [],
+    instanceIds.length > 0 ? client.select("vivo_instances", { id: `in.(${instanceIds.join(",")})` }) : [],
     client.select("vivo_story_assets", { story_id: `in.(${storyIds.join(",")})`, order: "created_at.desc" }),
     client.select("vivo_story_reviews", { story_id: `in.(${storyIds.join(",")})`, order: "created_at.desc" }),
     client.select("vivo_story_publications", { story_id: `in.(${storyIds.join(",")})`, order: "created_at.desc" })
@@ -842,6 +878,7 @@ async function hydrateSupabaseStories(client, stories) {
 
   const hydratedAssets = await hydrateSupabaseAssets(client, assets);
   const audiencesById = new Map(audiences.map((item) => [item.id, item]));
+  const instancesById = new Map(instances.map((item) => [item.id, item]));
   const assetsByStoryId = groupBy(hydratedAssets, (item) => item.story_id);
   const reviewsByStoryId = groupBy(reviews, (item) => item.story_id);
   const publicationsByStoryId = groupBy(publications, (item) => item.story_id);
@@ -851,6 +888,7 @@ async function hydrateSupabaseStories(client, stories) {
     return {
       ...story,
       audience: audiencesById.get(story.audience_id) ?? null,
+      instance: story.instance_id ? instancesById.get(story.instance_id) ?? null : null,
       assets: storyAssets,
       reviews: reviewsByStoryId.get(story.id) ?? [],
       publications: publicationsByStoryId.get(story.id) ?? [],
@@ -868,9 +906,17 @@ async function hydrateSupabaseAssets(client, assets) {
     ? await client.select("vivo_storage_objects", { id: `in.(${storageIds.join(",")})` })
     : [];
   const storageById = new Map(storageObjects.map((item) => [item.id, item]));
-  return assets.map((asset) => ({
-    ...asset,
-    storage_object: asset.storage_object_id ? storageById.get(asset.storage_object_id) ?? null : null
+  return Promise.all(assets.map(async (asset) => {
+    const storageObject = asset.storage_object_id ? storageById.get(asset.storage_object_id) ?? null : null;
+    const downloadUrl = storageObject
+      ? await client.signObjectUrl(storageObject.bucket_name ?? DEFAULT_STORAGE_BUCKET, storageObject.object_path)
+      : asset.source_asset_url ?? null;
+    return {
+      ...asset,
+      storage_object: storageObject,
+      download_url: downloadUrl,
+      preview_url: downloadUrl
+    };
   }));
 }
 

@@ -78,3 +78,82 @@ test("bootstrapAudiences rejects markdown without audience tags", async () => {
     /No audience definitions found/
   );
 });
+
+test("bootstrapAudiences provisions factory, audiences, and instances into the control plane", async () => {
+  const { bootstrapAudiences } = await loadBootstrapModule();
+  const provisioningCalls = [];
+  const markdown = `
+<audience>
+Bald high man in early 40s living in Barcelona, married with 8-10 year old boy. Loves beachwear and sportswear.
+</audience>
+<audience>
+Creative single woman in her early 30s in Madrid, into yoga, running, summer festivals.
+</audience>
+`;
+
+  const result = await bootstrapAudiences(markdown, {
+    factory: {
+      factory_key: "vivo-factory",
+      name: "Vivo Factory",
+      description: "Audience manager control plane"
+    },
+    audienceRuntimeConfig: {
+      "bald-high-man-early-40s-barcelona": {
+        plugin_base_url: "http://127.0.0.1:5401",
+        openclaw_admin_url: "http://127.0.0.1:7601"
+      },
+      "creative-single-woman-in-early-30s-madrid": {
+        plugin_base_url: "http://127.0.0.1:5402",
+        openclaw_admin_url: "http://127.0.0.1:7602"
+      }
+    },
+    profileClientFactory() {
+      return {
+        async updateFacts() {
+          return { ok: true };
+        },
+        async storeDecision() {
+          return { ok: true };
+        }
+      };
+    },
+    provisioningClient: {
+      async ensureFactory(factory) {
+        provisioningCalls.push({ type: "factory", factory });
+        return { id: "factory-1", ...factory };
+      },
+      async upsertAudience(factory, audience) {
+        provisioningCalls.push({ type: "audience", factory, audience });
+        return {
+          id: `aud-${audience.audience_key}`,
+          audience_key: audience.audience_key,
+          label: audience.label
+        };
+      },
+      async upsertInstance(factory, audience, instance) {
+        provisioningCalls.push({ type: "instance", factory, audience, instance });
+        return {
+          id: `inst-${audience.audience_key}`,
+          audience_id: audience.id,
+          instance_key: instance.instance_key,
+          service_name: instance.service_name
+        };
+      }
+    }
+  });
+
+  assert.equal(provisioningCalls.length, 5);
+  assert.deepEqual(provisioningCalls[0], {
+    type: "factory",
+    factory: {
+      factory_key: "vivo-factory",
+      name: "Vivo Factory",
+      description: "Audience manager control plane"
+    }
+  });
+  assert.equal(provisioningCalls[1].audience.audience_key, "bald-high-man-early-40s-barcelona");
+  assert.equal(provisioningCalls[2].instance.service_name, "bald-high-man-early-40s-barcelona-openclaw");
+  assert.equal(result.factory.id, "factory-1");
+  assert.equal(result.audiences[0].id, "aud-bald-high-man-early-40s-barcelona");
+  assert.equal(result.instances[1].instance_key, "creative-single-woman-in-early-30s-madrid-openclaw");
+});

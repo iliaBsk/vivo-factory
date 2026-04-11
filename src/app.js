@@ -28,6 +28,12 @@ async function handleRequest(context) {
     return json(200, { items: instanceManager ? instanceManager.listInstances() : [] });
   }
 
+  if (request.method === "GET" && matchPath(request.pathname, /^\/api\/instances\/([^/]+)\/commands$/)) {
+    ensureInstanceManager(instanceManager);
+    const audienceId = request.pathname.split("/")[3];
+    return json(200, { commands: instanceManager.getInstanceCommands(audienceId) });
+  }
+
   if (request.method === "GET" && request.pathname === "/api/stories") {
     const items = await repository.listStories(normalizeStoryFilters(request.query));
     return json(200, { items });
@@ -77,11 +83,19 @@ async function handleRequest(context) {
   if (request.method === "POST" && matchPath(request.pathname, /^\/api\/stories\/([^/]+)\/reviews$/)) {
     const storyId = request.pathname.split("/")[3];
     const body = readBody(request.body);
+    const story = await repository.getStory(storyId);
+    if (!story) {
+      return json(404, { error: "Story not found" });
+    }
+    const selectedAssetId = body.selected_asset_id ?? story.selected_asset_id ?? null;
+    if (body.review_status === "approved" && !selectedAssetId) {
+      return json(409, { error: "An approved review requires a selected asset." });
+    }
     const review = await repository.submitStoryReview(storyId, {
       review_status: body.review_status ?? "pending",
       review_notes: body.review_notes ?? "",
       actor_id: body.actor_id ?? "unknown",
-      selected_asset_id: body.selected_asset_id ?? null,
+      selected_asset_id: selectedAssetId,
       payload: body.payload ?? {},
       created_at: clock()
     });
@@ -245,9 +259,18 @@ async function handleRequest(context) {
   if (request.method === "GET" && request.pathname === "/") {
     const filters = normalizeStoryFilters(request.query);
     const audiences = await repository.listAudiences();
-    const stories = await repository.listStories(filters);
+    const stories = (await repository.listStories(filters)).map((story) => ({
+      ...story,
+      publication_target: publicationTargetResolver(story.audience, story)
+    }));
     const selectedStoryId = request.query?.story_id || stories[0]?.id || "";
-    const activeStory = selectedStoryId ? await repository.getStory(selectedStoryId) : null;
+    const activeStoryRaw = selectedStoryId ? await repository.getStory(selectedStoryId) : null;
+    const activeStory = activeStoryRaw
+      ? {
+          ...activeStoryRaw,
+          publication_target: publicationTargetResolver(activeStoryRaw.audience, activeStoryRaw)
+        }
+      : null;
     const auditItems = (await repository.listAuditLog()).slice(0, 10);
     const analyticsItems = (await repository.listFeedbackEvents()).slice(0, 10);
     const instances = instanceManager ? instanceManager.listInstances() : [];
@@ -276,10 +299,20 @@ function renderDashboard(model) {
   const storiesList = model.stories.map((story) => {
     const href = buildDashboardHref(model.filters, story.id);
     const isActive = model.activeStory?.id === story.id;
+    const targetLabel = story.publication_target
+      ? `${story.publication_target.channel}:${story.publication_target.target_identifier}`
+      : "unconfigured";
     return `<a class="story-row${isActive ? " active" : ""}" href="${escapeAttribute(href)}">
       <strong>${escapeHtml(story.title)}</strong>
-      <span>${escapeHtml(story.status)}</span>
-      <span>${escapeHtml(story.operator_review_status)}</span>
+      <div class="story-row-meta">
+        <span>${escapeHtml(story.audience?.label ?? "Unknown audience")}</span>
+        <span>${escapeHtml(story.status)}</span>
+        <span>${escapeHtml(story.operator_review_status)}</span>
+      </div>
+      <div class="story-row-meta">
+        <span>Asset: ${escapeHtml(story.selected_asset_id ?? "none")}</span>
+        <span>Target: ${escapeHtml(targetLabel)}</span>
+      </div>
     </a>`;
   }).join("");
 
@@ -301,15 +334,24 @@ function renderDashboard(model) {
     : "<li>No analytics snapshots</li>";
   const liveInstances = model.instances.length
     ? model.instances.map((instance) => `<li>
-        <strong>${escapeHtml(instance.audience_id)}</strong>
+        <strong>${escapeHtml(instance.service_name ?? instance.audience_id)}</strong>
+        <div>Audience: ${escapeHtml(instance.audience_key ?? instance.audience_id)}</div>
         <div>Chat ID: ${escapeHtml(instance.telegram_chat_id)}</div>
         <div>Report ID: ${escapeHtml(instance.telegram_report_chat_id ?? "")}</div>
         <div>Admin: ${escapeHtml(instance.openclaw_admin_url)}</div>
+        <div>Profile Service: ${escapeHtml(instance.profile_service_name ?? "n/a")}</div>
         <div class="instance-actions">
           <button type="button" data-instance-action="deploy" data-audience-id="${escapeAttribute(instance.audience_id)}">Deploy</button>
           <button type="button" data-instance-action="health" data-audience-id="${escapeAttribute(instance.audience_id)}">Health</button>
           <button type="button" data-instance-action="report" data-audience-id="${escapeAttribute(instance.audience_id)}">Report</button>
           <button type="button" data-instance-action="logs" data-audience-id="${escapeAttribute(instance.audience_id)}">Logs</button>
+        </div>
+        <div class="command-list">
+          ${renderCommandBlock("OpenClaw Shell", instance.commands?.openclaw_shell)}
+          ${renderCommandBlock("Profile Shell", instance.commands?.profile_shell)}
+          ${renderCommandBlock("OpenClaw Env", instance.commands?.openclaw_env)}
+          ${renderCommandBlock("OpenClaw Logs", instance.commands?.openclaw_logs)}
+          ${renderCommandBlock("Profile Logs", instance.commands?.profile_logs)}
         </div>
       </li>`).join("")
     : "<li>No instance config</li>";
@@ -319,6 +361,7 @@ function renderDashboard(model) {
   const metadataJson = escapeHtml(JSON.stringify(model.activeStory?.metadata ?? {}, null, 2));
   const profileJson = escapeHtml(JSON.stringify(audience?.profile_snapshot ?? {}, null, 2));
   const selectedAssetId = model.activeStory?.selected_asset_id ?? "";
+  const publicationTarget = model.activeStory?.publication_target ?? null;
 
   return `<!doctype html>
 <html lang="en">
@@ -397,6 +440,13 @@ function renderDashboard(model) {
         border-radius: 16px;
         background: #fff;
         border: 1px solid transparent;
+      }
+      .story-row-meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        color: var(--muted);
+        font-size: 13px;
       }
       .story-row.active {
         border-color: var(--accent);
@@ -515,6 +565,28 @@ function renderDashboard(model) {
         gap: 8px;
         margin-top: 10px;
       }
+      .command-list {
+        display: grid;
+        gap: 8px;
+        margin-top: 12px;
+      }
+      .command-block {
+        display: grid;
+        gap: 4px;
+      }
+      .command-block code {
+        display: block;
+        padding: 8px 10px;
+        border-radius: 12px;
+        background: var(--panel-strong);
+        overflow-x: auto;
+      }
+      .asset-preview-media {
+        width: 100%;
+        max-height: 240px;
+        object-fit: cover;
+        border-radius: 14px;
+      }
       @media (max-width: 1080px) {
         .layout, .workspace-grid {
           grid-template-columns: 1fr;
@@ -583,6 +655,8 @@ function renderDashboard(model) {
                     <div class="meta-chip"><strong>Review</strong><div>${escapeHtml(model.activeStory.operator_review_status)}</div></div>
                     <div class="meta-chip"><strong>Selected Asset</strong><div>${escapeHtml(selectedAssetId || "none")}</div></div>
                     <div class="meta-chip"><strong>Audience</strong><div>${escapeHtml(model.activeStory.audience?.label ?? "unknown")}</div></div>
+                    <div class="meta-chip"><strong>Instance</strong><div>${escapeHtml(model.activeStory.instance?.service_name ?? "unassigned")}</div></div>
+                    <div class="meta-chip"><strong>Channel Target</strong><div>${escapeHtml(publicationTarget ? `${publicationTarget.channel}:${publicationTarget.target_identifier}` : "unconfigured")}</div></div>
                   </div>
                   <form id="story-form" data-story-id="${escapeAttribute(model.activeStory.id)}" class="filter-grid">
                     <label>Title
@@ -621,9 +695,13 @@ function renderDashboard(model) {
               <div class="panel-inner">
                 <div class="section-title">
                   <h2>Publication Queue</h2>
-                  <span class="muted">Telegram-first manual queueing</span>
+                  <span class="muted">Select asset, approve, then queue channel publication</span>
                 </div>
                 ${model.activeStory ? `
+                  <div class="story-meta" style="margin-bottom:12px;">
+                    <div class="meta-chip"><strong>Channel</strong><div>${escapeHtml(publicationTarget?.channel ?? "unconfigured")}</div></div>
+                    <div class="meta-chip"><strong>Target</strong><div>${escapeHtml(publicationTarget?.target_identifier ?? "unconfigured")}</div></div>
+                  </div>
                   <form id="review-form" data-story-id="${escapeAttribute(model.activeStory.id)}" class="filter-grid">
                     <label>Review Notes
                       <textarea name="review_notes" placeholder="What changed or why is this ready?"></textarea>
@@ -636,7 +714,7 @@ function renderDashboard(model) {
                     </div>
                   </form>
                   <div class="button-row" style="margin-top:12px;">
-                    <button type="button" id="queue-publication-button" data-story-id="${escapeAttribute(model.activeStory.id)}">Queue Telegram Publication</button>
+                    <button type="button" id="queue-publication-button" data-story-id="${escapeAttribute(model.activeStory.id)}">Queue Channel Publication</button>
                   </div>
                 ` : ""}
                 <h3 style="margin:18px 0 10px;">Queued Publications</h3>
@@ -887,10 +965,13 @@ function renderAssetCard(story, asset) {
   const selected = asset.is_selected ? " selected" : "";
   const replaceUrl = `/api/stories/${story.id}/assets/${asset.id}/replace`;
   const selectUrl = `/api/stories/${story.id}/assets/${asset.id}/select`;
-  const previewText = asset.storage_object?.file_name ?? asset.source_asset_url ?? `${asset.asset_type} asset`;
+  const previewUrl = asset.preview_url ?? asset.download_url ?? asset.source_asset_url ?? "";
+  const preview = previewUrl
+    ? renderAssetPreview(asset, previewUrl)
+    : escapeHtml(asset.storage_object?.file_name ?? asset.source_asset_url ?? `${asset.asset_type} asset`);
 
   return `<article class="asset-card${selected}" data-asset-card>
-    <div class="asset-preview">${escapeHtml(previewText)}</div>
+    <div class="asset-preview">${preview}</div>
     <div class="muted">${escapeHtml(asset.asset_type)} · ${escapeHtml(asset.status)} · ${asset.is_selected ? "selected" : "not selected"}</div>
     <div class="button-row" style="margin-top:10px;">
       <button type="button" class="secondary" data-asset-select="${escapeAttribute(selectUrl)}">Select</button>
@@ -902,6 +983,20 @@ function renderAssetCard(story, asset) {
       <button type="button" data-asset-replace="${escapeAttribute(replaceUrl)}">Upload Replacement</button>
     </div>
   </article>`;
+}
+
+function renderAssetPreview(asset, previewUrl) {
+  if (asset.asset_type === "video") {
+    return `<video class="asset-preview-media" controls src="${escapeAttribute(previewUrl)}"></video>`;
+  }
+  return `<img class="asset-preview-media" src="${escapeAttribute(previewUrl)}" alt="${escapeAttribute(asset.asset_slot ?? asset.asset_type ?? "asset")}" />`;
+}
+
+function renderCommandBlock(label, command) {
+  if (!command) {
+    return "";
+  }
+  return `<div class="command-block"><strong>${escapeHtml(label)}</strong><code>${escapeHtml(command)}</code></div>`;
 }
 
 function renderAudienceFields(audience) {

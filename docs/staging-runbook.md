@@ -5,6 +5,7 @@
 This repository currently provides:
 
 - audience bootstrap from `audience_group.md`
+- Supabase provisioning for `vivo_factories`, `vivo_audiences`, and `vivo_instances` during bootstrap
 - stack manifest generation for 5 isolated audience runtimes
 - a generated full-stack Docker Compose deployment with:
   - one `vivo-factory-dashboard` container
@@ -16,6 +17,7 @@ This repository currently provides:
   - asset review and replacement
   - audience drawer editing
   - queued Telegram publications
+  - channel target visibility in the story workspace
   - analytics snapshot
   - audit log
   - live instance deploy controls
@@ -23,6 +25,7 @@ This repository currently provides:
   - live instance report fetch
   - live instance log fetch
   - operator chat console per instance
+  - exact `docker compose exec` launcher commands for each audience container
 
 This repository does **not** yet run a full production OpenClaw posting pipeline by itself. It is the control-plane scaffold and operator surface around that future runtime.
 
@@ -149,7 +152,7 @@ SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
 SUPABASE_STORAGE_BUCKET=vivo-content
 ```
 
-Then bootstrap audience profiles into the per-audience profile engines.
+Then bootstrap audience profiles into the per-audience profile engines and provision the Supabase control-plane rows used by the story pipeline.
 
 Then run:
 
@@ -162,6 +165,7 @@ Expected result:
 - `generated/bootstrap-summary.json` is created
 - audience facts are written through `user-profile-plugin`
 - audience bootstrap decisions are recorded
+- factory, audience, and instance rows are upserted in Supabase when credentials are configured
 
 If this fails:
 

@@ -35,11 +35,27 @@ function createSeed() {
         updated_at: "2026-03-21T10:00:00.000Z"
       }
     ],
+    instances: [
+      {
+        id: "inst-1",
+        factory_id: "factory-1",
+        audience_id: "aud-1",
+        instance_key: "barcelona-family-openclaw",
+        service_name: "barcelona-family-openclaw",
+        openclaw_admin_url: "http://127.0.0.1:7601",
+        profile_base_url: "http://127.0.0.1:5401",
+        runtime_config: {},
+        status: "active",
+        created_at: "2026-03-21T10:00:00.000Z",
+        updated_at: "2026-03-21T10:00:00.000Z"
+      }
+    ],
     stories: [
       {
         id: "story-1",
         factory_id: "factory-1",
         audience_id: "aud-1",
+        instance_id: "inst-1",
         story_key: "story-1",
         title: "Beachwear picks",
         story_text: "Pack light for the coast.",
@@ -57,6 +73,7 @@ function createSeed() {
         id: "story-2",
         factory_id: "factory-1",
         audience_id: "aud-1",
+        instance_id: "inst-1",
         story_key: "story-2",
         title: "Sportswear picks",
         story_text: "Comfort first.",
@@ -123,6 +140,7 @@ function createSeed() {
         height: 1920,
         duration_seconds: null,
         checksum: "abc",
+        download_url: "https://cdn.example.com/stories/story-1/hero.png",
         created_at: "2026-03-21T10:00:00.000Z",
         updated_at: "2026-03-21T10:00:00.000Z"
       }
@@ -146,6 +164,7 @@ test("repository tracks review history, selected assets, audience edits, and pub
     summary: "Sharper summary"
   });
   assert.equal(updatedStory.title, "Updated beachwear picks");
+  assert.equal(repository.getStory("story-1").instance.service_name, "barcelona-family-openclaw");
 
   const updatedAudience = repository.updateAudience("aud-1", {
     tone: "direct",
@@ -366,6 +385,36 @@ test("app blocks publication queueing when story is not operator-approved", asyn
   assert.match(response.body, /approved/i);
 });
 
+test("app blocks approval when no asset is selected", async () => {
+  const { createRepository, createApp } = await loadModules();
+  const seed = createSeed();
+  seed.storyAssets = seed.storyAssets.map((asset) => ({
+    ...asset,
+    is_selected: false
+  }));
+  const repository = createRepository(seed);
+  const app = createApp({
+    repository,
+    publicationTargetResolver() {
+      return { channel: "telegram", target_identifier: "-1001111111111" };
+    },
+    clock: () => "2026-03-21T13:00:00.000Z"
+  });
+
+  const response = await app.handle({
+    method: "POST",
+    pathname: "/api/stories/story-1/reviews",
+    body: JSON.stringify({
+      actor_id: "operator@example.com",
+      review_status: "approved",
+      review_notes: "Ship it."
+    })
+  });
+
+  assert.equal(response.status, 409);
+  assert.match(response.body, /selected asset/i);
+});
+
 test("dashboard HTML renders queue filters, story editor, asset panel, audience drawer toggle, publication panel, and live instances", async () => {
   const { createRepository, createApp } = await loadModules();
   const repository = createRepository(createSeed());
@@ -379,9 +428,16 @@ test("dashboard HTML renders queue filters, story editor, asset panel, audience 
         return [
           {
             audience_id: "barcelona-family",
+            audience_key: "barcelona-family",
+            service_name: "barcelona-family-openclaw",
+            profile_service_name: "barcelona-family-profile",
             telegram_chat_id: "-1001111111111",
             telegram_report_chat_id: "-1002222222222",
-            openclaw_admin_url: "http://127.0.0.1:7601"
+            openclaw_admin_url: "http://127.0.0.1:7601",
+            commands: {
+              openclaw_shell: "docker compose -f generated/docker-compose.yml exec barcelona-family-openclaw /bin/sh",
+              profile_shell: "docker compose -f generated/docker-compose.yml exec barcelona-family-profile /bin/sh"
+            }
           }
         ];
       }
@@ -403,4 +459,8 @@ test("dashboard HTML renders queue filters, story editor, asset panel, audience 
   assert.match(response.body, /Audience Drawer/);
   assert.match(response.body, /Publication Queue/);
   assert.match(response.body, /Live Instances/);
+  assert.match(response.body, /barcelona-family-openclaw/);
+  assert.match(response.body, /docker compose -f generated\/docker-compose\.yml exec/);
+  assert.match(response.body, /Channel Target/);
+  assert.match(response.body, /<img /);
 });
