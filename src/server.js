@@ -1,10 +1,19 @@
 import http from "node:http";
 import path from "node:path";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 
 import { createApp } from "./app.js";
+import { createAudienceImportService } from "./audience-import.js";
+import { createAudienceManagerLauncher } from "./audience-manager-launcher.js";
+import { createSupabaseProvisioningClient } from "./bootstrap-provisioning.js";
 import { createInstanceManager } from "./instance-manager.js";
+import { createOpenAiAudienceClient } from "./openai-audience-client.js";
 import { createFileRepository, createSupabaseRepository } from "./repository.js";
+import { createSetupService, resolveLlmDefaults } from "./setup-service.js";
 import { loadEnvConfig, loadJsonConfig } from "./runtime-config.js";
+
+const execFileAsync = promisify(execFile);
 
 const runtimeConfig = loadJsonConfig("config/runtime.json", {});
 const envConfig = {
@@ -13,10 +22,48 @@ const envConfig = {
 };
 const repository = createDashboardRepository(runtimeConfig, envConfig);
 const instanceManager = Object.keys(runtimeConfig.audiences ?? {}).length > 0 ? createInstanceManager(runtimeConfig) : null;
+const setupService = createSetupService({
+  envConfig,
+  fetchImpl: globalThis.fetch
+});
+const provisioningClient = isConfiguredValue(envConfig.SUPABASE_URL) && isConfiguredValue(envConfig.SUPABASE_SERVICE_ROLE_KEY)
+  ? createSupabaseProvisioningClient({
+      url: envConfig.SUPABASE_URL,
+      serviceRoleKey: envConfig.SUPABASE_SERVICE_ROLE_KEY,
+      fetchImpl: globalThis.fetch
+    })
+  : null;
+const audienceImportService = createAudienceImportService({
+  cwd: process.cwd(),
+  repository,
+  llmClient: createOpenAiAudienceClient({
+    apiKey: envConfig.OPENAI_API_KEY,
+    model: envConfig.OPENAI_MODEL ?? envConfig.LLM_MODEL,
+    baseUrl: envConfig.OPENAI_BASE_URL ?? envConfig.LLM_BASE_URL,
+    fetchImpl: globalThis.fetch
+  }),
+  provisioningClient,
+  factory: {
+    factory_key: runtimeConfig.factory_key ?? envConfig.VIVO_FACTORY_KEY ?? "vivo-factory",
+    name: runtimeConfig.factory_name ?? envConfig.VIVO_FACTORY_NAME ?? "Vivo Factory",
+    description: runtimeConfig.factory_description ?? "Audience manager control plane"
+  },
+  audienceRuntimeConfig: runtimeConfig.audiences ?? {}
+});
+const llmDefaults = resolveLlmDefaults(envConfig);
+const audienceManagerLauncher = createAudienceManagerLauncher({
+  cwd: process.cwd(),
+  runtimeConfig,
+  llmDefaults,
+  execImpl: defaultExec
+});
 
 const app = createApp({
   repository,
   instanceManager,
+  setupService,
+  audienceImportService,
+  audienceManagerLauncher,
   publicationTargetResolver(audience) {
     if (!audience?.audience_key) {
       return null;
@@ -84,4 +131,21 @@ function isConfiguredValue(value) {
     return false;
   }
   return !String(value).includes("replace-me");
+}
+
+async function defaultExec(command, args) {
+  try {
+    const result = await execFileAsync(command, args, { encoding: "utf8" });
+    return {
+      exitCode: 0,
+      stdout: result.stdout,
+      stderr: result.stderr
+    };
+  } catch (error) {
+    return {
+      exitCode: error.code ?? 1,
+      stdout: error.stdout ?? "",
+      stderr: error.stderr ?? error.message
+    };
+  }
 }

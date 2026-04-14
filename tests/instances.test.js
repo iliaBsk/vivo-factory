@@ -225,6 +225,56 @@ test("app exposes instance health, reports, deploy, and operator chat endpoints"
   assert.equal(repository.listDeployments().length, 1);
 });
 
+test("app launches a single audience manager on demand", async () => {
+  const { createRepository, createApp } = await loadModules();
+  const repository = createRepository({
+    audiences: [
+      {
+        id: "aud-1",
+        audience_key: "bald-high-man-early-40s-barcelona",
+        label: "Barcelona Family"
+      }
+    ],
+    instances: [
+      {
+        id: "inst-1",
+        audience_id: "aud-1",
+        instance_key: "bald-high-man-early-40s-barcelona-openclaw",
+        service_name: "bald-high-man-early-40s-barcelona-openclaw",
+        runtime_config: { llm_model: "gpt-4.1" }
+      }
+    ]
+  });
+  const app = createApp({
+    repository,
+    audienceManagerLauncher: {
+      async launchAudienceManager(audience, instance) {
+        return {
+          audience,
+          instance,
+          services: {
+            openclaw: "bald-high-man-early-40s-barcelona-openclaw",
+            profile: "bald-high-man-early-40s-barcelona-profile"
+          },
+          commands: {
+            openclaw_shell: "docker compose -f generated/audience-managers/bald-high-man-early-40s-barcelona.compose.yml exec bald-high-man-early-40s-barcelona-openclaw /bin/sh"
+          }
+        };
+      }
+    },
+    clock: () => "2026-03-23T10:00:00.000Z"
+  });
+
+  const response = await app.handle({
+    method: "POST",
+    pathname: "/api/audiences/aud-1/launch",
+    body: JSON.stringify({ operator: "operator@example.com" })
+  });
+
+  assert.equal(response.status, 200);
+  assert.match(JSON.parse(response.body).commands.openclaw_shell, /audience-managers/);
+});
+
 test("dashboard HTML renders live instance controls", async () => {
   const { createRepository, createApp, createInstanceManager } = await loadModules();
   const repository = createRepository();

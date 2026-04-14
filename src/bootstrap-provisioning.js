@@ -26,7 +26,8 @@ export function createSupabaseProvisioningClient(options) {
         openclaw_admin_url: instance.openclaw_admin_url,
         profile_base_url: instance.profile_base_url,
         runtime_config: {
-          profile_service_name: instance.profile_service_name
+          profile_service_name: instance.profile_service_name,
+          ...(instance.runtime_config ?? {})
         },
         status: "active"
       });

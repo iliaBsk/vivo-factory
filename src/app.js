@@ -1,6 +1,9 @@
 export function createApp(options) {
   const repository = options.repository;
   const instanceManager = options.instanceManager ?? null;
+  const setupService = options.setupService ?? null;
+  const audienceImportService = options.audienceImportService ?? null;
+  const audienceManagerLauncher = options.audienceManagerLauncher ?? null;
   const publicationTargetResolver = options.publicationTargetResolver ?? (() => null);
   const clock = options.clock ?? (() => new Date().toISOString());
 
@@ -10,6 +13,9 @@ export function createApp(options) {
         return await handleRequest({
           repository,
           instanceManager,
+          setupService,
+          audienceImportService,
+          audienceManagerLauncher,
           publicationTargetResolver,
           clock,
           request
@@ -22,7 +28,42 @@ export function createApp(options) {
 }
 
 async function handleRequest(context) {
-  const { repository, instanceManager, publicationTargetResolver, clock, request } = context;
+  const {
+    repository,
+    instanceManager,
+    setupService,
+    audienceImportService,
+    audienceManagerLauncher,
+    publicationTargetResolver,
+    clock,
+    request
+  } = context;
+
+  if (request.method === "GET" && request.pathname === "/api/setup") {
+    return json(200, setupService ? await setupService.getStatus() : defaultSetupStatus());
+  }
+
+  if (request.method === "GET" && request.pathname === "/api/audience-source") {
+    if (!audienceImportService) {
+      return json(404, { error: "Audience import is not configured." });
+    }
+    return json(200, await audienceImportService.getSource());
+  }
+
+  if (request.method === "POST" && request.pathname === "/api/audiences/import-preview") {
+    if (!audienceImportService) {
+      return json(404, { error: "Audience import is not configured." });
+    }
+    return json(200, await audienceImportService.previewImport());
+  }
+
+  if (request.method === "POST" && request.pathname === "/api/audiences/import-confirm") {
+    if (!audienceImportService) {
+      return json(404, { error: "Audience import is not configured." });
+    }
+    const body = readBody(request.body);
+    return json(200, await audienceImportService.confirmImport(body.items ?? []));
+  }
 
   if (request.method === "GET" && request.pathname === "/api/instances") {
     return json(200, { items: instanceManager ? instanceManager.listInstances() : [] });
@@ -186,6 +227,39 @@ async function handleRequest(context) {
     return json(200, audience);
   }
 
+  if (request.method === "POST" && matchPath(request.pathname, /^\/api\/audiences\/([^/]+)\/launch$/)) {
+    if (!audienceManagerLauncher) {
+      return json(404, { error: "Audience manager launch is not configured." });
+    }
+    const audienceId = request.pathname.split("/")[3];
+    const audience = await repository.getAudience(audienceId);
+    if (!audience) {
+      return json(404, { error: "Audience not found" });
+    }
+    const instance = await repository.getInstanceByAudience(audienceId);
+    if (!instance) {
+      return json(409, { error: "Audience instance configuration not found." });
+    }
+    const body = readBody(request.body);
+    const result = await audienceManagerLauncher.launchAudienceManager(audience, instance, {
+      operator: body.operator ?? body.actor_id ?? "unknown",
+      timestamp: clock()
+    });
+    if (repository.updateInstance && result.instance_update) {
+      await repository.updateInstance(instance.id, result.instance_update, {
+        actorId: body.operator ?? body.actor_id ?? "unknown",
+        timestamp: clock()
+      });
+    }
+    repository.saveDeploymentResult({
+      audience_id: audienceId,
+      operator: body.operator ?? body.actor_id ?? "unknown",
+      timestamp: clock(),
+      result
+    });
+    return json(200, result);
+  }
+
   if (request.method === "GET" && matchPath(request.pathname, /^\/api\/instances\/([^/]+)\/health$/)) {
     ensureInstanceManager(instanceManager);
     const audienceId = request.pathname.split("/")[3];
@@ -258,7 +332,19 @@ async function handleRequest(context) {
 
   if (request.method === "GET" && request.pathname === "/") {
     const filters = normalizeStoryFilters(request.query);
+    const setupStatus = setupService ? await setupService.getStatus() : defaultSetupStatus();
+    let audienceImportPreview = null;
+    if (audienceImportService) {
+      try {
+        audienceImportPreview = audienceImportService.getImportStatus
+          ? await audienceImportService.getImportStatus()
+          : await audienceImportService.previewImport();
+      } catch (error) {
+        audienceImportPreview = { error: error.message, items: [], import_required: false };
+      }
+    }
     const audiences = await repository.listAudiences();
+    const audienceInstances = repository.listInstances ? await repository.listInstances() : [];
     const stories = (await repository.listStories(filters)).map((story) => ({
       ...story,
       publication_target: publicationTargetResolver(story.audience, story)
@@ -276,7 +362,10 @@ async function handleRequest(context) {
     const instances = instanceManager ? instanceManager.listInstances() : [];
     return html(200, renderDashboard({
       filters,
+      setupStatus,
+      audienceImportPreview,
       audiences,
+      audienceInstances,
       stories,
       activeStory,
       auditItems,
@@ -296,6 +385,9 @@ function readBody(body) {
 }
 
 function renderDashboard(model) {
+  const setupChecklist = renderSetupChecklist(model.setupStatus);
+  const audienceManagerCards = renderAudienceManagerCards(model.audiences, model.audienceInstances ?? []);
+  const audienceImportPanel = renderAudienceImportPanel(model.audienceImportPreview);
   const storiesList = model.stories.map((story) => {
     const href = buildDashboardHref(model.filters, story.id);
     const isActive = model.activeStory?.id === story.id;
@@ -606,6 +698,22 @@ function renderDashboard(model) {
         </div>
       </div>
 
+      <div class="lower-grid" style="margin-top:0; margin-bottom:18px;">
+        <section class="panel">
+          <div class="panel-inner">
+            <div class="section-title"><h2>Setup Checklist</h2><span class="muted">${escapeHtml(model.setupStatus?.ready ? "ready" : "action required")}</span></div>
+            ${setupChecklist}
+          </div>
+        </section>
+        <section class="panel">
+          <div class="panel-inner">
+            <div class="section-title"><h2>Audience Managers</h2><span class="muted">${escapeHtml(String(model.audiences.length))} audiences</span></div>
+            ${audienceImportPanel}
+            <div class="asset-grid" style="margin-top:12px;">${audienceManagerCards}</div>
+          </div>
+        </section>
+      </div>
+
       <div class="layout">
         <aside class="panel story-queue">
           <div class="panel-inner">
@@ -905,6 +1013,14 @@ function renderDashboard(model) {
         window.location.reload();
       });
 
+      document.getElementById("import-audience-file-button")?.addEventListener("click", async () => {
+        const preview = await sendJson("/api/audiences/import-preview", "POST", {});
+        await sendJson("/api/audiences/import-confirm", "POST", {
+          items: preview.items ?? []
+        });
+        window.location.reload();
+      });
+
       function splitList(value) {
         return value.split(",").map((item) => item.trim()).filter(Boolean);
       }
@@ -948,6 +1064,14 @@ function renderDashboard(model) {
         });
       });
 
+      document.querySelectorAll("[data-launch-audience-id]").forEach((button) => {
+        button.addEventListener("click", async () => {
+          await postInstance("/api/audiences/" + button.dataset.launchAudienceId + "/launch", {
+            operator: "operator@example.com"
+          });
+        });
+      });
+
       document.getElementById("chat-form")?.addEventListener("submit", async (event) => {
         event.preventDefault();
         const form = event.currentTarget;
@@ -983,6 +1107,56 @@ function renderAssetCard(story, asset) {
       <button type="button" data-asset-replace="${escapeAttribute(replaceUrl)}">Upload Replacement</button>
     </div>
   </article>`;
+}
+
+function renderSetupChecklist(setupStatus) {
+  const checks = setupStatus?.checks ?? {};
+  return `<ul class="compact">
+    ${Object.entries(checks).map(([key, value]) => `<li><strong>${escapeHtml(humanizeCheckName(key))}</strong> <span>${escapeHtml(value?.ok ? "ok" : "missing")}</span> <span>${escapeHtml(value?.message ?? "")}</span></li>`).join("")}
+  </ul>`;
+}
+
+function renderAudienceImportPanel(preview) {
+  if (!preview) {
+    return `<div class="empty-card">Audience import is not configured.</div>`;
+  }
+  const sourceLabel = preview.source_file_name ?? "No audience source";
+  const summary = preview.error
+    ? escapeHtml(preview.error)
+    : preview.import_required
+      ? `${preview.items?.length ?? 0} audience updates ready to import`
+      : "No audience import required";
+  return `<div class="empty-card">
+    <strong>Source</strong>
+    <div class="muted">${escapeHtml(sourceLabel)}</div>
+    <div class="muted">${summary}</div>
+    ${preview.import_required ? `<div class="button-row" style="margin-top:10px;"><button type="button" id="import-audience-file-button">Import ${escapeHtml(sourceLabel)}</button></div>` : ""}
+  </div>`;
+}
+
+function renderAudienceManagerCards(audiences, audienceInstances) {
+  const instancesByAudienceId = new Map((audienceInstances ?? []).map((instance) => [instance.audience_id, instance]));
+  if (!audiences.length) {
+    return `<div class="empty-card">No audiences are configured.</div>`;
+  }
+  return audiences.map((audience) => {
+    const instance = instancesByAudienceId.get(audience.id) ?? null;
+    const runtimeConfig = instance?.runtime_config ?? {};
+    const llmLabel = runtimeConfig.llm_model ?? "global default";
+    return `<article class="asset-card">
+      <strong>${escapeHtml(audience.label ?? audience.audience_key ?? audience.id)}</strong>
+      <div class="muted">${escapeHtml(audience.audience_key ?? audience.id)}</div>
+      <div class="muted">LLM: ${escapeHtml(llmLabel)}</div>
+      <div class="muted">Instance: ${escapeHtml(instance?.service_name ?? "not provisioned")}</div>
+      <div class="button-row" style="margin-top:10px;">
+        <button type="button" data-launch-audience-id="${escapeAttribute(audience.id)}">Launch Audience Manager</button>
+      </div>
+    </article>`;
+  }).join("");
+}
+
+function humanizeCheckName(value) {
+  return String(value).replaceAll("_", " ");
 }
 
 function renderAssetPreview(asset, previewUrl) {
@@ -1077,6 +1251,19 @@ function ensureInstanceManager(instanceManager) {
   if (!instanceManager) {
     throw new Error("instanceManager is required for instance endpoints");
   }
+}
+
+function defaultSetupStatus() {
+  return {
+    ready: true,
+    llm: {
+      provider: "",
+      model: ""
+    },
+    checks: {
+      story_admin: { ok: true, message: "Dashboard available" }
+    }
+  };
 }
 
 function json(status, data) {

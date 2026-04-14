@@ -45,6 +45,33 @@ export function createRepository(seed = {}) {
     getAudience(audienceId) {
       return state.audiences.get(audienceId) ?? null;
     },
+    listInstances() {
+      return [...state.instances.values()].sort(compareByUpdatedDesc);
+    },
+    getInstance(instanceId) {
+      return state.instances.get(instanceId) ?? null;
+    },
+    getInstanceByAudience(audienceId) {
+      return [...state.instances.values()].find((instance) => instance.audience_id === audienceId) ?? null;
+    },
+    updateInstance(instanceId, changes = {}, options = {}) {
+      const instance = requireInstance(state, instanceId);
+      const updated = {
+        ...instance,
+        ...changes,
+        updated_at: options.timestamp ?? instance.updated_at ?? nowIso()
+      };
+      state.instances.set(instanceId, updated);
+      appendAudit(state, {
+        type: "instance_updated",
+        entity_type: "instance",
+        entity_id: instanceId,
+        actor_id: options.actorId ?? "unknown",
+        timestamp: updated.updated_at,
+        payload: { changes }
+      });
+      return updated;
+    },
     updateAudience(audienceId, changes = {}, options = {}) {
       const audience = requireAudience(state, audienceId);
       const updated = {
@@ -351,6 +378,36 @@ export function createSupabaseRepository(options) {
       });
       return rows[0] ?? null;
     },
+    async listInstances() {
+      return client.select("vivo_instances", {
+        order: "updated_at.desc"
+      });
+    },
+    async getInstance(instanceId) {
+      const rows = await client.select("vivo_instances", {
+        id: `eq.${instanceId}`,
+        limit: "1"
+      });
+      return rows[0] ?? null;
+    },
+    async getInstanceByAudience(audienceId) {
+      const rows = await client.select("vivo_instances", {
+        audience_id: `eq.${audienceId}`,
+        limit: "1"
+      });
+      return rows[0] ?? null;
+    },
+    async updateInstance(instanceId, changes = {}, options = {}) {
+      const rows = await client.update("vivo_instances", { id: `eq.${instanceId}` }, changes);
+      await insertAuditEvent(client, {
+        entity_type: "instance",
+        entity_id: instanceId,
+        event_type: "instance_updated",
+        actor_id: options.actorId ?? "unknown",
+        payload: { changes }
+      });
+      return rows[0] ?? null;
+    },
     async updateAudience(audienceId, changes = {}, options = {}) {
       const rows = await client.update("vivo_audiences", { id: `eq.${audienceId}` }, changes);
       await insertAuditEvent(client, {
@@ -648,6 +705,14 @@ function requireAudience(state, audienceId) {
   return audience;
 }
 
+function requireInstance(state, instanceId) {
+  const instance = state.instances.get(instanceId);
+  if (!instance) {
+    throw new Error(`Unknown instance id: ${instanceId}`);
+  }
+  return instance;
+}
+
 function requireStoryAsset(state, storyId, assetId) {
   const asset = state.storyAssets.get(assetId);
   if (!asset || asset.story_id !== storyId) {
@@ -704,6 +769,7 @@ function withPersistence(repository, pathname) {
   for (const methodName of [
     "updateStory",
     "updateAudience",
+    "updateInstance",
     "selectStoryAsset",
     "replaceStoryAsset",
     "submitStoryReview",

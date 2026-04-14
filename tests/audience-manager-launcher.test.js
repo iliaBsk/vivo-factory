@@ -1,0 +1,77 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
+async function loadAudienceManagerLauncherModule() {
+  try {
+    return await import("../src/audience-manager-launcher.js");
+  } catch (error) {
+    assert.fail(`expected src/audience-manager-launcher.js to exist: ${error.message}`);
+  }
+}
+
+test("createAudienceManagerLauncher writes per-audience env and compose files and launches only selected services", async () => {
+  const { createAudienceManagerLauncher } = await loadAudienceManagerLauncherModule();
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "vivo-audience-launcher-"));
+  const execCalls = [];
+  const launcher = createAudienceManagerLauncher({
+    cwd: tmpDir,
+    runtimeConfig: {
+      openclaw_image: "ghcr.io/openclaw/openclaw:latest",
+      profile_plugin_path: "/plugins/user-profile",
+      audiences: {
+        "barcelona-family": {
+          plugin_base_url: "http://127.0.0.1:5401",
+          openclaw_admin_url: "http://127.0.0.1:7601",
+          telegram_bot_token: "bot-token",
+          telegram_chat_id: "-1001111111111",
+          telegram_report_chat_id: "-1002222222222"
+        }
+      }
+    },
+    llmDefaults: {
+      provider: "openai",
+      model: "gpt-4.1-mini",
+      apiKey: "sk-test",
+      baseUrl: "https://api.openai.com/v1"
+    },
+    execImpl: async (command, args) => {
+      execCalls.push({ command, args });
+      return { exitCode: 0, stdout: "started", stderr: "" };
+    }
+  });
+
+  const result = await launcher.launchAudienceManager({
+    id: "aud-1",
+    audience_key: "barcelona-family",
+    label: "Barcelona Family"
+  }, {
+    id: "inst-1",
+    audience_id: "aud-1",
+    instance_key: "barcelona-family-openclaw",
+    service_name: "barcelona-family-openclaw",
+    runtime_config: {
+      llm_model: "gpt-4.1"
+    }
+  });
+
+  assert.equal(result.services.openclaw, "barcelona-family-openclaw");
+  assert.match(result.paths.env_file, /barcelona-family\.env$/);
+  assert.match(fs.readFileSync(result.paths.env_file, "utf8"), /OPENAI_API_KEY=sk-test/);
+  assert.match(fs.readFileSync(result.paths.env_file, "utf8"), /LLM_MODEL=gpt-4\.1/);
+  assert.match(fs.readFileSync(result.paths.compose_file, "utf8"), /barcelona-family-openclaw:/);
+  assert.deepEqual(execCalls[0], {
+    command: "docker",
+    args: [
+      "compose",
+      "-f",
+      result.paths.compose_file,
+      "up",
+      "-d",
+      "barcelona-family-openclaw",
+      "barcelona-family-profile"
+    ]
+  });
+});

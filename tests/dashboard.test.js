@@ -361,6 +361,134 @@ test("app exposes story queue filters, detail, story updates, reviews, asset rep
   assert.equal(repository.getStory("story-1").publications[0].target_identifier, "-1001111111111");
 });
 
+test("app exposes setup status and audience import preview and confirmation", async () => {
+  const { createRepository, createApp } = await loadModules();
+  const repository = createRepository(createSeed());
+  const app = createApp({
+    repository,
+    setupService: {
+      async getStatus() {
+        return {
+          ready: false,
+          llm: { provider: "openai", model: "gpt-4.1-mini" },
+          checks: {
+            supabase_config: { ok: true },
+            supabase_connection: { ok: false, message: "Cannot connect" },
+            llm_config: { ok: true },
+            story_admin: { ok: true }
+          }
+        };
+      }
+    },
+    audienceImportService: {
+      async previewImport() {
+        return {
+          source_file_name: "audience.md",
+          import_required: true,
+          items: [
+            {
+              audience_key: "madrid-runner",
+              raw_text: "Runner in Madrid.",
+              normalized: { label: "Runner in Madrid" },
+              expanded: { label: "Runner in Madrid Expanded" }
+            }
+          ]
+        };
+      },
+      async confirmImport(items) {
+        return {
+          audiences: items.map((item, index) => ({
+            id: `aud-${index + 1}`,
+            audience_key: item.audience_key,
+            label: item.expanded.label
+          }))
+        };
+      }
+    },
+    clock: () => "2026-03-21T13:00:00.000Z"
+  });
+
+  const setupResponse = await app.handle({
+    method: "GET",
+    pathname: "/api/setup"
+  });
+  const previewResponse = await app.handle({
+    method: "POST",
+    pathname: "/api/audiences/import-preview",
+    body: JSON.stringify({})
+  });
+  const confirmResponse = await app.handle({
+    method: "POST",
+    pathname: "/api/audiences/import-confirm",
+    body: JSON.stringify({
+      items: [
+        {
+          audience_key: "madrid-runner",
+          raw_text: "Runner in Madrid.",
+          normalized: { label: "Runner in Madrid" },
+          expanded: { label: "Runner in Madrid Expanded" }
+        }
+      ]
+    })
+  });
+
+  assert.equal(setupResponse.status, 200);
+  assert.equal(JSON.parse(setupResponse.body).ready, false);
+  assert.equal(previewResponse.status, 200);
+  assert.equal(JSON.parse(previewResponse.body).source_file_name, "audience.md");
+  assert.equal(confirmResponse.status, 200);
+  assert.equal(JSON.parse(confirmResponse.body).audiences[0].label, "Runner in Madrid Expanded");
+});
+
+test("root HTML renders setup-first audience manager controls when setup is incomplete", async () => {
+  const { createRepository, createApp } = await loadModules();
+  const repository = createRepository(createSeed());
+  const app = createApp({
+    repository,
+    setupService: {
+      async getStatus() {
+        return {
+          ready: false,
+          llm: { provider: "openai", model: "gpt-4.1-mini" },
+          checks: {
+            supabase_config: { ok: true },
+            supabase_connection: { ok: false, message: "Cannot connect" },
+            llm_config: { ok: true },
+            story_admin: { ok: true }
+          }
+        };
+      }
+    },
+    audienceImportService: {
+      async previewImport() {
+        return {
+          source_file_name: "audience.md",
+          import_required: true,
+          items: [
+            {
+              audience_key: "madrid-runner",
+              raw_text: "Runner in Madrid.",
+              normalized: { label: "Runner in Madrid" },
+              expanded: { label: "Runner in Madrid Expanded" }
+            }
+          ]
+        };
+      }
+    },
+    clock: () => "2026-03-21T13:00:00.000Z"
+  });
+
+  const response = await app.handle({
+    method: "GET",
+    pathname: "/"
+  });
+
+  assert.equal(response.status, 200);
+  assert.match(response.body, /Setup Checklist/);
+  assert.match(response.body, /Audience Managers/);
+  assert.match(response.body, /Import audience\.md/);
+});
+
 test("app blocks publication queueing when story is not operator-approved", async () => {
   const { createRepository, createApp } = await loadModules();
   const repository = createRepository(createSeed());
