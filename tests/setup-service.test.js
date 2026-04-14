@@ -52,3 +52,50 @@ test("createSetupService verifies remote Supabase and global LLM defaults", asyn
   assert.equal(status.checks.supabase_connection.ok, true);
   assert.ok(fetchCalls[0].includes("/rest/v1/vivo_audiences"));
 });
+
+test("createSetupService reports missing required Supabase tables", async () => {
+  const { createSetupService } = await loadSetupModule();
+  const service = createSetupService({
+    envConfig: {
+      SUPABASE_URL: "https://supabase.example.co",
+      SUPABASE_SERVICE_ROLE_KEY: "service-role-key",
+      OPENAI_API_KEY: "sk-test",
+      OPENAI_MODEL: "gpt-4.1-mini"
+    },
+    fetchImpl: async (input) => {
+      const url = String(input);
+      if (url.includes("/rest/v1/vivo_audiences")) {
+        return {
+          ok: true,
+          async text() {
+            return "[]";
+          }
+        };
+      }
+      if (url.includes("/rest/v1/vivo_story_reviews")) {
+        return {
+          ok: false,
+          async text() {
+            return JSON.stringify({
+              code: "PGRST205",
+              message: "Could not find the table public.vivo_story_reviews in the schema cache"
+            });
+          }
+        };
+      }
+      return {
+        ok: true,
+        async text() {
+          return "[]";
+        }
+      };
+    }
+  });
+
+  const status = await service.getStatus();
+
+  assert.equal(status.ready, false);
+  assert.equal(status.checks.supabase_connection.ok, true);
+  assert.equal(status.checks.supabase_schema.ok, false);
+  assert.match(status.checks.supabase_schema.message, /vivo_story_reviews/);
+});

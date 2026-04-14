@@ -333,6 +333,7 @@ async function handleRequest(context) {
   if (request.method === "GET" && request.pathname === "/") {
     const filters = normalizeStoryFilters(request.query);
     const setupStatus = setupService ? await setupService.getStatus() : defaultSetupStatus();
+    const shouldSkipStoryData = shouldSkipStoryDataLoad(setupStatus);
     let audienceImportPreview = null;
     if (audienceImportService) {
       try {
@@ -343,22 +344,26 @@ async function handleRequest(context) {
         audienceImportPreview = { error: error.message, items: [], import_required: false };
       }
     }
-    const audiences = await repository.listAudiences();
-    const audienceInstances = repository.listInstances ? await repository.listInstances() : [];
-    const stories = (await repository.listStories(filters)).map((story) => ({
-      ...story,
-      publication_target: publicationTargetResolver(story.audience, story)
-    }));
+    const audiences = await safeLoad(() => repository.listAudiences(), []);
+    const audienceInstances = repository.listInstances ? await safeLoad(() => repository.listInstances(), []) : [];
+    const stories = shouldSkipStoryData
+      ? []
+      : (await safeLoad(() => repository.listStories(filters), [])).map((story) => ({
+          ...story,
+          publication_target: publicationTargetResolver(story.audience, story)
+        }));
     const selectedStoryId = request.query?.story_id || stories[0]?.id || "";
-    const activeStoryRaw = selectedStoryId ? await repository.getStory(selectedStoryId) : null;
+    const activeStoryRaw = shouldSkipStoryData || !selectedStoryId
+      ? null
+      : await safeLoad(() => repository.getStory(selectedStoryId), null);
     const activeStory = activeStoryRaw
       ? {
           ...activeStoryRaw,
           publication_target: publicationTargetResolver(activeStoryRaw.audience, activeStoryRaw)
         }
       : null;
-    const auditItems = (await repository.listAuditLog()).slice(0, 10);
-    const analyticsItems = (await repository.listFeedbackEvents()).slice(0, 10);
+    const auditItems = shouldSkipStoryData ? [] : (await safeLoad(() => repository.listAuditLog(), [])).slice(0, 10);
+    const analyticsItems = shouldSkipStoryData ? [] : (await safeLoad(() => repository.listFeedbackEvents(), [])).slice(0, 10);
     const instances = instanceManager ? instanceManager.listInstances() : [];
     return html(200, renderDashboard({
       filters,
@@ -1251,6 +1256,22 @@ function ensureInstanceManager(instanceManager) {
   if (!instanceManager) {
     throw new Error("instanceManager is required for instance endpoints");
   }
+}
+
+async function safeLoad(loader, fallback) {
+  try {
+    return await loader();
+  } catch {
+    return fallback;
+  }
+}
+
+function shouldSkipStoryDataLoad(setupStatus) {
+  const checks = setupStatus?.checks ?? {};
+  if (checks.supabase_config?.ok !== true) {
+    return false;
+  }
+  return checks.supabase_connection?.ok === false || checks.supabase_schema?.ok === false;
 }
 
 function defaultSetupStatus() {

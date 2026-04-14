@@ -592,3 +592,56 @@ test("dashboard HTML renders queue filters, story editor, asset panel, audience 
   assert.match(response.body, /Channel Target/);
   assert.match(response.body, /<img /);
 });
+
+test("dashboard HTML still renders setup checklist when Supabase schema is incomplete", async () => {
+  const { createApp } = await loadModules();
+  const app = createApp({
+    repository: {
+      async listAudiences() {
+        return [];
+      },
+      async listInstances() {
+        return [];
+      },
+      async listStories() {
+        throw new Error("should not query stories while schema is incomplete");
+      },
+      async getStory() {
+        throw new Error("should not query story detail while schema is incomplete");
+      },
+      async listAuditLog() {
+        return [];
+      },
+      async listFeedbackEvents() {
+        return [];
+      }
+    },
+    setupService: {
+      async getStatus() {
+        return {
+          ready: false,
+          llm: {
+            provider: "openai",
+            model: "gpt-4.1-mini"
+          },
+          checks: {
+            supabase_config: { ok: true, message: "Credentials loaded" },
+            supabase_connection: { ok: true, message: "Supabase reachable" },
+            supabase_schema: { ok: false, message: "Missing table public.vivo_story_reviews" },
+            llm_config: { ok: true, message: "Global LLM defaults loaded" },
+            story_admin: { ok: true, message: "Dashboard available" }
+          }
+        };
+      }
+    }
+  });
+
+  const response = await app.handle({
+    method: "GET",
+    pathname: "/"
+  });
+
+  assert.equal(response.status, 200);
+  assert.match(response.body, /Setup Checklist/);
+  assert.match(response.body, /Missing table public\.vivo_story_reviews/);
+});
