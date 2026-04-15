@@ -367,7 +367,7 @@ async function handleRequest(context) {
           ...story,
           publication_target: publicationTargetResolver(story.audience, story)
         }));
-    const selectedStoryId = request.query?.story_id || stories[0]?.id || "";
+    const selectedStoryId = request.query?.story_id || "";
     const activeStoryRaw = shouldSkipStoryData || !selectedStoryId
       ? null
       : await safeLoad(() => repository.getStory(selectedStoryId), null);
@@ -429,25 +429,7 @@ function renderDashboard(model) {
   const setupChecklist = renderSetupChecklist(model.setupStatus);
   const audienceRows = renderAudienceManagerCards(model.audiences, model.audienceInstances ?? []);
   const audienceImportPanel = renderAudienceImportPanel(model.audienceImportPreview);
-  const storiesList = model.stories.map((story) => {
-    const href = buildDashboardHref(model.filters, story.id);
-    const isActive = model.activeStory?.id === story.id;
-    const targetLabel = story.publication_target
-      ? `${story.publication_target.channel}:${story.publication_target.target_identifier}`
-      : "unconfigured";
-    return `<a class="story-row${isActive ? " active" : ""}" href="${escapeAttribute(href)}">
-      <strong>${escapeHtml(story.title)}</strong>
-      <div class="story-row-meta">
-        <span>${escapeHtml(story.audience?.label ?? "Unknown audience")}</span>
-        <span>${escapeHtml(story.status)}</span>
-        <span>${escapeHtml(story.operator_review_status)}</span>
-      </div>
-      <div class="story-row-meta">
-        <span>Asset: ${escapeHtml(story.selected_asset_id ?? "none")}</span>
-        <span>Target: ${escapeHtml(targetLabel)}</span>
-      </div>
-    </a>`;
-  }).join("");
+  const storyTableRows = renderStoryTableRows(model.stories, model.filters, model.activeStory?.id ?? "");
 
   const audienceOptions = model.audiences.map((audience) => `<option value="${escapeAttribute(audience.id)}"${audience.id === model.filters.audience_id ? " selected" : ""}>${escapeHtml(audience.label)}</option>`).join("");
   const assetCards = model.activeStory
@@ -498,7 +480,7 @@ function renderDashboard(model) {
   const workspace = activeTab === "stories"
     ? renderStoriesWorkspace({
         model,
-        storiesList,
+        storyTableRows,
         audienceOptions,
         assetCards,
         publicationItems,
@@ -635,7 +617,7 @@ function renderDashboard(model) {
       }
       .workspace-grid {
         display: grid;
-        grid-template-columns: 360px minmax(0, 1fr);
+        grid-template-columns: minmax(0, 1fr);
         gap: 22px;
       }
       .workspace-stack, .story-list, .audience-list, .instance-list { display: grid; gap: 12px; }
@@ -686,6 +668,19 @@ function renderDashboard(model) {
         transform: translateY(-1px);
       }
       button.secondary {
+        background: #ded5c9;
+        color: var(--ink);
+      }
+      .button-like {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 999px;
+        padding: 11px 15px;
+        background: var(--accent);
+        color: #fff;
+      }
+      .button-like.secondary {
         background: #ded5c9;
         color: var(--ink);
       }
@@ -827,6 +822,137 @@ function renderDashboard(model) {
         object-fit: cover;
         border-radius: 14px;
       }
+      .tremor-card {
+        background: rgba(255, 252, 246, 0.82);
+        border: 1px solid var(--line);
+        border-radius: 20px;
+        box-shadow: 0 1px 2px rgba(31, 33, 29, 0.05);
+        overflow: hidden;
+      }
+      .tremor-filterbar {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(150px, 1fr)) auto;
+        gap: 10px;
+        align-items: end;
+        padding: 16px;
+        border-bottom: 1px solid var(--line);
+      }
+      .tremor-table-wrap {
+        overflow-x: auto;
+      }
+      .tremor-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 13px;
+      }
+      .tremor-table th {
+        color: var(--muted);
+        font-size: 11px;
+        font-weight: 600;
+        letter-spacing: 0.08em;
+        text-align: left;
+        text-transform: uppercase;
+        padding: 12px 16px;
+        border-bottom: 1px solid var(--line);
+        background: rgba(248, 244, 236, 0.86);
+      }
+      .tremor-table td {
+        padding: 14px 16px;
+        border-bottom: 1px solid var(--line);
+        vertical-align: top;
+      }
+      .tremor-table tr {
+        transition: background 160ms ease;
+      }
+      .tremor-table tbody tr:hover {
+        background: rgba(143, 93, 67, 0.06);
+      }
+      .tremor-table tbody tr.active {
+        background: rgba(143, 93, 67, 0.1);
+      }
+      .story-title-link {
+        display: inline-grid;
+        gap: 3px;
+        color: var(--ink);
+      }
+      .story-title-link span {
+        color: var(--muted);
+        font-size: 12px;
+      }
+      .badge {
+        display: inline-flex;
+        align-items: center;
+        border-radius: 999px;
+        padding: 4px 8px;
+        border: 1px solid var(--line);
+        background: rgba(255, 252, 246, 0.7);
+        color: var(--muted);
+        font-size: 12px;
+        white-space: nowrap;
+      }
+      .badge.ready, .badge.approved {
+        color: var(--success);
+        border-color: rgba(71, 102, 81, 0.25);
+        background: rgba(71, 102, 81, 0.08);
+      }
+      .badge.warning {
+        color: var(--warning);
+        border-color: rgba(146, 114, 65, 0.25);
+        background: rgba(146, 114, 65, 0.08);
+      }
+      .drawer-scrim {
+        position: fixed;
+        inset: 0;
+        background: rgba(31, 33, 29, 0.18);
+        backdrop-filter: blur(2px);
+        z-index: 8;
+        animation: fadeUp 180ms ease both;
+      }
+      .story-detail-drawer {
+        position: fixed;
+        top: 0;
+        right: 0;
+        width: 40vw;
+        min-width: 520px;
+        max-width: 760px;
+        height: 100vh;
+        overflow-y: auto;
+        background: var(--surface-2);
+        border-left: 1px solid var(--line-strong);
+        box-shadow: -40px 0 80px rgba(31, 33, 29, 0.16);
+        z-index: 9;
+        transform: translateX(100%);
+        transition: transform 240ms ease;
+      }
+      .story-detail-drawer.open {
+        transform: translateX(0);
+        animation: slideIn 240ms ease both;
+      }
+      .drawer-header {
+        position: sticky;
+        top: 0;
+        z-index: 2;
+        display: flex;
+        justify-content: space-between;
+        gap: 16px;
+        padding: 24px;
+        background: rgba(255, 252, 246, 0.92);
+        border-bottom: 1px solid var(--line);
+        backdrop-filter: blur(18px);
+      }
+      .drawer-body {
+        display: grid;
+        gap: 22px;
+        padding: 24px;
+      }
+      .drawer-section {
+        border-top: 1px solid var(--line);
+        padding-top: 20px;
+      }
+      @keyframes slideIn {
+        from { transform: translateX(100%); }
+        to { transform: translateX(0); }
+      }
       @keyframes rise {
         from { opacity: 0; transform: translateY(10px); }
         to { opacity: 1; transform: translateY(0); }
@@ -840,6 +966,11 @@ function renderDashboard(model) {
         .topbar, .split, .workspace-grid, .audience-profile {
           grid-template-columns: 1fr;
           display: grid;
+        }
+        .tremor-filterbar { grid-template-columns: 1fr; }
+        .story-detail-drawer {
+          width: 100vw;
+          min-width: 0;
         }
         .workspace-tabs { width: 100%; overflow-x: auto; justify-content: start; }
       }
@@ -905,152 +1036,178 @@ function renderSetupWorkspace({ model, setupChecklist, audienceImportPanel }) {
 function renderStoriesWorkspace(context) {
   const {
     model,
-    storiesList,
+    storyTableRows,
     audienceOptions,
     assetCards,
     publicationItems,
     reviewItems,
     auditItems,
     analyticsItems,
-    audience,
-    audienceFields,
     metadataJson,
-    profileJson,
     selectedAssetId,
     publicationTarget
   } = context;
+  const drawer = model.activeStory
+    ? renderStoryDetailDrawer({
+        story: model.activeStory,
+        assetCards,
+        publicationItems,
+        reviewItems,
+        metadataJson,
+        selectedAssetId,
+        publicationTarget,
+        closeHref: buildDashboardHref(model.filters, "")
+      })
+    : "";
+
   return `<div class="workspace-grid">
-    <aside class="panel">
+    <section class="tremor-card">
       <div class="panel-inner">
         <div class="section-title">
-          <div><h2>Story Queue</h2><p class="muted">Filter by pipeline, review state, and audience.</p></div>
+          <div><h2>Stories Table</h2><p class="muted">Select a row to open details, assets, approval, and publication controls.</p></div>
           <span class="muted">${escapeHtml(String(model.stories.length))} stories</span>
         </div>
-        <form method="GET" class="filter-grid">
-          <input type="hidden" name="tab" value="stories" />
-          <label>Status
-            <select name="status">${renderStatusOptions(model.filters.status)}</select>
-          </label>
-          <label>Review
-            <select name="review_status">${renderReviewOptions(model.filters.review_status)}</select>
-          </label>
-          <label>Audience
-            <select name="audience_id">
-              <option value="">All audiences</option>
-              ${audienceOptions}
-            </select>
-          </label>
-          <label>Search
-            <input type="text" name="search" value="${escapeAttribute(model.filters.search ?? "")}" placeholder="Search title or story text" />
-          </label>
-          <button type="submit">Apply Filters</button>
-        </form>
-        <div class="story-list" style="margin-top:18px;">
-          ${storiesList || `<div class="empty-card">No stories match these filters.</div>`}
-        </div>
       </div>
-    </aside>
-
-    <section class="workspace-stack">
-      <section class="panel">
-        <div class="panel-inner">
-          <div class="section-title">
-            <div><h2>Story Editor</h2><p class="muted">Review copy, metadata, owning audience, and publish target.</p></div>
-            <button type="button" class="ghost" id="toggle-audience-button">Audience Drawer</button>
-          </div>
-          ${model.activeStory ? `
-            <div class="story-meta">
-              <div class="meta-chip"><strong>Pipeline</strong><div>${escapeHtml(model.activeStory.status)}</div></div>
-              <div class="meta-chip"><strong>Review</strong><div>${escapeHtml(model.activeStory.operator_review_status)}</div></div>
-              <div class="meta-chip"><strong>Selected Asset</strong><div>${escapeHtml(selectedAssetId || "none")}</div></div>
-              <div class="meta-chip"><strong>Audience</strong><div>${escapeHtml(model.activeStory.audience?.label ?? "unknown")}</div></div>
-              <div class="meta-chip"><strong>Instance</strong><div>${escapeHtml(model.activeStory.instance?.service_name ?? "unassigned")}</div></div>
-              <div class="meta-chip"><strong>Channel Target</strong><div>${escapeHtml(publicationTarget ? `${publicationTarget.channel}:${publicationTarget.target_identifier}` : "unconfigured")}</div></div>
-            </div>
-            <form id="story-form" data-story-id="${escapeAttribute(model.activeStory.id)}" class="filter-grid">
-              <label>Title
-                <input name="title" value="${escapeAttribute(model.activeStory.title)}" />
-              </label>
-              <label>Story Text
-                <textarea name="story_text">${escapeHtml(model.activeStory.story_text)}</textarea>
-              </label>
-              <label>Summary
-                <textarea name="summary">${escapeHtml(model.activeStory.summary ?? "")}</textarea>
-              </label>
-              <label>Metadata JSON
-                <textarea name="metadata">${metadataJson}</textarea>
-              </label>
-              <div class="button-row"><button type="submit">Save Story</button></div>
-            </form>
-          ` : `<div class="empty-card">Select a story from the queue.</div>`}
-        </div>
-      </section>
-
-      <section class="panel">
-        <div class="panel-inner">
-          <div class="section-title">
-            <div><h2>Asset Panel</h2><p class="muted">Select or replace the publish asset.</p></div>
-          </div>
-          <div class="asset-grid">${assetCards}</div>
-        </div>
-      </section>
-
-      <section class="panel">
-        <div class="panel-inner">
-          <div class="section-title">
-            <div><h2>Publication Queue</h2><p class="muted">Approval requires a selected asset before channel queueing.</p></div>
-          </div>
-          ${model.activeStory ? `
-            <div class="story-meta" style="margin-bottom:12px;">
-              <div class="meta-chip"><strong>Channel</strong><div>${escapeHtml(publicationTarget?.channel ?? "unconfigured")}</div></div>
-              <div class="meta-chip"><strong>Target</strong><div>${escapeHtml(publicationTarget?.target_identifier ?? "unconfigured")}</div></div>
-            </div>
-            <form id="review-form" data-story-id="${escapeAttribute(model.activeStory.id)}" class="filter-grid">
-              <label>Review Notes
-                <textarea name="review_notes" placeholder="What changed or why is this ready?"></textarea>
-              </label>
-              <input type="hidden" name="selected_asset_id" value="${escapeAttribute(selectedAssetId)}" />
-              <div class="button-row">
-                <button type="button" data-review-status="approved">Approve</button>
-                <button type="button" class="secondary" data-review-status="changes_requested">Request Changes</button>
-                <button type="button" class="secondary" data-review-status="rejected">Reject</button>
-              </div>
-            </form>
-            <div class="button-row" style="margin-top:12px;">
-              <button type="button" id="queue-publication-button" data-story-id="${escapeAttribute(model.activeStory.id)}">Queue Channel Publication</button>
-            </div>
-          ` : ""}
-          <h3 style="margin:22px 0 8px;">Queued Publications</h3>
-          <ul class="compact">${publicationItems}</ul>
-          <h3 style="margin:22px 0 8px;">Review History</h3>
-          <ul class="compact">${reviewItems}</ul>
-        </div>
-      </section>
-
-      <section class="split">
-        <div class="panel"><div class="panel-inner"><div class="section-title"><h2>Audit Log</h2></div><ul class="compact">${auditItems}</ul></div></div>
-        <div class="panel"><div class="panel-inner"><div class="section-title"><h2>Analytics Snapshot</h2></div><ul class="compact">${analyticsItems}</ul></div></div>
-      </section>
+      <form method="GET" class="tremor-filterbar">
+        <input type="hidden" name="tab" value="stories" />
+        <label>Status
+          <select name="status">${renderStatusOptions(model.filters.status)}</select>
+        </label>
+        <label>Review
+          <select name="review_status">${renderReviewOptions(model.filters.review_status)}</select>
+        </label>
+        <label>Audience
+          <select name="audience_id">
+            <option value="">All audiences</option>
+            ${audienceOptions}
+          </select>
+        </label>
+        <label>Search
+          <input type="text" name="search" value="${escapeAttribute(model.filters.search ?? "")}" placeholder="Search title or story text" />
+        </label>
+        <button type="submit">Apply Filters</button>
+      </form>
+      <div class="tremor-table-wrap">
+        <table class="tremor-table">
+          <thead>
+            <tr>
+              <th>Story</th>
+              <th>Audience</th>
+              <th>Status</th>
+              <th>Review</th>
+              <th>Asset</th>
+              <th>Channel</th>
+              <th>Updated</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${storyTableRows || `<tr><td colspan="7" class="muted">No stories match these filters.</td></tr>`}
+          </tbody>
+        </table>
+      </div>
     </section>
 
-    <aside class="panel drawer" id="audience-drawer">
-      <div class="panel-inner">
-        <div class="section-title">
-          <h2>Audience Drawer</h2>
-          <button type="button" class="secondary" id="close-audience-button">Close</button>
-        </div>
-        ${audience ? `
-          <form id="audience-form" data-audience-id="${escapeAttribute(audience.id)}" class="filter-grid">
-            ${audienceFields}
-            <label>Profile Snapshot JSON
-              <textarea name="profile_snapshot">${profileJson}</textarea>
-            </label>
-            <button type="submit">Save Audience</button>
-          </form>
-        ` : `<div class="empty-card">No audience selected.</div>`}
-      </div>
-    </aside>
+    <section class="split" style="margin-top:22px;">
+      <div class="panel"><div class="panel-inner"><div class="section-title"><h2>Audit Log</h2></div><ul class="compact">${auditItems}</ul></div></div>
+      <div class="panel"><div class="panel-inner"><div class="section-title"><h2>Analytics Snapshot</h2></div><ul class="compact">${analyticsItems}</ul></div></div>
+    </section>
+    ${drawer}
   </div>`;
+}
+
+function renderStoryTableRows(stories, filters, activeStoryId) {
+  return stories.map((story) => {
+    const href = buildDashboardHref(filters, story.id);
+    const targetLabel = story.publication_target
+      ? `${story.publication_target.channel}:${story.publication_target.target_identifier}`
+      : "unconfigured";
+    return `<tr class="${story.id === activeStoryId ? "active" : ""}" data-story-href="${escapeAttribute(href)}">
+      <td>
+        <a class="story-title-link" href="${escapeAttribute(href)}">
+          <strong>${escapeHtml(story.title)}</strong>
+          <span>${escapeHtml(truncateText(story.summary ?? story.story_text ?? "", 86))}</span>
+        </a>
+      </td>
+      <td>${escapeHtml(story.audience?.label ?? "Unknown audience")}</td>
+      <td>${renderStatusBadge(story.status)}</td>
+      <td>${renderReviewBadge(story.operator_review_status)}</td>
+      <td>${escapeHtml(story.selected_asset_id ?? "none")}</td>
+      <td>${escapeHtml(targetLabel)}</td>
+      <td>${escapeHtml(formatShortDate(story.updated_at ?? story.created_at))}</td>
+    </tr>`;
+  }).join("");
+}
+
+function renderStoryDetailDrawer({ story, assetCards, publicationItems, reviewItems, metadataJson, selectedAssetId, publicationTarget, closeHref }) {
+  return `<a class="drawer-scrim" href="${escapeAttribute(closeHref)}" aria-label="Close story details"></a>
+  <aside class="story-detail-drawer open" aria-label="Story details">
+    <div class="drawer-header">
+      <div>
+        <h2>Story Details</h2>
+        <p class="muted">${escapeHtml(story.audience?.label ?? "Unknown audience")}</p>
+      </div>
+      <a class="button-like secondary" href="${escapeAttribute(closeHref)}">Close</a>
+    </div>
+    <div class="drawer-body">
+      <div class="story-meta">
+        <div class="meta-chip"><strong>Pipeline</strong><div>${escapeHtml(story.status)}</div></div>
+        <div class="meta-chip"><strong>Review</strong><div>${escapeHtml(story.operator_review_status)}</div></div>
+        <div class="meta-chip"><strong>Selected Asset</strong><div>${escapeHtml(selectedAssetId || "none")}</div></div>
+        <div class="meta-chip"><strong>Instance</strong><div>${escapeHtml(story.instance?.service_name ?? "unassigned")}</div></div>
+        <div class="meta-chip"><strong>Channel Target</strong><div>${escapeHtml(publicationTarget ? `${publicationTarget.channel}:${publicationTarget.target_identifier}` : "unconfigured")}</div></div>
+      </div>
+
+      <section>
+        <div class="section-title"><div><h3>Story Copy</h3><p class="muted">Edit story text and metadata.</p></div></div>
+        <form id="story-form" data-story-id="${escapeAttribute(story.id)}" class="filter-grid">
+          <label>Title
+            <input name="title" value="${escapeAttribute(story.title)}" />
+          </label>
+          <label>Story Text
+            <textarea name="story_text">${escapeHtml(story.story_text)}</textarea>
+          </label>
+          <label>Summary
+            <textarea name="summary">${escapeHtml(story.summary ?? "")}</textarea>
+          </label>
+          <label>Metadata JSON
+            <textarea name="metadata">${metadataJson}</textarea>
+          </label>
+          <div class="button-row"><button type="submit">Save Story</button></div>
+        </form>
+      </section>
+
+      <section class="drawer-section">
+        <div class="section-title"><div><h3>Asset Panel</h3><p class="muted">Select or replace the publish asset.</p></div></div>
+        <div class="asset-grid">${assetCards}</div>
+      </section>
+
+      <section class="drawer-section">
+        <div class="section-title"><div><h3>Publication Queue</h3><p class="muted">Approve with a selected asset before queueing.</p></div></div>
+        <div class="story-meta" style="margin-bottom:12px;">
+          <div class="meta-chip"><strong>Channel</strong><div>${escapeHtml(publicationTarget?.channel ?? "unconfigured")}</div></div>
+          <div class="meta-chip"><strong>Target</strong><div>${escapeHtml(publicationTarget?.target_identifier ?? "unconfigured")}</div></div>
+        </div>
+        <form id="review-form" data-story-id="${escapeAttribute(story.id)}" class="filter-grid">
+          <label>Review Notes
+            <textarea name="review_notes" placeholder="What changed or why is this ready?"></textarea>
+          </label>
+          <input type="hidden" name="selected_asset_id" value="${escapeAttribute(selectedAssetId)}" />
+          <div class="button-row">
+            <button type="button" data-review-status="approved">Approve</button>
+            <button type="button" class="secondary" data-review-status="changes_requested">Request Changes</button>
+            <button type="button" class="secondary" data-review-status="rejected">Reject</button>
+          </div>
+        </form>
+        <div class="button-row" style="margin-top:12px;">
+          <button type="button" id="queue-publication-button" data-story-id="${escapeAttribute(story.id)}">Queue Channel Publication</button>
+        </div>
+        <h3 style="margin:22px 0 8px;">Queued Publications</h3>
+        <ul class="compact">${publicationItems}</ul>
+        <h3 style="margin:22px 0 8px;">Review History</h3>
+        <ul class="compact">${reviewItems}</ul>
+      </section>
+    </div>
+  </aside>`;
 }
 
 function renderAudiencesWorkspace({ model, audienceRows, liveInstances }) {
@@ -1136,6 +1293,15 @@ function renderDashboardScript() {
 
       document.getElementById("close-audience-button")?.addEventListener("click", () => {
         document.getElementById("audience-drawer")?.classList.remove("open");
+      });
+
+      document.querySelectorAll("[data-story-href]").forEach((row) => {
+        row.addEventListener("click", (event) => {
+          if (event.target.closest("a, button, input, select, textarea")) {
+            return;
+          }
+          window.location.href = row.dataset.storyHref;
+        });
       });
 
       document.getElementById("story-form")?.addEventListener("submit", async (event) => {
@@ -1441,6 +1607,45 @@ function renderReviewOptions(selected) {
   return renderOptions(["", "pending", "approved", "rejected", "changes_requested"], selected, "All review states");
 }
 
+function renderStatusBadge(status) {
+  const value = status ?? "unknown";
+  const className = value === "ready_to_publish" || value === "published"
+    ? "badge ready"
+    : value === "failed" || value === "changes_requested"
+      ? "badge warning"
+      : "badge";
+  return `<span class="${className}">${escapeHtml(value)}</span>`;
+}
+
+function renderReviewBadge(status) {
+  const value = status ?? "pending";
+  const className = value === "approved"
+    ? "badge approved"
+    : value === "changes_requested" || value === "rejected"
+      ? "badge warning"
+      : "badge";
+  return `<span class="${className}">${escapeHtml(value)}</span>`;
+}
+
+function truncateText(value, length) {
+  const text = String(value ?? "").replaceAll(/\s+/g, " ").trim();
+  if (text.length <= length) {
+    return text;
+  }
+  return `${text.slice(0, Math.max(0, length - 1)).trim()}...`;
+}
+
+function formatShortDate(value) {
+  if (!value) {
+    return "";
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return String(value);
+  }
+  return date.toISOString().slice(0, 10);
+}
+
 function renderOptions(values, selected, blankLabel) {
   return values.map((value) => {
     const label = value === "" ? blankLabel : value;
@@ -1463,7 +1668,9 @@ function buildDashboardHref(filters, storyId) {
   if (filters.search) {
     url.searchParams.set("search", filters.search);
   }
-  url.searchParams.set("story_id", storyId);
+  if (storyId) {
+    url.searchParams.set("story_id", storyId);
+  }
   return `${url.pathname}${url.search}`;
 }
 

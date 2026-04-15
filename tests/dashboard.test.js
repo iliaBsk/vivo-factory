@@ -547,7 +547,7 @@ test("app blocks approval when no asset is selected", async () => {
   assert.match(response.body, /selected asset/i);
 });
 
-test("stories workspace renders queue filters, story editor, asset panel, and publication panel", async () => {
+test("stories workspace renders a Tremor-style table without opening details by default", async () => {
   const { createRepository, createApp } = await loadModules();
   const repository = createRepository(createSeed());
   const app = createApp({
@@ -586,12 +586,37 @@ test("stories workspace renders queue filters, story editor, asset panel, and pu
 
   assert.equal(response.status, 200);
   assert.match(response.body, /workspace-tab active[^>]*>Stories/);
-  assert.match(response.body, /Story Queue/);
+  assert.match(response.body, /Stories Table/);
+  assert.match(response.body, /class="tremor-table"/);
+  assert.match(response.body, /<th>Story<\/th>/);
+  assert.match(response.body, /<th>Status<\/th>/);
+  assert.match(response.body, /<th>Review<\/th>/);
   assert.match(response.body, /name="status"/);
   assert.match(response.body, /assets_collected/);
-  assert.match(response.body, /Story Editor/);
+  assert.doesNotMatch(response.body, /story-detail-drawer open/);
+});
+
+test("stories workspace opens a forty-percent right drawer for selected story details and assets", async () => {
+  const { createRepository, createApp } = await loadModules();
+  const repository = createRepository(createSeed());
+  const app = createApp({
+    repository,
+    publicationTargetResolver() {
+      return { channel: "telegram", target_identifier: "-1001111111111" };
+    },
+    clock: () => "2026-03-21T13:00:00.000Z"
+  });
+
+  const response = await app.handle({
+    method: "GET",
+    pathname: "/",
+    query: { tab: "stories", story_id: "story-1" }
+  });
+
+  assert.equal(response.status, 200);
+  assert.match(response.body, /story-detail-drawer open/);
+  assert.match(response.body, /Story Details/);
   assert.match(response.body, /Asset Panel/);
-  assert.match(response.body, /Audience Drawer/);
   assert.match(response.body, /Publication Queue/);
   assert.match(response.body, /Channel Target/);
   assert.match(response.body, /<img /);
