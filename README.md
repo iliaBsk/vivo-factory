@@ -40,6 +40,7 @@ Set real Supabase credentials in `.env` and real audience runtime values in `con
 - `supabase/migrations/20260330140000_vivo_story_pipeline.sql`: Supabase schema for `vivo_*` pipeline tables, triggers, and storage bucket setup
 - `supabase/migrations/20260402110000_vivo_story_reel_history.sql`: append-only reel-generation history tables for storing all generated reel candidates per story
 - `docs/vivo-supabase-agent-spec.md`: operational spec for coding agents using the `vivo_*` pipeline tables
+- `docs/ui-framework.md`: Tremor Raw-compatible dashboard rendering boundary
 - `generated/bootstrap-summary.json`: output from bootstrap, including factory, audience, and instance provisioning IDs
 - `generated/stacks.json`: per-audience runtime manifests
 - `generated/docker-compose.yml`: generated compose template for five isolated audience stacks

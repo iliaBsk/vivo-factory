@@ -586,8 +586,15 @@ test("stories workspace renders a Tremor-style table without opening details by 
 
   assert.equal(response.status, 200);
   assert.match(response.body, /workspace-tab active[^>]*>Stories/);
+  assert.match(response.body, /data-ui-framework="tremor-raw-dashboard"/);
+  assert.match(response.body, /name="ui-framework" content="tremor-raw-dashboard"/);
+  assert.match(response.body, /data-tremor-component="TabNavigation"/);
   assert.match(response.body, /Stories Table/);
-  assert.match(response.body, /class="tremor-table"/);
+  assert.match(response.body, /data-tremor-component="Table"/);
+  assert.match(response.body, /data-theme="light"/);
+  assert.match(response.body, /\[data-theme="dark"\]/);
+  assert.match(response.body, /id="theme-toggle"/);
+  assert.match(response.body, /data-theme-toggle/);
   assert.match(response.body, /<th>Story<\/th>/);
   assert.match(response.body, /<th>Status<\/th>/);
   assert.match(response.body, /<th>Review<\/th>/);
@@ -615,6 +622,7 @@ test("stories workspace opens a forty-percent right drawer for selected story de
 
   assert.equal(response.status, 200);
   assert.match(response.body, /story-detail-drawer open/);
+  assert.match(response.body, /data-tremor-component="Drawer"/);
   assert.match(response.body, /Story Details/);
   assert.match(response.body, /Asset Panel/);
   assert.match(response.body, /Publication Queue/);

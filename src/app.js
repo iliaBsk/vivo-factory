@@ -1,3 +1,12 @@
+import {
+  TREMOR_DASHBOARD_FRAMEWORK,
+  renderTremorBadge,
+  renderTremorCard,
+  renderTremorFrameworkMeta,
+  renderTremorMetric,
+  renderTremorTabs
+} from "./tremor-dashboard.js";
+
 export function createApp(options) {
   const repository = options.repository;
   const instanceManager = options.instanceManager ?? null;
@@ -507,32 +516,89 @@ function renderDashboard(model) {
         });
 
   return `<!doctype html>
-<html lang="en">
+<html lang="en" data-theme="light">
   <head>
     <meta charset="utf-8" />
+    ${renderTremorFrameworkMeta()}
     <title>Vivo Factory Story Operations</title>
+    <script>
+      (() => {
+        try {
+          const stored = localStorage.getItem("vivo-theme");
+          const preferred = window.matchMedia?.("(prefers-color-scheme: dark)")?.matches ? "dark" : "light";
+          document.documentElement.dataset.theme = stored || preferred;
+        } catch {
+          document.documentElement.dataset.theme = "light";
+        }
+      })();
+    </script>
     <style>
-      :root {
+      :root,
+      [data-theme="light"] {
         color-scheme: light;
-        --bg: #ede8df;
-        --surface: #f8f4ec;
-        --surface-2: #fffcf6;
-        --ink: #1f211d;
-        --muted: #706b61;
-        --line: rgba(31, 33, 29, 0.12);
-        --line-strong: rgba(31, 33, 29, 0.2);
-        --accent: #8f5d43;
-        --accent-soft: #d8c1b1;
-        --success: #476651;
-        --warning: #927241;
+        --bg: #f8fafc;
+        --body-bg:
+          radial-gradient(circle at 14% 0%, rgba(59, 130, 246, 0.08), transparent 28%),
+          linear-gradient(180deg, #ffffff 0%, #f8fafc 52%, #f1f5f9 100%);
+        --surface: #ffffff;
+        --surface-2: #ffffff;
+        --surface-muted: #f8fafc;
+        --surface-alpha: rgba(255, 255, 255, 0.9);
+        --ink: #0f172a;
+        --muted: #64748b;
+        --line: #e2e8f0;
+        --line-strong: #cbd5e1;
+        --accent: #2563eb;
+        --accent-contrast: #ffffff;
+        --accent-soft: #dbeafe;
+        --success: #16a34a;
+        --success-line: rgba(22, 163, 74, 0.25);
+        --warning: #d97706;
+        --warning-line: rgba(217, 119, 6, 0.25);
+        --secondary-bg: #f1f5f9;
+        --preview-bg: linear-gradient(135deg, #e0f2fe 0%, #f8fafc 100%);
+        --row-hover: #f8fafc;
+        --row-active: #eff6ff;
+        --code-bg: #f1f5f9;
+        --scrim: rgba(15, 23, 42, 0.28);
+        --shadow: 0 1px 2px rgba(15, 23, 42, 0.06), 0 10px 30px rgba(15, 23, 42, 0.05);
+        --drawer-shadow: -40px 0 80px rgba(15, 23, 42, 0.18);
+      }
+      [data-theme="dark"] {
+        color-scheme: dark;
+        --bg: #020617;
+        --body-bg:
+          radial-gradient(circle at 14% 0%, rgba(96, 165, 250, 0.16), transparent 30%),
+          linear-gradient(180deg, #020617 0%, #0f172a 54%, #111827 100%);
+        --surface: #0f172a;
+        --surface-2: #111827;
+        --surface-muted: #111827;
+        --surface-alpha: rgba(15, 23, 42, 0.9);
+        --ink: #f8fafc;
+        --muted: #94a3b8;
+        --line: rgba(148, 163, 184, 0.18);
+        --line-strong: rgba(148, 163, 184, 0.34);
+        --accent: #60a5fa;
+        --accent-contrast: #020617;
+        --accent-soft: rgba(96, 165, 250, 0.18);
+        --success: #4ade80;
+        --success-line: rgba(74, 222, 128, 0.28);
+        --warning: #fbbf24;
+        --warning-line: rgba(251, 191, 36, 0.28);
+        --secondary-bg: #1e293b;
+        --preview-bg: linear-gradient(135deg, rgba(37, 99, 235, 0.28) 0%, rgba(15, 23, 42, 0.88) 100%);
+        --row-hover: rgba(148, 163, 184, 0.08);
+        --row-active: rgba(96, 165, 250, 0.14);
+        --code-bg: #020617;
+        --scrim: rgba(2, 6, 23, 0.62);
+        --shadow: 0 1px 2px rgba(0, 0, 0, 0.38), 0 20px 50px rgba(0, 0, 0, 0.28);
+        --drawer-shadow: -40px 0 80px rgba(0, 0, 0, 0.42);
       }
       * { box-sizing: border-box; }
       body {
         margin: 0;
-        font-family: "Avenir Next", "Segoe UI", sans-serif;
-        background:
-          radial-gradient(circle at 16% 0%, rgba(143, 93, 67, 0.12), transparent 26%),
-          linear-gradient(180deg, #f3eee5 0%, var(--bg) 45%, #e4ded5 100%);
+        font-family: Inter, "Avenir Next", "Segoe UI", sans-serif;
+        background: var(--body-bg);
         color: var(--ink);
       }
       a { color: inherit; text-decoration: none; }
@@ -567,11 +633,16 @@ function renderDashboard(model) {
         padding: 4px;
         border: 1px solid var(--line);
         border-radius: 999px;
-        background: rgba(255, 252, 246, 0.62);
+        background: var(--surface-alpha);
         position: sticky;
         top: 16px;
         backdrop-filter: blur(18px);
         z-index: 4;
+      }
+      .topbar-actions {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
       }
       .workspace-tab {
         display: inline-flex;
@@ -586,8 +657,8 @@ function renderDashboard(model) {
       }
       .workspace-tab:hover { transform: translateY(-1px); color: var(--ink); }
       .workspace-tab.active {
-        background: var(--ink);
-        color: var(--surface-2);
+        background: var(--accent);
+        color: var(--accent-contrast);
       }
       .workspace {
         padding-top: 28px;
@@ -600,10 +671,10 @@ function renderDashboard(model) {
         align-items: start;
       }
       .panel {
-        background: rgba(255, 252, 246, 0.68);
+        background: var(--surface);
         border: 1px solid var(--line);
-        border-radius: 28px;
-        box-shadow: 0 26px 80px rgba(31, 33, 29, 0.08);
+        border-radius: 16px;
+        box-shadow: var(--shadow);
       }
       .panel-inner { padding: 22px; }
       .plain-section {
@@ -649,7 +720,7 @@ function renderDashboard(model) {
         border-radius: 16px;
         border: 1px solid var(--line);
         padding: 12px 13px;
-        background: rgba(255, 252, 246, 0.88);
+        background: var(--surface-2);
         color: var(--ink);
         text-transform: none;
         letter-spacing: 0;
@@ -660,7 +731,7 @@ function renderDashboard(model) {
         border-radius: 999px;
         padding: 11px 15px;
         background: var(--accent);
-        color: #fff;
+        color: var(--accent-contrast);
         cursor: pointer;
         transition: transform 160ms ease, opacity 160ms ease;
       }
@@ -668,8 +739,14 @@ function renderDashboard(model) {
         transform: translateY(-1px);
       }
       button.secondary {
-        background: #ded5c9;
+        background: var(--secondary-bg);
         color: var(--ink);
+      }
+      .theme-toggle {
+        border: 1px solid var(--line);
+        background: var(--surface);
+        color: var(--ink);
+        box-shadow: var(--shadow);
       }
       .button-like {
         display: inline-flex;
@@ -678,10 +755,10 @@ function renderDashboard(model) {
         border-radius: 999px;
         padding: 11px 15px;
         background: var(--accent);
-        color: #fff;
+        color: var(--accent-contrast);
       }
       .button-like.secondary {
-        background: #ded5c9;
+        background: var(--secondary-bg);
         color: var(--ink);
       }
       button.ghost {
@@ -712,7 +789,7 @@ function renderDashboard(model) {
       }
       .meta-chip {
         padding: 13px;
-        background: rgba(255, 252, 246, 0.58);
+        background: var(--surface-muted);
       }
       .asset-grid {
         display: grid;
@@ -723,7 +800,7 @@ function renderDashboard(model) {
         padding: 16px;
         border-radius: 22px;
         border: 1px solid var(--line);
-        background: rgba(255, 252, 246, 0.82);
+        background: var(--surface);
       }
       .asset-card.selected {
         border-color: var(--accent);
@@ -731,7 +808,7 @@ function renderDashboard(model) {
       .asset-preview {
         min-height: 120px;
         border-radius: 18px;
-        background: linear-gradient(135deg, #e4d7c8 0%, #f7efe8 100%);
+        background: var(--preview-bg);
         display: flex;
         align-items: center;
         justify-content: center;
@@ -768,7 +845,7 @@ function renderDashboard(model) {
       }
       .stat {
         padding: 18px;
-        background: rgba(255, 252, 246, 0.68);
+        background: var(--surface);
       }
       .stat strong { display: block; font-size: 28px; letter-spacing: -0.04em; }
       .stat span { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; }
@@ -812,7 +889,7 @@ function renderDashboard(model) {
         display: block;
         padding: 8px 10px;
         border-radius: 12px;
-        background: rgba(31, 33, 29, 0.06);
+        background: var(--code-bg);
         overflow-x: auto;
         font-size: 12px;
       }
@@ -823,10 +900,10 @@ function renderDashboard(model) {
         border-radius: 14px;
       }
       .tremor-card {
-        background: rgba(255, 252, 246, 0.82);
+        background: var(--surface);
         border: 1px solid var(--line);
-        border-radius: 20px;
-        box-shadow: 0 1px 2px rgba(31, 33, 29, 0.05);
+        border-radius: 16px;
+        box-shadow: var(--shadow);
         overflow: hidden;
       }
       .tremor-filterbar {
@@ -854,7 +931,7 @@ function renderDashboard(model) {
         text-transform: uppercase;
         padding: 12px 16px;
         border-bottom: 1px solid var(--line);
-        background: rgba(248, 244, 236, 0.86);
+        background: var(--surface-muted);
       }
       .tremor-table td {
         padding: 14px 16px;
@@ -865,10 +942,10 @@ function renderDashboard(model) {
         transition: background 160ms ease;
       }
       .tremor-table tbody tr:hover {
-        background: rgba(143, 93, 67, 0.06);
+        background: var(--row-hover);
       }
       .tremor-table tbody tr.active {
-        background: rgba(143, 93, 67, 0.1);
+        background: var(--row-active);
       }
       .story-title-link {
         display: inline-grid;
@@ -885,25 +962,25 @@ function renderDashboard(model) {
         border-radius: 999px;
         padding: 4px 8px;
         border: 1px solid var(--line);
-        background: rgba(255, 252, 246, 0.7);
+        background: var(--surface);
         color: var(--muted);
         font-size: 12px;
         white-space: nowrap;
       }
       .badge.ready, .badge.approved {
         color: var(--success);
-        border-color: rgba(71, 102, 81, 0.25);
-        background: rgba(71, 102, 81, 0.08);
+        border-color: var(--success-line);
+        background: color-mix(in srgb, var(--success) 12%, transparent);
       }
       .badge.warning {
         color: var(--warning);
-        border-color: rgba(146, 114, 65, 0.25);
-        background: rgba(146, 114, 65, 0.08);
+        border-color: var(--warning-line);
+        background: color-mix(in srgb, var(--warning) 12%, transparent);
       }
       .drawer-scrim {
         position: fixed;
         inset: 0;
-        background: rgba(31, 33, 29, 0.18);
+        background: var(--scrim);
         backdrop-filter: blur(2px);
         z-index: 8;
         animation: fadeUp 180ms ease both;
@@ -919,7 +996,7 @@ function renderDashboard(model) {
         overflow-y: auto;
         background: var(--surface-2);
         border-left: 1px solid var(--line-strong);
-        box-shadow: -40px 0 80px rgba(31, 33, 29, 0.16);
+        box-shadow: var(--drawer-shadow);
         z-index: 9;
         transform: translateX(100%);
         transition: transform 240ms ease;
@@ -936,7 +1013,7 @@ function renderDashboard(model) {
         justify-content: space-between;
         gap: 16px;
         padding: 24px;
-        background: rgba(255, 252, 246, 0.92);
+        background: var(--surface-alpha);
         border-bottom: 1px solid var(--line);
         backdrop-filter: blur(18px);
       }
@@ -976,14 +1053,17 @@ function renderDashboard(model) {
       }
     </style>
   </head>
-  <body>
-    <main>
+  <body data-ui-framework="${TREMOR_DASHBOARD_FRAMEWORK}">
+    <main data-ui-framework="${TREMOR_DASHBOARD_FRAMEWORK}">
       <header class="topbar">
         <div>
           <h1>Vivo Factory</h1>
           <p>Setup, story review, and audience manager launch in one restrained operations surface.</p>
         </div>
-        ${renderWorkspaceTabs(activeTab)}
+        <div class="topbar-actions">
+          ${renderWorkspaceTabs(activeTab)}
+          <button type="button" class="theme-toggle" id="theme-toggle" data-theme-toggle aria-label="Toggle color theme">Theme</button>
+        </div>
       </header>
       <section class="workspace">
         ${workspace}
@@ -999,9 +1079,9 @@ function renderSetupWorkspace({ model, setupChecklist, audienceImportPanel }) {
   return `<div class="split">
     <section>
       <div class="stat-row">
-        <div class="stat"><strong>${escapeHtml(model.setupStatus?.ready ? "Ready" : "Open")}</strong><span>Setup state</span></div>
-        <div class="stat"><strong>${escapeHtml(String(model.audiences.length))}</strong><span>Audiences</span></div>
-        <div class="stat"><strong>${escapeHtml(model.setupStatus?.llm?.model ?? "unset")}</strong><span>LLM model</span></div>
+        ${renderTremorMetric({ value: model.setupStatus?.ready ? "Ready" : "Open", label: "Setup state" })}
+        ${renderTremorMetric({ value: String(model.audiences.length), label: "Audiences" })}
+        ${renderTremorMetric({ value: model.setupStatus?.llm?.model ?? "unset", label: "LLM model" })}
       </div>
       <section class="panel">
         <div class="panel-inner">
@@ -1060,14 +1140,11 @@ function renderStoriesWorkspace(context) {
       })
     : "";
 
-  return `<div class="workspace-grid">
-    <section class="tremor-card">
-      <div class="panel-inner">
-        <div class="section-title">
-          <div><h2>Stories Table</h2><p class="muted">Select a row to open details, assets, approval, and publication controls.</p></div>
-          <span class="muted">${escapeHtml(String(model.stories.length))} stories</span>
-        </div>
-      </div>
+  const storiesTable = renderTremorCard({
+    title: "Stories Table",
+    description: "Select a row to open details, assets, approval, and publication controls.",
+    action: `<span class="muted">${escapeHtml(String(model.stories.length))} stories</span>`,
+    children: `
       <form method="GET" class="tremor-filterbar">
         <input type="hidden" name="tab" value="stories" />
         <label>Status
@@ -1088,7 +1165,7 @@ function renderStoriesWorkspace(context) {
         <button type="submit">Apply Filters</button>
       </form>
       <div class="tremor-table-wrap">
-        <table class="tremor-table">
+        <table class="tremor-table" data-tremor-component="Table">
           <thead>
             <tr>
               <th>Story</th>
@@ -1104,8 +1181,11 @@ function renderStoriesWorkspace(context) {
             ${storyTableRows || `<tr><td colspan="7" class="muted">No stories match these filters.</td></tr>`}
           </tbody>
         </table>
-      </div>
-    </section>
+      </div>`
+  });
+
+  return `<div class="workspace-grid">
+    ${storiesTable}
 
     <section class="split" style="margin-top:22px;">
       <div class="panel"><div class="panel-inner"><div class="section-title"><h2>Audit Log</h2></div><ul class="compact">${auditItems}</ul></div></div>
@@ -1140,7 +1220,7 @@ function renderStoryTableRows(stories, filters, activeStoryId) {
 
 function renderStoryDetailDrawer({ story, assetCards, publicationItems, reviewItems, metadataJson, selectedAssetId, publicationTarget, closeHref }) {
   return `<a class="drawer-scrim" href="${escapeAttribute(closeHref)}" aria-label="Close story details"></a>
-  <aside class="story-detail-drawer open" aria-label="Story details">
+  <aside class="story-detail-drawer open" data-tremor-component="Drawer" aria-label="Story details">
     <div class="drawer-header">
       <div>
         <h2>Story Details</h2>
@@ -1250,13 +1330,11 @@ function renderAudiencesWorkspace({ model, audienceRows, liveInstances }) {
 }
 
 function renderWorkspaceTabs(activeTab) {
-  return `<nav class="workspace-tabs" aria-label="Workspace">
-    ${["setup", "stories", "audiences"].map((tab) => {
-      const label = tab[0].toUpperCase() + tab.slice(1);
-      const href = tab === "setup" ? "/" : `/?tab=${tab}`;
-      return `<a class="workspace-tab${activeTab === tab ? " active" : ""}" href="${escapeAttribute(href)}">${escapeHtml(label)}</a>`;
-    }).join("")}
-  </nav>`;
+  return renderTremorTabs(activeTab, ["setup", "stories", "audiences"].map((tab) => ({
+    id: tab,
+    label: tab[0].toUpperCase() + tab.slice(1),
+    href: tab === "setup" ? "/" : `/?tab=${tab}`
+  })));
 }
 
 function renderDashboardScript() {
@@ -1286,6 +1364,24 @@ function renderDashboardScript() {
           reader.readAsDataURL(file);
         });
       }
+
+      function setTheme(theme) {
+        document.documentElement.dataset.theme = theme;
+        try {
+          localStorage.setItem("vivo-theme", theme);
+        } catch {}
+        const toggle = document.getElementById("theme-toggle");
+        if (toggle) {
+          toggle.textContent = theme === "dark" ? "Light" : "Dark";
+          toggle.setAttribute("aria-label", "Switch to " + (theme === "dark" ? "light" : "dark") + " theme");
+        }
+      }
+
+      setTheme(document.documentElement.dataset.theme || "light");
+
+      document.getElementById("theme-toggle")?.addEventListener("click", () => {
+        setTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark");
+      });
 
       document.getElementById("toggle-audience-button")?.addEventListener("click", () => {
         document.getElementById("audience-drawer")?.classList.add("open");
@@ -1609,22 +1705,22 @@ function renderReviewOptions(selected) {
 
 function renderStatusBadge(status) {
   const value = status ?? "unknown";
-  const className = value === "ready_to_publish" || value === "published"
-    ? "badge ready"
+  const tone = value === "ready_to_publish" || value === "published"
+    ? "success"
     : value === "failed" || value === "changes_requested"
-      ? "badge warning"
-      : "badge";
-  return `<span class="${className}">${escapeHtml(value)}</span>`;
+      ? "warning"
+      : "neutral";
+  return renderTremorBadge(value, { tone });
 }
 
 function renderReviewBadge(status) {
   const value = status ?? "pending";
-  const className = value === "approved"
-    ? "badge approved"
+  const tone = value === "approved"
+    ? "approved"
     : value === "changes_requested" || value === "rejected"
-      ? "badge warning"
-      : "badge";
-  return `<span class="${className}">${escapeHtml(value)}</span>`;
+      ? "warning"
+      : "neutral";
+  return renderTremorBadge(value, { tone });
 }
 
 function truncateText(value, length) {
