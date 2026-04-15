@@ -486,6 +486,19 @@ function renderDashboard(model) {
   const profileJson = escapeHtml(JSON.stringify(audience?.profile_snapshot ?? {}, null, 2));
   const selectedAssetId = model.activeStory?.selected_asset_id ?? "";
   const publicationTarget = model.activeStory?.publication_target ?? null;
+  const drawerOpen = activeTab === "stories" && Boolean(model.activeStory);
+  const drawerPortal = drawerOpen
+    ? renderStoryDetailDrawer({
+        story: model.activeStory,
+        assetCards,
+        publicationItems,
+        reviewItems,
+        metadataJson,
+        selectedAssetId,
+        publicationTarget,
+        closeHref: buildDashboardHref(model.filters, "")
+      })
+    : "";
   const workspace = activeTab === "stories"
     ? renderStoriesWorkspace({
         model,
@@ -516,7 +529,7 @@ function renderDashboard(model) {
         });
 
   return `<!doctype html>
-<html lang="en" data-theme="light">
+<html lang="en"${drawerOpen ? ' class="drawer-open"' : ""} data-theme="light">
   <head>
     <meta charset="utf-8" />
     ${renderTremorFrameworkMeta()}
@@ -601,6 +614,8 @@ function renderDashboard(model) {
         background: var(--body-bg);
         color: var(--ink);
       }
+      html.drawer-open,
+      body.drawer-open { overflow: hidden; }
       a { color: inherit; text-decoration: none; }
       main { max-width: 1500px; margin: 0 auto; padding: 28px 28px 56px; }
       h1, h2, h3 { margin: 0; }
@@ -662,7 +677,7 @@ function renderDashboard(model) {
       }
       .workspace {
         padding-top: 28px;
-        animation: fadeUp 360ms ease both;
+        animation: fadeIn 360ms ease both;
       }
       .split {
         display: grid;
@@ -977,27 +992,36 @@ function renderDashboard(model) {
         border-color: var(--warning-line);
         background: color-mix(in srgb, var(--warning) 12%, transparent);
       }
+      .drawer-portal {
+        position: fixed;
+        inset: 0;
+        z-index: 50;
+        pointer-events: none;
+      }
       .drawer-scrim {
         position: fixed;
         inset: 0;
         background: var(--scrim);
         backdrop-filter: blur(2px);
-        z-index: 8;
-        animation: fadeUp 180ms ease both;
+        z-index: 50;
+        pointer-events: auto;
+        animation: fadeIn 180ms ease both;
       }
       .story-detail-drawer {
         position: fixed;
-        top: 0;
-        right: 0;
-        width: 40vw;
+        top: 8px;
+        right: 8px;
+        bottom: 8px;
+        width: min(40vw, 760px);
         min-width: 520px;
-        max-width: 760px;
-        height: 100vh;
+        max-width: calc(100vw - 16px);
         overflow-y: auto;
         background: var(--surface-2);
-        border-left: 1px solid var(--line-strong);
+        border: 1px solid var(--line-strong);
+        border-radius: 18px;
         box-shadow: var(--drawer-shadow);
-        z-index: 9;
+        z-index: 51;
+        pointer-events: auto;
         transform: translateX(100%);
         transition: transform 240ms ease;
       }
@@ -1034,9 +1058,9 @@ function renderDashboard(model) {
         from { opacity: 0; transform: translateY(10px); }
         to { opacity: 1; transform: translateY(0); }
       }
-      @keyframes fadeUp {
-        from { opacity: 0; transform: translateY(8px); }
-        to { opacity: 1; transform: translateY(0); }
+      @keyframes fadeIn {
+        from { opacity: 0; }
+        to { opacity: 1; }
       }
       @media (max-width: 1080px) {
         main { padding: 18px 16px 44px; }
@@ -1046,14 +1070,15 @@ function renderDashboard(model) {
         }
         .tremor-filterbar { grid-template-columns: 1fr; }
         .story-detail-drawer {
-          width: 100vw;
+          inset: 8px;
+          width: auto;
           min-width: 0;
         }
         .workspace-tabs { width: 100%; overflow-x: auto; justify-content: start; }
       }
     </style>
   </head>
-  <body data-ui-framework="${TREMOR_DASHBOARD_FRAMEWORK}">
+  <body${drawerOpen ? ' class="drawer-open"' : ""} data-ui-framework="${TREMOR_DASHBOARD_FRAMEWORK}">
     <main data-ui-framework="${TREMOR_DASHBOARD_FRAMEWORK}">
       <header class="topbar">
         <div>
@@ -1069,6 +1094,7 @@ function renderDashboard(model) {
         ${workspace}
       </section>
     </main>
+    ${drawerPortal}
 
     ${renderDashboardScript()}
   </body>
@@ -1118,28 +1144,9 @@ function renderStoriesWorkspace(context) {
     model,
     storyTableRows,
     audienceOptions,
-    assetCards,
-    publicationItems,
-    reviewItems,
     auditItems,
-    analyticsItems,
-    metadataJson,
-    selectedAssetId,
-    publicationTarget
+    analyticsItems
   } = context;
-  const drawer = model.activeStory
-    ? renderStoryDetailDrawer({
-        story: model.activeStory,
-        assetCards,
-        publicationItems,
-        reviewItems,
-        metadataJson,
-        selectedAssetId,
-        publicationTarget,
-        closeHref: buildDashboardHref(model.filters, "")
-      })
-    : "";
-
   const storiesTable = renderTremorCard({
     title: "Stories Table",
     description: "Select a row to open details, assets, approval, and publication controls.",
@@ -1191,7 +1198,6 @@ function renderStoriesWorkspace(context) {
       <div class="panel"><div class="panel-inner"><div class="section-title"><h2>Audit Log</h2></div><ul class="compact">${auditItems}</ul></div></div>
       <div class="panel"><div class="panel-inner"><div class="section-title"><h2>Analytics Snapshot</h2></div><ul class="compact">${analyticsItems}</ul></div></div>
     </section>
-    ${drawer}
   </div>`;
 }
 
@@ -1219,7 +1225,8 @@ function renderStoryTableRows(stories, filters, activeStoryId) {
 }
 
 function renderStoryDetailDrawer({ story, assetCards, publicationItems, reviewItems, metadataJson, selectedAssetId, publicationTarget, closeHref }) {
-  return `<a class="drawer-scrim" href="${escapeAttribute(closeHref)}" aria-label="Close story details"></a>
+  return `<div class="drawer-portal" data-tremor-component="DrawerPortal">
+  <a class="drawer-scrim" href="${escapeAttribute(closeHref)}" aria-label="Close story details"></a>
   <aside class="story-detail-drawer open" data-tremor-component="Drawer" aria-label="Story details">
     <div class="drawer-header">
       <div>
@@ -1287,7 +1294,8 @@ function renderStoryDetailDrawer({ story, assetCards, publicationItems, reviewIt
         <ul class="compact">${reviewItems}</ul>
       </section>
     </div>
-  </aside>`;
+  </aside>
+</div>`;
 }
 
 function renderAudiencesWorkspace({ model, audienceRows, liveInstances }) {

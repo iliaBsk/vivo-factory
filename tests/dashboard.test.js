@@ -621,6 +621,9 @@ test("stories workspace opens a forty-percent right drawer for selected story de
   });
 
   assert.equal(response.status, 200);
+  assert.match(response.body, /<html lang="en" class="drawer-open" data-theme="light">/);
+  assert.match(response.body, /<body class="drawer-open" data-ui-framework="tremor-raw-dashboard">/);
+  assert.match(response.body, /data-tremor-component="DrawerPortal"/);
   assert.match(response.body, /story-detail-drawer open/);
   assert.match(response.body, /data-tremor-component="Drawer"/);
   assert.match(response.body, /Story Details/);
@@ -628,6 +631,8 @@ test("stories workspace opens a forty-percent right drawer for selected story de
   assert.match(response.body, /Publication Queue/);
   assert.match(response.body, /Channel Target/);
   assert.match(response.body, /<img /);
+  assert.ok(response.body.indexOf('data-tremor-component="DrawerPortal"') > response.body.indexOf("</main>"));
+  assert.match(response.body, /html\.drawer-open,\s*body\.drawer-open\s*\{\s*overflow: hidden;/);
 });
 
 test("audiences workspace renders audience data and launch controls after audience creation", async () => {
