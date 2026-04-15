@@ -254,19 +254,31 @@ async function handleRequest(context) {
       return json(404, { error: "Audience not found" });
     }
     const body = readBody(request.body);
+    const requestedRuntimeConfig = normalizeLaunchRuntimeConfig(body.runtime_config ?? {});
     let instance = await repository.getInstanceByAudience(audienceId);
     if (!instance) {
       if (!repository.createInstanceForAudience) {
         return json(409, { error: "Audience instance creation is not supported by this repository." });
       }
-      instance = await repository.createInstanceForAudience(audience, buildAudienceInstance(audience, body.runtime_config ?? {}), {
+      instance = await repository.createInstanceForAudience(audience, buildAudienceInstance(audience, requestedRuntimeConfig), {
         actorId: body.operator ?? body.actor_id ?? "unknown",
         timestamp: clock()
       });
+    } else {
+      instance = {
+        ...instance,
+        openclaw_admin_url: requestedRuntimeConfig.openclaw_admin_url ?? instance.openclaw_admin_url ?? "",
+        profile_base_url: requestedRuntimeConfig.profile_base_url ?? requestedRuntimeConfig.plugin_base_url ?? instance.profile_base_url ?? "",
+        runtime_config: {
+          ...(instance.runtime_config ?? {}),
+          ...requestedRuntimeConfig
+        }
+      };
     }
     const result = await audienceManagerLauncher.launchAudienceManager(audience, instance, {
       operator: body.operator ?? body.actor_id ?? "unknown",
-      timestamp: clock()
+      timestamp: clock(),
+      runtime_config: requestedRuntimeConfig
     });
     if (repository.updateInstance && result.instance_update) {
       await repository.updateInstance(instance.id, result.instance_update, {
@@ -425,12 +437,46 @@ function buildAudienceInstance(audience, runtimeConfig = {}) {
     profile_base_url: runtimeConfig.profile_base_url ?? runtimeConfig.plugin_base_url ?? "",
     runtime_config: {
       profile_service_name: runtimeConfig.profile_service_name ?? `${audienceKey}-profile`,
+      plugin_base_url: runtimeConfig.plugin_base_url ?? "",
+      openclaw_admin_url: runtimeConfig.openclaw_admin_url ?? "",
+      openclaw_chat_path: runtimeConfig.openclaw_chat_path ?? "",
+      openclaw_report_path: runtimeConfig.openclaw_report_path ?? "",
+      openclaw_health_path: runtimeConfig.openclaw_health_path ?? "",
+      telegram_bot_token: runtimeConfig.telegram_bot_token ?? "",
+      telegram_chat_id: runtimeConfig.telegram_chat_id ?? "",
+      telegram_report_chat_id: runtimeConfig.telegram_report_chat_id ?? runtimeConfig.telegram_chat_id ?? "",
       llm_provider: runtimeConfig.llm_provider ?? "",
       llm_model: runtimeConfig.llm_model ?? "",
       llm_base_url: runtimeConfig.llm_base_url ?? ""
     },
     status: "launch_pending"
   };
+}
+
+function normalizeLaunchRuntimeConfig(runtimeConfig = {}) {
+  const allowedKeys = [
+    "factory_id",
+    "instance_key",
+    "service_name",
+    "profile_service_name",
+    "plugin_base_url",
+    "profile_base_url",
+    "openclaw_admin_url",
+    "openclaw_chat_path",
+    "openclaw_report_path",
+    "openclaw_health_path",
+    "telegram_bot_token",
+    "telegram_chat_id",
+    "telegram_report_chat_id",
+    "llm_provider",
+    "llm_model",
+    "llm_base_url"
+  ];
+  return Object.fromEntries(
+    allowedKeys
+      .map((key) => [key, typeof runtimeConfig[key] === "string" ? runtimeConfig[key].trim() : runtimeConfig[key]])
+      .filter(([, value]) => value !== undefined && value !== null && value !== "")
+  );
 }
 
 function renderDashboard(model) {
@@ -456,29 +502,7 @@ function renderDashboard(model) {
   const analyticsItems = model.analyticsItems.length
     ? model.analyticsItems.map((item) => `<li><strong>${escapeHtml(item.story_id ?? item.topic ?? "feedback")}</strong> <span>${escapeHtml(String(item.engagement_score ?? 0))}</span></li>`).join("")
     : "<li>No analytics snapshots</li>";
-  const liveInstances = model.instances.length
-    ? model.instances.map((instance) => `<li>
-        <strong>${escapeHtml(instance.service_name ?? instance.audience_id)}</strong>
-        <div>Audience: ${escapeHtml(instance.audience_key ?? instance.audience_id)}</div>
-        <div>Chat ID: ${escapeHtml(instance.telegram_chat_id)}</div>
-        <div>Report ID: ${escapeHtml(instance.telegram_report_chat_id ?? "")}</div>
-        <div>Admin: ${escapeHtml(instance.openclaw_admin_url)}</div>
-        <div>Profile Service: ${escapeHtml(instance.profile_service_name ?? "n/a")}</div>
-        <div class="instance-actions">
-          <button type="button" data-instance-action="deploy" data-audience-id="${escapeAttribute(instance.audience_id)}">Deploy</button>
-          <button type="button" data-instance-action="health" data-audience-id="${escapeAttribute(instance.audience_id)}">Health</button>
-          <button type="button" data-instance-action="report" data-audience-id="${escapeAttribute(instance.audience_id)}">Report</button>
-          <button type="button" data-instance-action="logs" data-audience-id="${escapeAttribute(instance.audience_id)}">Logs</button>
-        </div>
-        <div class="command-list">
-          ${renderCommandBlock("OpenClaw Shell", instance.commands?.openclaw_shell)}
-          ${renderCommandBlock("Profile Shell", instance.commands?.profile_shell)}
-          ${renderCommandBlock("OpenClaw Env", instance.commands?.openclaw_env)}
-          ${renderCommandBlock("OpenClaw Logs", instance.commands?.openclaw_logs)}
-          ${renderCommandBlock("Profile Logs", instance.commands?.profile_logs)}
-        </div>
-      </li>`).join("")
-    : "<li>No instance config</li>";
+  const liveInstances = renderDeploymentInstances(model.audienceInstances ?? [], model.instances ?? []);
 
   const audience = model.activeStory?.audience;
   const audienceFields = audience ? renderAudienceFields(audience) : `<p class="muted">No audience loaded.</p>`;
@@ -864,14 +888,29 @@ function renderDashboard(model) {
       }
       .stat strong { display: block; font-size: 28px; letter-spacing: -0.04em; }
       .stat span { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; }
+      .audiences-layout {
+        display: grid;
+        grid-template-columns: minmax(620px, 1.35fr) minmax(360px, 0.65fr);
+        gap: 24px;
+        align-items: start;
+      }
+      .audience-workspace-main {
+        min-width: 0;
+      }
       .audience-profile {
         display: grid;
-        grid-template-columns: minmax(0, 1fr) auto;
-        gap: 18px;
-        padding: 18px 0;
+        grid-template-columns: minmax(240px, 0.8fr) minmax(360px, 1.2fr);
+        gap: 24px;
+        padding: 22px 0;
         border-bottom: 1px solid var(--line);
+        align-items: start;
+        transition: border-color 180ms ease, transform 180ms ease;
       }
       .audience-profile:first-child { padding-top: 0; }
+      .audience-profile:hover {
+        border-color: var(--line-strong);
+        transform: translateY(-1px);
+      }
       .pill-line {
         display: flex;
         flex-wrap: wrap;
@@ -882,6 +921,47 @@ function renderDashboard(model) {
         border: 1px solid var(--line);
         border-radius: 999px;
         padding: 5px 9px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+      .launch-config {
+        display: grid;
+        gap: 14px;
+        padding: 16px;
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        background: var(--surface-muted);
+      }
+      .launch-config-title {
+        display: flex;
+        align-items: start;
+        justify-content: space-between;
+        gap: 12px;
+      }
+      .launch-config-title p {
+        margin-top: 4px;
+      }
+      .launch-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 10px;
+      }
+      .launch-actions {
+        justify-content: end;
+      }
+      .instance-card {
+        display: grid;
+        gap: 12px;
+      }
+      .instance-heading {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+      }
+      .instance-meta {
+        display: grid;
+        gap: 6px;
         color: var(--muted);
         font-size: 12px;
       }
@@ -1068,6 +1148,7 @@ function renderDashboard(model) {
           grid-template-columns: 1fr;
           display: grid;
         }
+        .audiences-layout, .launch-grid { grid-template-columns: 1fr; }
         .tremor-filterbar { grid-template-columns: 1fr; }
         .story-detail-drawer {
           inset: 8px;
@@ -1299,11 +1380,11 @@ function renderStoryDetailDrawer({ story, assetCards, publicationItems, reviewIt
 }
 
 function renderAudiencesWorkspace({ model, audienceRows, liveInstances }) {
-  return `<div class="split">
-    <section class="panel">
+  return `<div class="audiences-layout">
+    <section class="panel audience-workspace-main">
       <div class="panel-inner">
         <div class="section-title">
-          <div><h2>Audiences</h2><p class="muted">Supabase audience profiles. Launch creates the OpenClaw instance after the audience exists.</p></div>
+          <div><h2>Audiences</h2><p class="muted">Approved Supabase profiles. Deployment config is captured at launch and written to the generated env file.</p></div>
           <span class="muted">${escapeHtml(String(model.audiences.length))} audiences</span>
         </div>
         <div class="audience-list">${audienceRows}</div>
@@ -1312,7 +1393,7 @@ function renderAudiencesWorkspace({ model, audienceRows, liveInstances }) {
     <section class="workspace-stack">
       <section class="panel">
         <div class="panel-inner">
-          <div class="section-title"><div><h2>Live Instances</h2><p class="muted">Runtime containers and exact CLI commands.</p></div><button type="button" id="deploy-all-button">Deploy All</button></div>
+          <div class="section-title"><div><h2>Deployments</h2><p class="muted">Live Instances, generated env files, and exact CLI commands.</p></div></div>
           <ul class="compact instance-list">${liveInstances}</ul>
         </div>
       </section>
@@ -1335,6 +1416,75 @@ function renderAudiencesWorkspace({ model, audienceRows, liveInstances }) {
       </section>
     </section>
   </div>`;
+}
+
+function renderDeploymentInstances(audienceInstances, staticInstances) {
+  const deployments = new Map();
+  for (const instance of audienceInstances ?? []) {
+    deployments.set(instance.service_name ?? instance.instance_key ?? instance.id, normalizeDeploymentInstance(instance, "created"));
+  }
+  for (const instance of staticInstances ?? []) {
+    deployments.set(instance.service_name ?? instance.instance_key ?? instance.audience_id, normalizeDeploymentInstance(instance, "static"));
+  }
+  const items = [...deployments.values()];
+  if (!items.length) {
+    return `<li class="instance-card"><strong>No deployments</strong><div class="muted">Create an audience, add runtime config, then launch deployment.</div></li>`;
+  }
+  return items.map(renderDeploymentInstance).join("");
+}
+
+function normalizeDeploymentInstance(instance, source) {
+  const runtime = instance.runtime_config ?? {};
+  return {
+    source,
+    audience_id: instance.audience_id,
+    audience_key: instance.audience_key ?? instance.instance_key?.replace(/-openclaw$/, "") ?? instance.audience_id,
+    service_name: instance.service_name ?? instance.instance_key,
+    profile_service_name: instance.profile_service_name ?? runtime.profile_service_name,
+    openclaw_admin_url: instance.openclaw_admin_url ?? runtime.openclaw_admin_url ?? "",
+    profile_base_url: instance.profile_base_url ?? runtime.plugin_base_url ?? "",
+    telegram_chat_id: instance.telegram_chat_id ?? runtime.telegram_chat_id ?? "",
+    telegram_report_chat_id: instance.telegram_report_chat_id ?? runtime.telegram_report_chat_id ?? runtime.telegram_chat_id ?? "",
+    status: instance.status ?? "configured",
+    env_file: runtime.generated_env_file ?? "",
+    compose_file: runtime.generated_compose_file ?? "",
+    llm_model: runtime.llm_model ?? "",
+    commands: instance.commands ?? runtime.commands ?? {}
+  };
+}
+
+function renderDeploymentInstance(instance) {
+  const actions = instance.source === "static"
+    ? `<div class="instance-actions">
+          <button type="button" data-instance-action="deploy" data-audience-id="${escapeAttribute(instance.audience_id)}">Deploy</button>
+          <button type="button" data-instance-action="health" data-audience-id="${escapeAttribute(instance.audience_id)}">Health</button>
+          <button type="button" data-instance-action="report" data-audience-id="${escapeAttribute(instance.audience_id)}">Report</button>
+          <button type="button" data-instance-action="logs" data-audience-id="${escapeAttribute(instance.audience_id)}">Logs</button>
+        </div>`
+    : "";
+  return `<li class="instance-card">
+    <div class="instance-heading">
+      <strong>${escapeHtml(instance.service_name ?? instance.audience_id)}</strong>
+      <span class="badge ${instance.status === "active" ? "ready" : ""}">${escapeHtml(instance.status)}</span>
+    </div>
+    <div class="instance-meta">
+      <span>Audience: ${escapeHtml(instance.audience_key ?? instance.audience_id)}</span>
+      <span>Chat: ${escapeHtml(instance.telegram_chat_id || "unset")}</span>
+      <span>Report: ${escapeHtml(instance.telegram_report_chat_id || "unset")}</span>
+      <span>Admin: ${escapeHtml(instance.openclaw_admin_url || "unset")}</span>
+      <span>Profile: ${escapeHtml(instance.profile_service_name || "unset")}</span>
+      <span>LLM: ${escapeHtml(instance.llm_model || "default")}</span>
+      ${instance.env_file ? `<span>Env: ${escapeHtml(instance.env_file)}</span>` : ""}
+    </div>
+    ${actions}
+    <div class="command-list">
+      ${renderCommandBlock("OpenClaw Shell", instance.commands?.openclaw_shell)}
+      ${renderCommandBlock("Profile Shell", instance.commands?.profile_shell)}
+      ${renderCommandBlock("OpenClaw Env", instance.commands?.openclaw_env)}
+      ${renderCommandBlock("OpenClaw Logs", instance.commands?.openclaw_logs)}
+      ${renderCommandBlock("Profile Logs", instance.commands?.profile_logs)}
+    </div>
+  </li>`;
 }
 
 function renderWorkspaceTabs(activeTab) {
@@ -1515,6 +1665,14 @@ function renderDashboardScript() {
         return value.split(",").map((item) => item.trim()).filter(Boolean);
       }
 
+      function formRuntimeConfig(form) {
+        return Object.fromEntries(
+          [...new FormData(form).entries()]
+            .map(([key, value]) => [key, String(value || "").trim()])
+            .filter(([, value]) => value)
+        );
+      }
+
       async function postInstance(url, payload) {
         try {
           const result = await sendJson(url, "POST", payload);
@@ -1554,10 +1712,12 @@ function renderDashboardScript() {
         });
       });
 
-      document.querySelectorAll("[data-launch-audience-id]").forEach((button) => {
-        button.addEventListener("click", async () => {
-          await postInstance("/api/audiences/" + button.dataset.launchAudienceId + "/launch", {
-            operator: "operator@example.com"
+      document.querySelectorAll("form[data-launch-audience-id]").forEach((form) => {
+        form.addEventListener("submit", async (event) => {
+          event.preventDefault();
+          await postInstance("/api/audiences/" + form.dataset.launchAudienceId + "/launch", {
+            operator: "operator@example.com",
+            runtime_config: formRuntimeConfig(form)
           });
         });
       });
@@ -1646,11 +1806,49 @@ function renderAudienceManagerCards(audiences, audienceInstances) {
         </div>
         <p class="muted" style="margin-top:10px;">${escapeHtml(audience.family_context ?? audience.tone ?? "No profile summary stored.")}</p>
       </div>
-      <div class="button-row">
-        <button type="button" data-launch-audience-id="${escapeAttribute(audience.id)}">Launch Audience Manager</button>
-      </div>
+      ${renderLaunchConfigForm(audience, instance)}
     </article>`;
   }).join("");
+}
+
+function renderLaunchConfigForm(audience, instance) {
+  const runtime = instance?.runtime_config ?? {};
+  const value = (key, fallback = "") => escapeAttribute(runtime[key] ?? instance?.[key] ?? fallback);
+  return `<form class="launch-config" data-launch-audience-id="${escapeAttribute(audience.id)}">
+    <div class="launch-config-title">
+      <div><h3>Deployment Config</h3><p class="muted">Written into generated/audience-managers env on launch.</p></div>
+      <span class="badge">${escapeHtml(instance?.status ?? "not launched")}</span>
+    </div>
+    <div class="launch-grid">
+      <label>Telegram Bot Token
+        <input name="telegram_bot_token" value="${value("telegram_bot_token")}" autocomplete="off" required />
+      </label>
+      <label>Telegram Channel ID
+        <input name="telegram_chat_id" value="${value("telegram_chat_id")}" placeholder="-100..." required />
+      </label>
+      <label>Telegram Report ID
+        <input name="telegram_report_chat_id" value="${value("telegram_report_chat_id", runtime.telegram_chat_id ?? "")}" placeholder="-100..." />
+      </label>
+      <label>OpenClaw Admin URL
+        <input name="openclaw_admin_url" value="${value("openclaw_admin_url")}" placeholder="http://127.0.0.1:7610" />
+      </label>
+      <label>Profile Base URL
+        <input name="plugin_base_url" value="${value("plugin_base_url", instance?.profile_base_url ?? "")}" placeholder="http://127.0.0.1:5410" />
+      </label>
+      <label>LLM Provider
+        <input name="llm_provider" value="${value("llm_provider", "openai")}" />
+      </label>
+      <label>LLM Model
+        <input name="llm_model" value="${value("llm_model")}" placeholder="global default" />
+      </label>
+      <label>LLM Base URL
+        <input name="llm_base_url" value="${value("llm_base_url")}" placeholder="global default" />
+      </label>
+    </div>
+    <div class="button-row launch-actions">
+      <button type="submit">Launch Deployment</button>
+    </div>
+  </form>`;
 }
 
 function humanizeCheckName(value) {

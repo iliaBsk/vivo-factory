@@ -111,3 +111,55 @@ test("createAudienceManagerLauncher launches newly created audiences without sta
   assert.match(env, /OPENAI_MODEL=gpt-4\.1-mini/);
   assert.equal(result.exitCode, 0);
 });
+
+test("createAudienceManagerLauncher writes launch-time telegram and LLM runtime into the env file", async () => {
+  const { createAudienceManagerLauncher } = await loadAudienceManagerLauncherModule();
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "vivo-audience-launcher-runtime-"));
+  const launcher = createAudienceManagerLauncher({
+    cwd: tmpDir,
+    runtimeConfig: {
+      openclaw_image: "ghcr.io/openclaw/openclaw:latest"
+    },
+    llmDefaults: {
+      provider: "openai",
+      model: "gpt-4.1-mini",
+      apiKey: "sk-test",
+      baseUrl: "https://api.openai.com/v1"
+    },
+    execImpl: async () => ({ exitCode: 0, stdout: "started", stderr: "" })
+  });
+
+  const result = await launcher.launchAudienceManager({
+    id: "aud-1",
+    audience_key: "approved-audience",
+    label: "Approved Audience"
+  }, {
+    id: "inst-1",
+    audience_id: "aud-1",
+    instance_key: "approved-audience-openclaw",
+    service_name: "approved-audience-openclaw",
+    runtime_config: {}
+  }, {
+    runtime_config: {
+      telegram_bot_token: "launch-bot-token",
+      telegram_chat_id: "-1003333333333",
+      telegram_report_chat_id: "-1004444444444",
+      openclaw_admin_url: "http://127.0.0.1:7610",
+      plugin_base_url: "http://127.0.0.1:5410",
+      llm_provider: "openai",
+      llm_model: "gpt-4.1",
+      llm_base_url: "https://api.openai.com/v1"
+    }
+  });
+
+  const env = fs.readFileSync(result.paths.env_file, "utf8");
+  assert.match(env, /TELEGRAM_BOT_TOKEN=launch-bot-token/);
+  assert.match(env, /TELEGRAM_CHAT_ID=-1003333333333/);
+  assert.match(env, /TELEGRAM_REPORT_CHAT_ID=-1004444444444/);
+  assert.match(env, /OPENCLAW_ADMIN_URL=http:\/\/127\.0\.0\.1:7610/);
+  assert.match(env, /LLM_MODEL=gpt-4\.1/);
+  assert.equal(result.instance_update.openclaw_admin_url, "http://127.0.0.1:7610");
+  assert.equal(result.instance_update.profile_base_url, "http://127.0.0.1:5410");
+  assert.equal(result.instance_update.runtime_config.telegram_chat_id, "-1003333333333");
+  assert.match(result.instance_update.runtime_config.commands.openclaw_shell, /approved-audience-openclaw/);
+});

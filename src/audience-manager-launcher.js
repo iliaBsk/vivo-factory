@@ -11,9 +11,13 @@ export function createAudienceManagerLauncher(options = {}) {
   return {
     async launchAudienceManager(audience, instance, launchOptions = {}) {
       const audienceKey = audience.audience_key ?? audience.audience_id ?? audience.id;
-      const runtime = runtimeConfig.audiences?.[audienceKey] ?? {};
+      const runtime = compactObject({
+        ...(runtimeConfig.audiences?.[audienceKey] ?? {}),
+        ...(instance?.runtime_config ?? {}),
+        ...(launchOptions.runtime_config ?? {})
+      });
 
-      const effectiveLlm = resolveEffectiveLlmConfig(llmDefaults, instance?.runtime_config ?? {});
+      const effectiveLlm = resolveEffectiveLlmConfig(llmDefaults, runtime);
       if (!effectiveLlm.provider || !effectiveLlm.model || !effectiveLlm.apiKey) {
         throw new Error("Missing effective LLM configuration for audience manager launch.");
       }
@@ -38,6 +42,7 @@ export function createAudienceManagerLauncher(options = {}) {
         serviceNames
       }));
 
+      const commands = buildCommands(composeFile, serviceNames);
       const result = await execImpl("docker", [
         "compose",
         "-f",
@@ -61,17 +66,21 @@ export function createAudienceManagerLauncher(options = {}) {
           env_file: envFile,
           compose_file: composeFile
         },
-        commands: buildCommands(composeFile, serviceNames),
+        commands,
         exitCode: result.exitCode,
         stdout: result.stdout,
         stderr: result.stderr,
         instance_update: {
           runtime_config: {
             ...(instance?.runtime_config ?? {}),
+            ...runtime,
             llm_provider: effectiveLlm.provider,
             llm_model: effectiveLlm.model,
             llm_base_url: effectiveLlm.baseUrl,
-            profile_service_name: serviceNames.profile
+            profile_service_name: serviceNames.profile,
+            generated_env_file: envFile,
+            generated_compose_file: composeFile,
+            commands
           },
           service_name: serviceNames.openclaw,
           openclaw_admin_url: runtime.openclaw_admin_url ?? instance?.openclaw_admin_url ?? "",
@@ -82,6 +91,12 @@ export function createAudienceManagerLauncher(options = {}) {
       };
     }
   };
+}
+
+function compactObject(value) {
+  return Object.fromEntries(
+    Object.entries(value).filter(([, entry]) => entry !== undefined && entry !== null && entry !== "")
+  );
 }
 
 function renderEnvFile({ audienceKey, runtime, effectiveLlm, pluginPath }) {

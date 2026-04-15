@@ -1,10 +1,10 @@
-import { extractAudiences, normalizeAudience } from "./audience.js";
 import { generateStackManifests, renderDockerCompose } from "./stacks.js";
-import { loadJsonConfig, loadTextFile, writeJsonFile, writeTextFile } from "./runtime-config.js";
+import { loadJsonConfig, writeJsonFile, writeTextFile } from "./runtime-config.js";
 
 const runtimeConfig = loadJsonConfig("config/runtime.json", {});
-const markdown = loadTextFile("audience_group.md");
-const audiences = extractAudiences(markdown).map((entry) => normalizeAudience(entry));
+const audiences = Object.keys(runtimeConfig.audiences ?? {}).map((audienceId) => ({
+  audience_id: audienceId
+}));
 
 const manifests = generateStackManifests(audiences, {
   openClawImage: runtimeConfig.openclaw_image ?? "ghcr.io/openclaw/openclaw:latest",

@@ -111,6 +111,27 @@ test("renderDockerCompose emits separate services per audience", async () => {
   assert.match(compose, /OPENCLAW_ADMIN_URL: http:\/\/127\.0\.0\.1:7601/);
 });
 
+test("renderDockerCompose emits only the dashboard when no audience manifests exist", async () => {
+  const { generateStackManifests, renderDockerCompose } = await loadStacksModule();
+  const manifests = generateStackManifests([], {
+    openClawImage: "ghcr.io/openclaw/openclaw:latest",
+    profilePluginPath: "/plugins/user-profile",
+    dashboard: {
+      imageName: "vivo-factory-dashboard",
+      containerPort: 4310,
+      hostPort: 4310
+    },
+    audienceRuntimeConfig: {}
+  });
+
+  const compose = renderDockerCompose(manifests);
+
+  assert.equal(manifests.length, 0);
+  assert.match(compose, /vivo-factory-dashboard:/);
+  assert.doesNotMatch(compose, /-openclaw:/);
+  assert.doesNotMatch(compose, /^volumes:/m);
+});
+
 test("generateStackManifests rejects audiences missing telegram runtime config", async () => {
   const { generateStackManifests } = await loadStacksModule();
 

@@ -671,9 +671,14 @@ test("audiences workspace renders audience data and launch controls after audien
   assert.equal(response.status, 200);
   assert.match(response.body, /workspace-tab active[^>]*>Audiences/);
   assert.match(response.body, /Barcelona Family/);
-  assert.match(response.body, /Launch Audience Manager/);
-  assert.match(response.body, /Live Instances/);
+  assert.match(response.body, /Deployment Config/);
+  assert.match(response.body, /name="telegram_chat_id"/);
+  assert.match(response.body, /name="telegram_bot_token"/);
+  assert.match(response.body, /name="llm_model"/);
+  assert.match(response.body, /Launch Deployment/);
+  assert.match(response.body, /Deployments/);
   assert.match(response.body, /docker compose -f generated\/docker-compose\.yml exec/);
+  assert.doesNotMatch(response.body, /Deploy All/);
 });
 
 test("dashboard HTML still renders setup checklist when Supabase schema is incomplete", async () => {

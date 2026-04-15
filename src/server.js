@@ -64,17 +64,19 @@ const app = createApp({
   setupService,
   audienceImportService,
   audienceManagerLauncher,
-  publicationTargetResolver(audience) {
+  publicationTargetResolver(audience, story) {
     if (!audience?.audience_key) {
       return null;
     }
+    const instanceRuntimeConfig = story?.instance?.runtime_config ?? {};
     const configured = runtimeConfig.audiences?.[audience.audience_key];
-    if (!configured?.telegram_chat_id) {
+    const telegramChatId = instanceRuntimeConfig.telegram_chat_id ?? configured?.telegram_chat_id;
+    if (!telegramChatId) {
       return null;
     }
     return {
       channel: "telegram",
-      target_identifier: configured.telegram_chat_id
+      target_identifier: telegramChatId
     };
   },
   clock: () => new Date().toISOString()

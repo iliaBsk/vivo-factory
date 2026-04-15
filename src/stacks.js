@@ -92,6 +92,8 @@ export function renderDockerCompose(manifests) {
   const volumes = manifests
     .map((manifest) => `  ${manifest.runtime.profile.data_volume}:`)
     .join("\n");
+  const audienceServices = services ? `\n${services}` : "";
+  const audienceVolumes = volumes ? `\nvolumes:\n${volumes}\n` : "\n";
 
-  return `services:\n${dashboardService}\n${services}\nvolumes:\n${volumes}\n`;
+  return `services:\n${dashboardService}${audienceServices}${audienceVolumes}`;
 }

@@ -265,13 +265,27 @@ test("app launches a single audience manager on demand", async () => {
   const response = await app.handle({
     method: "POST",
     pathname: "/api/audiences/aud-1/launch",
-    body: JSON.stringify({ operator: "operator@example.com" })
+    body: JSON.stringify({
+      operator: "operator@example.com",
+      runtime_config: {
+        telegram_bot_token: "launch-token",
+        telegram_chat_id: "-1003333333333",
+        telegram_report_chat_id: "-1004444444444",
+        openclaw_admin_url: "http://127.0.0.1:7610",
+        plugin_base_url: "http://127.0.0.1:5410",
+        llm_provider: "openai",
+        llm_model: "gpt-4.1",
+        llm_base_url: "https://api.openai.com/v1"
+      }
+    })
   });
 
   assert.equal(response.status, 200);
   assert.match(JSON.parse(response.body).commands.openclaw_shell, /audience-managers/);
   assert.equal(launchedInstance.audience_id, "aud-1");
   assert.equal(launchedInstance.service_name, "bald-high-man-early-40s-barcelona-openclaw");
+  assert.equal(launchedInstance.runtime_config.telegram_chat_id, "-1003333333333");
+  assert.equal(launchedInstance.runtime_config.llm_model, "gpt-4.1");
   assert.equal(repository.getInstanceByAudience("aud-1").status, "active");
 });
 
