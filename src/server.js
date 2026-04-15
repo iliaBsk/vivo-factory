@@ -95,7 +95,7 @@ const server = http.createServer(async (request, response) => {
 });
 
 const port = Number(envConfig.PORT ?? runtimeConfig.server_port ?? 4310);
-const host = envConfig.HOST ?? runtimeConfig.server_host ?? "127.0.0.1";
+const host = envConfig.HOST ?? runtimeConfig.server_host ?? "0.0.0.0";
 server.listen(port, host, () => {
   console.log(`Vivo Factory dashboard listening on http://${host}:${port}`);
 });

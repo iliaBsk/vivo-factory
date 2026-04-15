@@ -950,7 +950,11 @@ function createSupabaseClient(options) {
       return response.json().catch(() => ({}));
     },
     async signObjectUrl(bucketName, objectPath, expiresIn = 3600) {
-      const encodedSegments = objectPath
+      // Strip bucket name prefix if it was stored as part of the path
+      const normalizedPath = objectPath.startsWith(`${bucketName}/`)
+        ? objectPath.slice(bucketName.length + 1)
+        : objectPath;
+      const encodedSegments = normalizedPath
         .split("/")
         .map((segment) => encodeURIComponent(segment))
         .join("/");
