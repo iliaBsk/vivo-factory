@@ -50,10 +50,6 @@ This file should be ignored because audience.md exists.
       async upsertAudience(factory, audience) {
         writes.push({ type: "audience", factory, audience });
         return { id: "aud-1", ...audience };
-      },
-      async upsertInstance(factory, audience, instance) {
-        writes.push({ type: "instance", factory, audience, instance });
-        return { id: "inst-1", audience_id: audience.id, ...instance };
       }
     },
     factory: {
@@ -75,5 +71,47 @@ This file should be ignored because audience.md exists.
   const confirmed = await service.confirmImport(preview.items);
 
   assert.equal(confirmed.audiences.length, 1);
-  assert.equal(writes.length, 2);
+  assert.deepEqual(confirmed.instances, []);
+  assert.equal(writes.length, 1);
+  assert.equal(writes[0].type, "audience");
+});
+
+test("createAudienceImportService creates one LLM-expanded audience from raw setup input", async () => {
+  const { createAudienceImportService } = await loadAudienceImportModule();
+  const writes = [];
+  const service = createAudienceImportService({
+    repository: {
+      async listAudiences() {
+        return [];
+      }
+    },
+    llmClient: {
+      async expandAudience({ normalized }) {
+        return {
+          label: "Investigated Barcelona AI Builder",
+          interests: [...normalized.interests, "ai tools"],
+          content_pillars: ["deep work", "local events"],
+          tone: "precise"
+        };
+      }
+    },
+    provisioningClient: {
+      async ensureFactory(factory) {
+        return { id: "factory-1", ...factory };
+      },
+      async upsertAudience(factory, audience) {
+        writes.push({ factory, audience });
+        return { id: "aud-1", ...audience };
+      }
+    }
+  });
+
+  const result = await service.createAudience({
+    raw_text: "AI founder in Barcelona following Hugging Face, Reddit, and local startup accounts."
+  });
+
+  assert.equal(result.audience.label, "Investigated Barcelona AI Builder");
+  assert.equal(result.audience.profile_snapshot.raw_text.includes("Hugging Face"), true);
+  assert.equal(result.instance, null);
+  assert.equal(writes.length, 1);
 });

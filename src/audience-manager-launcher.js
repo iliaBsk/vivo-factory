@@ -11,10 +11,7 @@ export function createAudienceManagerLauncher(options = {}) {
   return {
     async launchAudienceManager(audience, instance, launchOptions = {}) {
       const audienceKey = audience.audience_key ?? audience.audience_id ?? audience.id;
-      const runtime = runtimeConfig.audiences?.[audienceKey];
-      if (!runtime) {
-        throw new Error(`Missing runtime config for audience ${audienceKey}`);
-      }
+      const runtime = runtimeConfig.audiences?.[audienceKey] ?? {};
 
       const effectiveLlm = resolveEffectiveLlmConfig(llmDefaults, instance?.runtime_config ?? {});
       if (!effectiveLlm.provider || !effectiveLlm.model || !effectiveLlm.apiKey) {

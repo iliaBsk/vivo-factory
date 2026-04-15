@@ -484,9 +484,13 @@ test("root HTML renders setup-first audience manager controls when setup is inco
   });
 
   assert.equal(response.status, 200);
+  assert.match(response.body, /workspace-tab active[^>]*>Setup/);
+  assert.match(response.body, /href="\/\?tab=stories"/);
+  assert.match(response.body, /href="\/\?tab=audiences"/);
   assert.match(response.body, /Setup Checklist/);
-  assert.match(response.body, /Audience Managers/);
+  assert.match(response.body, /Create Audiences/);
   assert.match(response.body, /Import audience\.md/);
+  assert.doesNotMatch(response.body, /Launch Audience Manager/);
 });
 
 test("app blocks publication queueing when story is not operator-approved", async () => {
@@ -543,7 +547,7 @@ test("app blocks approval when no asset is selected", async () => {
   assert.match(response.body, /selected asset/i);
 });
 
-test("dashboard HTML renders queue filters, story editor, asset panel, audience drawer toggle, publication panel, and live instances", async () => {
+test("stories workspace renders queue filters, story editor, asset panel, and publication panel", async () => {
   const { createRepository, createApp } = await loadModules();
   const repository = createRepository(createSeed());
   const app = createApp({
@@ -576,21 +580,62 @@ test("dashboard HTML renders queue filters, story editor, asset panel, audience 
 
   const response = await app.handle({
     method: "GET",
-    pathname: "/"
+    pathname: "/",
+    query: { tab: "stories" }
   });
 
   assert.equal(response.status, 200);
+  assert.match(response.body, /workspace-tab active[^>]*>Stories/);
   assert.match(response.body, /Story Queue/);
   assert.match(response.body, /name="status"/);
+  assert.match(response.body, /assets_collected/);
   assert.match(response.body, /Story Editor/);
   assert.match(response.body, /Asset Panel/);
   assert.match(response.body, /Audience Drawer/);
   assert.match(response.body, /Publication Queue/);
-  assert.match(response.body, /Live Instances/);
-  assert.match(response.body, /barcelona-family-openclaw/);
-  assert.match(response.body, /docker compose -f generated\/docker-compose\.yml exec/);
   assert.match(response.body, /Channel Target/);
   assert.match(response.body, /<img /);
+});
+
+test("audiences workspace renders audience data and launch controls after audience creation", async () => {
+  const { createRepository, createApp } = await loadModules();
+  const repository = createRepository(createSeed());
+  const app = createApp({
+    repository,
+    instanceManager: {
+      listInstances() {
+        return [
+          {
+            audience_id: "barcelona-family",
+            audience_key: "barcelona-family",
+            service_name: "barcelona-family-openclaw",
+            profile_service_name: "barcelona-family-profile",
+            telegram_chat_id: "-1001111111111",
+            telegram_report_chat_id: "-1002222222222",
+            openclaw_admin_url: "http://127.0.0.1:7601",
+            commands: {
+              openclaw_shell: "docker compose -f generated/docker-compose.yml exec barcelona-family-openclaw /bin/sh",
+              profile_shell: "docker compose -f generated/docker-compose.yml exec barcelona-family-profile /bin/sh"
+            }
+          }
+        ];
+      }
+    },
+    clock: () => "2026-03-21T13:00:00.000Z"
+  });
+
+  const response = await app.handle({
+    method: "GET",
+    pathname: "/",
+    query: { tab: "audiences" }
+  });
+
+  assert.equal(response.status, 200);
+  assert.match(response.body, /workspace-tab active[^>]*>Audiences/);
+  assert.match(response.body, /Barcelona Family/);
+  assert.match(response.body, /Launch Audience Manager/);
+  assert.match(response.body, /Live Instances/);
+  assert.match(response.body, /docker compose -f generated\/docker-compose\.yml exec/);
 });
 
 test("dashboard HTML still renders setup checklist when Supabase schema is incomplete", async () => {

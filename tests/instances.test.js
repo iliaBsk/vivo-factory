@@ -232,23 +232,17 @@ test("app launches a single audience manager on demand", async () => {
       {
         id: "aud-1",
         audience_key: "bald-high-man-early-40s-barcelona",
-        label: "Barcelona Family"
-      }
-    ],
-    instances: [
-      {
-        id: "inst-1",
-        audience_id: "aud-1",
-        instance_key: "bald-high-man-early-40s-barcelona-openclaw",
-        service_name: "bald-high-man-early-40s-barcelona-openclaw",
-        runtime_config: { llm_model: "gpt-4.1" }
+        label: "Barcelona Family",
+        factory_id: "factory-1"
       }
     ]
   });
+  let launchedInstance = null;
   const app = createApp({
     repository,
     audienceManagerLauncher: {
       async launchAudienceManager(audience, instance) {
+        launchedInstance = instance;
         return {
           audience,
           instance,
@@ -258,6 +252,9 @@ test("app launches a single audience manager on demand", async () => {
           },
           commands: {
             openclaw_shell: "docker compose -f generated/audience-managers/bald-high-man-early-40s-barcelona.compose.yml exec bald-high-man-early-40s-barcelona-openclaw /bin/sh"
+          },
+          instance_update: {
+            status: "active"
           }
         };
       }
@@ -273,6 +270,9 @@ test("app launches a single audience manager on demand", async () => {
 
   assert.equal(response.status, 200);
   assert.match(JSON.parse(response.body).commands.openclaw_shell, /audience-managers/);
+  assert.equal(launchedInstance.audience_id, "aud-1");
+  assert.equal(launchedInstance.service_name, "bald-high-man-early-40s-barcelona-openclaw");
+  assert.equal(repository.getInstanceByAudience("aud-1").status, "active");
 });
 
 test("dashboard HTML renders live instance controls", async () => {
@@ -305,7 +305,11 @@ test("dashboard HTML renders live instance controls", async () => {
     clock: () => "2026-03-23T10:00:00.000Z"
   });
 
-  const response = await app.handle({ method: "GET", pathname: "/" });
+  const response = await app.handle({
+    method: "GET",
+    pathname: "/",
+    query: { tab: "audiences" }
+  });
 
   assert.equal(response.status, 200);
   assert.match(response.body, /Live Instances/);

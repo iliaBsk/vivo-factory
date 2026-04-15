@@ -13,7 +13,6 @@ export function createAudienceImportService(options = {}) {
     name: "Vivo Factory",
     description: "Audience manager control plane"
   };
-  const audienceRuntimeConfig = options.audienceRuntimeConfig ?? {};
 
   return {
     async getSource() {
@@ -91,51 +90,70 @@ export function createAudienceImportService(options = {}) {
       const confirmedItems = Array.isArray(items) ? items : [];
       const ensuredFactory = await provisioningClient.ensureFactory(factory);
       const audiences = [];
-      const instances = [];
 
       for (const item of confirmedItems) {
-        const normalized = item.normalized ?? normalizeAudience(item.raw_text ?? "");
-        const expanded = mergeAudienceExpansion(normalized, item.expanded ?? {});
-        const audience = await provisioningClient.upsertAudience(ensuredFactory, {
-          audience_key: item.audience_key ?? normalized.audience_id,
-          label: expanded.label,
-          language: expanded.language,
-          location: expanded.location,
-          family_context: expanded.family_context,
-          interests: expanded.interests,
-          content_pillars: expanded.content_pillars,
-          excluded_topics: expanded.excluded_topics,
-          tone: expanded.tone,
-          profile_snapshot: {
-            raw_text: item.raw_text ?? "",
-            normalized,
-            expanded
-          },
-          status: "active"
-        });
+        const audience = await provisioningClient.upsertAudience(
+          ensuredFactory,
+          buildAudiencePayload(item)
+        );
         audiences.push(audience);
-
-        const runtime = audienceRuntimeConfig[audience.audience_key] ?? audienceRuntimeConfig[item.audience_key] ?? {};
-        const instance = await provisioningClient.upsertInstance(ensuredFactory, audience, {
-          instance_key: `${audience.audience_key}-openclaw`,
-          service_name: `${audience.audience_key}-openclaw`,
-          profile_service_name: `${audience.audience_key}-profile`,
-          openclaw_admin_url: runtime.openclaw_admin_url ?? "",
-          profile_base_url: runtime.plugin_base_url ?? "",
-          runtime_config: {
-            llm_provider: runtime.llm_provider ?? "",
-            llm_model: runtime.llm_model ?? ""
-          }
-        });
-        instances.push(instance);
       }
 
       return {
         factory: ensuredFactory,
         audiences,
-        instances
+        instances: []
+      };
+    },
+    async createAudience(input = {}) {
+      if (!provisioningClient) {
+        throw new Error("Audience provisioning client is required for audience creation.");
+      }
+      const rawText = String(input.raw_text ?? input.rawText ?? "").trim();
+      if (!rawText) {
+        throw new Error("Audience creation requires raw_text.");
+      }
+      const normalized = normalizeAudience(rawText);
+      const expanded = mergeAudienceExpansion(normalized, await llmClient.expandAudience({
+        rawText,
+        normalized,
+        references: input.references ?? {}
+      }));
+      const ensuredFactory = await provisioningClient.ensureFactory(factory);
+      const audience = await provisioningClient.upsertAudience(ensuredFactory, buildAudiencePayload({
+        raw_text: rawText,
+        audience_key: normalized.audience_id,
+        normalized,
+        expanded
+      }));
+      return {
+        factory: ensuredFactory,
+        audience,
+        instance: null
       };
     }
+  };
+}
+
+function buildAudiencePayload(item) {
+  const normalized = item.normalized ?? normalizeAudience(item.raw_text ?? "");
+  const expanded = mergeAudienceExpansion(normalized, item.expanded ?? {});
+  return {
+    audience_key: item.audience_key ?? normalized.audience_id,
+    label: expanded.label,
+    language: expanded.language,
+    location: expanded.location,
+    family_context: expanded.family_context,
+    interests: expanded.interests,
+    content_pillars: expanded.content_pillars,
+    excluded_topics: expanded.excluded_topics,
+    tone: expanded.tone,
+    profile_snapshot: {
+      raw_text: item.raw_text ?? "",
+      normalized,
+      expanded
+    },
+    status: "active"
   };
 }
 

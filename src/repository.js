@@ -54,6 +54,33 @@ export function createRepository(seed = {}) {
     getInstanceByAudience(audienceId) {
       return [...state.instances.values()].find((instance) => instance.audience_id === audienceId) ?? null;
     },
+    createInstanceForAudience(audience, instance = {}, options = {}) {
+      const now = options.timestamp ?? nowIso();
+      const created = {
+        id: instance.id ?? crypto.randomUUID(),
+        factory_id: instance.factory_id ?? audience.factory_id ?? null,
+        audience_id: audience.id,
+        instance_key: instance.instance_key,
+        service_name: instance.service_name,
+        openclaw_admin_url: instance.openclaw_admin_url ?? "",
+        profile_base_url: instance.profile_base_url ?? "",
+        runtime_config: instance.runtime_config ?? {},
+        status: instance.status ?? "created",
+        last_heartbeat_at: instance.last_heartbeat_at ?? null,
+        created_at: instance.created_at ?? now,
+        updated_at: instance.updated_at ?? now
+      };
+      state.instances.set(created.id, created);
+      appendAudit(state, {
+        type: "instance_created",
+        entity_type: "instance",
+        entity_id: created.id,
+        actor_id: options.actorId ?? "unknown",
+        timestamp: now,
+        payload: { audience_id: audience.id, service_name: created.service_name }
+      });
+      return created;
+    },
     updateInstance(instanceId, changes = {}, options = {}) {
       const instance = requireInstance(state, instanceId);
       const updated = {
@@ -396,6 +423,30 @@ export function createSupabaseRepository(options) {
         limit: "1"
       });
       return rows[0] ?? null;
+    },
+    async createInstanceForAudience(audience, instance = {}, options = {}) {
+      const rows = await client.insert("vivo_instances", {
+        factory_id: instance.factory_id ?? audience.factory_id,
+        audience_id: audience.id,
+        instance_key: instance.instance_key,
+        service_name: instance.service_name,
+        openclaw_admin_url: instance.openclaw_admin_url ?? "",
+        profile_base_url: instance.profile_base_url ?? "",
+        runtime_config: instance.runtime_config ?? {},
+        status: instance.status ?? "created",
+        last_heartbeat_at: instance.last_heartbeat_at ?? null
+      });
+      const created = rows[0] ?? null;
+      if (created) {
+        await insertAuditEvent(client, {
+          entity_type: "instance",
+          entity_id: created.id,
+          event_type: "instance_created",
+          actor_id: options.actorId ?? "unknown",
+          payload: { audience_id: audience.id, service_name: created.service_name }
+        });
+      }
+      return created;
     },
     async updateInstance(instanceId, changes = {}, options = {}) {
       const rows = await client.update("vivo_instances", { id: `eq.${instanceId}` }, changes);
@@ -769,6 +820,7 @@ function withPersistence(repository, pathname) {
   for (const methodName of [
     "updateStory",
     "updateAudience",
+    "createInstanceForAudience",
     "updateInstance",
     "selectStoryAsset",
     "replaceStoryAsset",

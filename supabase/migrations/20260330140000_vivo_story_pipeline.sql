@@ -16,6 +16,7 @@ begin
       'classifying',
       'classified',
       'media_decided',
+      'assets_collected',
       'asset_generating',
       'ready_to_publish',
       'published',

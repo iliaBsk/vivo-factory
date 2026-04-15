@@ -75,3 +75,39 @@ test("createAudienceManagerLauncher writes per-audience env and compose files an
     ]
   });
 });
+
+test("createAudienceManagerLauncher launches newly created audiences without static runtime config", async () => {
+  const { createAudienceManagerLauncher } = await loadAudienceManagerLauncherModule();
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "vivo-audience-launcher-dynamic-"));
+  const launcher = createAudienceManagerLauncher({
+    cwd: tmpDir,
+    runtimeConfig: {
+      openclaw_image: "ghcr.io/openclaw/openclaw:latest"
+    },
+    llmDefaults: {
+      provider: "openai",
+      model: "gpt-4.1-mini",
+      apiKey: "sk-test",
+      baseUrl: "https://api.openai.com/v1"
+    },
+    execImpl: async () => ({ exitCode: 0, stdout: "started", stderr: "" })
+  });
+
+  const result = await launcher.launchAudienceManager({
+    id: "aud-1",
+    audience_key: "new-audience",
+    label: "New Audience"
+  }, {
+    id: "inst-1",
+    audience_id: "aud-1",
+    instance_key: "new-audience-openclaw",
+    service_name: "new-audience-openclaw",
+    runtime_config: {}
+  });
+
+  const env = fs.readFileSync(result.paths.env_file, "utf8");
+  assert.match(env, /AUDIENCE_ID=new-audience/);
+  assert.match(env, /OPENAI_API_KEY=sk-test/);
+  assert.match(env, /OPENAI_MODEL=gpt-4\.1-mini/);
+  assert.equal(result.exitCode, 0);
+});

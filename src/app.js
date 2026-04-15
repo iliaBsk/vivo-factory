@@ -65,6 +65,14 @@ async function handleRequest(context) {
     return json(200, await audienceImportService.confirmImport(body.items ?? []));
   }
 
+  if (request.method === "POST" && request.pathname === "/api/audiences/create") {
+    if (!audienceImportService?.createAudience) {
+      return json(404, { error: "Audience creation is not configured." });
+    }
+    const body = readBody(request.body);
+    return json(200, await audienceImportService.createAudience(body));
+  }
+
   if (request.method === "GET" && request.pathname === "/api/instances") {
     return json(200, { items: instanceManager ? instanceManager.listInstances() : [] });
   }
@@ -236,11 +244,17 @@ async function handleRequest(context) {
     if (!audience) {
       return json(404, { error: "Audience not found" });
     }
-    const instance = await repository.getInstanceByAudience(audienceId);
-    if (!instance) {
-      return json(409, { error: "Audience instance configuration not found." });
-    }
     const body = readBody(request.body);
+    let instance = await repository.getInstanceByAudience(audienceId);
+    if (!instance) {
+      if (!repository.createInstanceForAudience) {
+        return json(409, { error: "Audience instance creation is not supported by this repository." });
+      }
+      instance = await repository.createInstanceForAudience(audience, buildAudienceInstance(audience, body.runtime_config ?? {}), {
+        actorId: body.operator ?? body.actor_id ?? "unknown",
+        timestamp: clock()
+      });
+    }
     const result = await audienceManagerLauncher.launchAudienceManager(audience, instance, {
       operator: body.operator ?? body.actor_id ?? "unknown",
       timestamp: clock()
@@ -332,10 +346,11 @@ async function handleRequest(context) {
 
   if (request.method === "GET" && request.pathname === "/") {
     const filters = normalizeStoryFilters(request.query);
+    const activeTab = normalizeDashboardTab(request.query);
     const setupStatus = setupService ? await setupService.getStatus() : defaultSetupStatus();
     const shouldSkipStoryData = shouldSkipStoryDataLoad(setupStatus);
     let audienceImportPreview = null;
-    if (audienceImportService) {
+    if (activeTab === "setup" && audienceImportService) {
       try {
         audienceImportPreview = audienceImportService.getImportStatus
           ? await audienceImportService.getImportStatus()
@@ -345,8 +360,8 @@ async function handleRequest(context) {
       }
     }
     const audiences = await safeLoad(() => repository.listAudiences(), []);
-    const audienceInstances = repository.listInstances ? await safeLoad(() => repository.listInstances(), []) : [];
-    const stories = shouldSkipStoryData
+    const audienceInstances = repository.listInstances && activeTab === "audiences" ? await safeLoad(() => repository.listInstances(), []) : [];
+    const stories = shouldSkipStoryData || activeTab !== "stories"
       ? []
       : (await safeLoad(() => repository.listStories(filters), [])).map((story) => ({
           ...story,
@@ -362,10 +377,11 @@ async function handleRequest(context) {
           publication_target: publicationTargetResolver(activeStoryRaw.audience, activeStoryRaw)
         }
       : null;
-    const auditItems = shouldSkipStoryData ? [] : (await safeLoad(() => repository.listAuditLog(), [])).slice(0, 10);
-    const analyticsItems = shouldSkipStoryData ? [] : (await safeLoad(() => repository.listFeedbackEvents(), [])).slice(0, 10);
-    const instances = instanceManager ? instanceManager.listInstances() : [];
+    const auditItems = shouldSkipStoryData || activeTab !== "stories" ? [] : (await safeLoad(() => repository.listAuditLog(), [])).slice(0, 10);
+    const analyticsItems = shouldSkipStoryData || activeTab !== "stories" ? [] : (await safeLoad(() => repository.listFeedbackEvents(), [])).slice(0, 10);
+    const instances = instanceManager && activeTab === "audiences" ? instanceManager.listInstances() : [];
     return html(200, renderDashboard({
+      activeTab,
       filters,
       setupStatus,
       audienceImportPreview,
@@ -389,9 +405,29 @@ function readBody(body) {
   return typeof body === "string" ? JSON.parse(body) : body;
 }
 
+function buildAudienceInstance(audience, runtimeConfig = {}) {
+  const audienceKey = audience.audience_key ?? audience.audience_id ?? audience.id;
+  return {
+    factory_id: audience.factory_id ?? runtimeConfig.factory_id ?? null,
+    audience_id: audience.id,
+    instance_key: runtimeConfig.instance_key ?? `${audienceKey}-openclaw`,
+    service_name: runtimeConfig.service_name ?? `${audienceKey}-openclaw`,
+    openclaw_admin_url: runtimeConfig.openclaw_admin_url ?? "",
+    profile_base_url: runtimeConfig.profile_base_url ?? runtimeConfig.plugin_base_url ?? "",
+    runtime_config: {
+      profile_service_name: runtimeConfig.profile_service_name ?? `${audienceKey}-profile`,
+      llm_provider: runtimeConfig.llm_provider ?? "",
+      llm_model: runtimeConfig.llm_model ?? "",
+      llm_base_url: runtimeConfig.llm_base_url ?? ""
+    },
+    status: "launch_pending"
+  };
+}
+
 function renderDashboard(model) {
+  const activeTab = model.activeTab ?? "setup";
   const setupChecklist = renderSetupChecklist(model.setupStatus);
-  const audienceManagerCards = renderAudienceManagerCards(model.audiences, model.audienceInstances ?? []);
+  const audienceRows = renderAudienceManagerCards(model.audiences, model.audienceInstances ?? []);
   const audienceImportPanel = renderAudienceImportPanel(model.audienceImportPreview);
   const storiesList = model.stories.map((story) => {
     const href = buildDashboardHref(model.filters, story.id);
@@ -459,6 +495,34 @@ function renderDashboard(model) {
   const profileJson = escapeHtml(JSON.stringify(audience?.profile_snapshot ?? {}, null, 2));
   const selectedAssetId = model.activeStory?.selected_asset_id ?? "";
   const publicationTarget = model.activeStory?.publication_target ?? null;
+  const workspace = activeTab === "stories"
+    ? renderStoriesWorkspace({
+        model,
+        storiesList,
+        audienceOptions,
+        assetCards,
+        publicationItems,
+        reviewItems,
+        auditItems,
+        analyticsItems,
+        audience,
+        audienceFields,
+        metadataJson,
+        profileJson,
+        selectedAssetId,
+        publicationTarget
+      })
+    : activeTab === "audiences"
+      ? renderAudiencesWorkspace({
+          model,
+          audienceRows,
+          liveInstances
+        })
+      : renderSetupWorkspace({
+          model,
+          setupChecklist,
+          audienceImportPanel
+        });
 
   return `<!doctype html>
 <html lang="en">
@@ -468,117 +532,167 @@ function renderDashboard(model) {
     <style>
       :root {
         color-scheme: light;
-        --bg: #efe7db;
-        --panel: #fff9f0;
-        --panel-strong: #f8efe1;
-        --line: rgba(53, 34, 22, 0.12);
-        --accent: #a54c1f;
-        --accent-soft: #f3c6a7;
-        --text: #26180f;
-        --muted: #775c4a;
+        --bg: #ede8df;
+        --surface: #f8f4ec;
+        --surface-2: #fffcf6;
+        --ink: #1f211d;
+        --muted: #706b61;
+        --line: rgba(31, 33, 29, 0.12);
+        --line-strong: rgba(31, 33, 29, 0.2);
+        --accent: #8f5d43;
+        --accent-soft: #d8c1b1;
+        --success: #476651;
+        --warning: #927241;
       }
       * { box-sizing: border-box; }
       body {
         margin: 0;
-        font-family: Georgia, serif;
+        font-family: "Avenir Next", "Segoe UI", sans-serif;
         background:
-          radial-gradient(circle at top left, rgba(196, 112, 53, 0.22), transparent 28%),
-          linear-gradient(180deg, #f5efe4 0%, #e9dccb 100%);
-        color: var(--text);
+          radial-gradient(circle at 16% 0%, rgba(143, 93, 67, 0.12), transparent 26%),
+          linear-gradient(180deg, #f3eee5 0%, var(--bg) 45%, #e4ded5 100%);
+        color: var(--ink);
       }
       a { color: inherit; text-decoration: none; }
-      main { max-width: 1440px; margin: 0 auto; padding: 28px 20px 56px; }
+      main { max-width: 1500px; margin: 0 auto; padding: 28px 28px 56px; }
       h1, h2, h3 { margin: 0; }
       p { margin: 0; }
-      .hero {
+      h1 {
+        font-family: Georgia, serif;
+        font-size: clamp(34px, 5vw, 72px);
+        letter-spacing: -0.055em;
+        line-height: 0.95;
+      }
+      h2 {
+        font-family: Georgia, serif;
+        font-size: clamp(24px, 2vw, 36px);
+        letter-spacing: -0.035em;
+      }
+      h3 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.1em; }
+      .topbar {
         display: flex;
         justify-content: space-between;
-        align-items: end;
-        gap: 16px;
-        margin-bottom: 20px;
+        align-items: start;
+        gap: 28px;
+        padding-bottom: 22px;
+        border-bottom: 1px solid var(--line);
+        animation: rise 420ms ease both;
       }
-      .hero p { color: var(--muted); max-width: 720px; }
-      .layout {
+      .topbar p { color: var(--muted); max-width: 560px; margin-top: 10px; font-size: 15px; }
+      .workspace-tabs {
+        display: inline-flex;
+        gap: 4px;
+        padding: 4px;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        background: rgba(255, 252, 246, 0.62);
+        position: sticky;
+        top: 16px;
+        backdrop-filter: blur(18px);
+        z-index: 4;
+      }
+      .workspace-tab {
+        display: inline-flex;
+        align-items: center;
+        min-width: 104px;
+        justify-content: center;
+        padding: 10px 16px;
+        border-radius: 999px;
+        color: var(--muted);
+        font-size: 13px;
+        transition: background 180ms ease, color 180ms ease, transform 180ms ease;
+      }
+      .workspace-tab:hover { transform: translateY(-1px); color: var(--ink); }
+      .workspace-tab.active {
+        background: var(--ink);
+        color: var(--surface-2);
+      }
+      .workspace {
+        padding-top: 28px;
+        animation: fadeUp 360ms ease both;
+      }
+      .split {
         display: grid;
-        grid-template-columns: 320px minmax(0, 1fr);
-        gap: 18px;
+        grid-template-columns: minmax(0, 0.9fr) minmax(420px, 1.4fr);
+        gap: 28px;
+        align-items: start;
       }
       .panel {
-        background: var(--panel);
+        background: rgba(255, 252, 246, 0.68);
         border: 1px solid var(--line);
-        border-radius: 22px;
-        box-shadow: 0 20px 40px rgba(44, 26, 15, 0.08);
+        border-radius: 28px;
+        box-shadow: 0 26px 80px rgba(31, 33, 29, 0.08);
       }
-      .panel-inner { padding: 18px; }
-      .story-queue { position: sticky; top: 20px; align-self: start; }
+      .panel-inner { padding: 22px; }
+      .plain-section {
+        border-top: 1px solid var(--line);
+        padding-top: 22px;
+      }
       .filter-grid {
         display: grid;
-        gap: 10px;
-        margin-top: 14px;
+        gap: 12px;
+        margin-top: 16px;
       }
       .workspace-grid {
         display: grid;
-        grid-template-columns: minmax(0, 1fr) 360px;
-        gap: 18px;
+        grid-template-columns: 360px minmax(0, 1fr);
+        gap: 22px;
       }
-      .workspace-stack {
-        display: grid;
-        gap: 18px;
-      }
-      .story-list {
-        display: grid;
-        gap: 10px;
-        margin-top: 16px;
-      }
+      .workspace-stack, .story-list, .audience-list, .instance-list { display: grid; gap: 12px; }
       .story-row {
         display: grid;
-        gap: 4px;
-        padding: 12px 14px;
-        border-radius: 16px;
-        background: #fff;
-        border: 1px solid transparent;
+        gap: 8px;
+        padding: 14px 0;
+        border-bottom: 1px solid var(--line);
+        transition: padding 180ms ease, border-color 180ms ease;
       }
       .story-row-meta {
         display: flex;
         flex-wrap: wrap;
         gap: 8px;
         color: var(--muted);
-        font-size: 13px;
+        font-size: 12px;
       }
       .story-row.active {
-        border-color: var(--accent);
-        background: #fff7f1;
+        padding-left: 12px;
+        border-left: 2px solid var(--accent);
       }
       .muted { color: var(--muted); }
-      label { display: grid; gap: 6px; font-size: 14px; color: var(--muted); }
+      label { display: grid; gap: 7px; font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
       input, select, textarea, button {
         font: inherit;
       }
       input, select, textarea {
         width: 100%;
-        border-radius: 14px;
+        border-radius: 16px;
         border: 1px solid var(--line);
-        padding: 10px 12px;
-        background: #fff;
-        color: var(--text);
+        padding: 12px 13px;
+        background: rgba(255, 252, 246, 0.88);
+        color: var(--ink);
+        text-transform: none;
+        letter-spacing: 0;
       }
       textarea { resize: vertical; min-height: 96px; }
       button {
         border: none;
         border-radius: 999px;
-        padding: 10px 14px;
+        padding: 11px 15px;
         background: var(--accent);
         color: #fff;
         cursor: pointer;
+        transition: transform 160ms ease, opacity 160ms ease;
+      }
+      button:hover {
+        transform: translateY(-1px);
       }
       button.secondary {
-        background: #e8d9c8;
-        color: var(--text);
+        background: #ded5c9;
+        color: var(--ink);
       }
       button.ghost {
         background: transparent;
         color: var(--accent);
-        border: 1px solid var(--accent-soft);
+        border: 1px solid var(--line-strong);
       }
       .button-row {
         display: flex;
@@ -588,21 +702,22 @@ function renderDashboard(model) {
       .section-title {
         display: flex;
         justify-content: space-between;
-        align-items: center;
+        align-items: start;
         gap: 12px;
-        margin-bottom: 14px;
+        margin-bottom: 18px;
       }
       .story-meta {
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-        gap: 10px;
-        margin-bottom: 14px;
+        grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+        gap: 1px;
+        margin-bottom: 18px;
+        border: 1px solid var(--line);
+        border-radius: 22px;
+        overflow: hidden;
       }
       .meta-chip {
-        padding: 10px 12px;
-        border-radius: 14px;
-        background: var(--panel-strong);
-        border: 1px solid var(--line);
+        padding: 13px;
+        background: rgba(255, 252, 246, 0.58);
       }
       .asset-grid {
         display: grid;
@@ -610,19 +725,18 @@ function renderDashboard(model) {
         gap: 12px;
       }
       .asset-card, .empty-card {
-        padding: 14px;
-        border-radius: 18px;
+        padding: 16px;
+        border-radius: 22px;
         border: 1px solid var(--line);
-        background: #fff;
+        background: rgba(255, 252, 246, 0.82);
       }
       .asset-card.selected {
         border-color: var(--accent);
-        box-shadow: inset 0 0 0 1px var(--accent-soft);
       }
       .asset-preview {
         min-height: 120px;
-        border-radius: 14px;
-        background: linear-gradient(135deg, #f3d8c6 0%, #f7efe8 100%);
+        border-radius: 18px;
+        background: linear-gradient(135deg, #e4d7c8 0%, #f7efe8 100%);
         display: flex;
         align-items: center;
         justify-content: center;
@@ -642,19 +756,47 @@ function renderDashboard(model) {
         padding: 0;
         margin: 0;
         display: grid;
-        gap: 8px;
+        gap: 0;
       }
       ul.compact li {
-        padding: 10px 12px;
-        border-radius: 14px;
-        background: #fff;
-        border: 1px solid var(--line);
+        padding: 12px 0;
+        border-bottom: 1px solid var(--line);
       }
-      .lower-grid {
+      .stat-row {
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+        grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+        gap: 1px;
+        border: 1px solid var(--line);
+        border-radius: 24px;
+        overflow: hidden;
+        margin-bottom: 22px;
+      }
+      .stat {
+        padding: 18px;
+        background: rgba(255, 252, 246, 0.68);
+      }
+      .stat strong { display: block; font-size: 28px; letter-spacing: -0.04em; }
+      .stat span { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; }
+      .audience-profile {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
         gap: 18px;
-        margin-top: 18px;
+        padding: 18px 0;
+        border-bottom: 1px solid var(--line);
+      }
+      .audience-profile:first-child { padding-top: 0; }
+      .pill-line {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 7px;
+        margin-top: 10px;
+      }
+      .pill {
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        padding: 5px 9px;
+        color: var(--muted);
+        font-size: 12px;
       }
       .instance-actions {
         display: flex;
@@ -675,8 +817,9 @@ function renderDashboard(model) {
         display: block;
         padding: 8px 10px;
         border-radius: 12px;
-        background: var(--panel-strong);
+        background: rgba(31, 33, 29, 0.06);
         overflow-x: auto;
+        font-size: 12px;
       }
       .asset-preview-media {
         width: 100%;
@@ -684,220 +827,283 @@ function renderDashboard(model) {
         object-fit: cover;
         border-radius: 14px;
       }
+      @keyframes rise {
+        from { opacity: 0; transform: translateY(10px); }
+        to { opacity: 1; transform: translateY(0); }
+      }
+      @keyframes fadeUp {
+        from { opacity: 0; transform: translateY(8px); }
+        to { opacity: 1; transform: translateY(0); }
+      }
       @media (max-width: 1080px) {
-        .layout, .workspace-grid {
+        main { padding: 18px 16px 44px; }
+        .topbar, .split, .workspace-grid, .audience-profile {
           grid-template-columns: 1fr;
+          display: grid;
         }
-        .story-queue {
-          position: static;
-        }
+        .workspace-tabs { width: 100%; overflow-x: auto; justify-content: start; }
       }
     </style>
   </head>
   <body>
     <main>
-      <div class="hero">
+      <header class="topbar">
         <div>
-          <h1>Vivo Factory Story Operations</h1>
-          <p>Review stories, swap assets, edit audiences, and queue Telegram publications without leaving the dashboard.</p>
+          <h1>Vivo Factory</h1>
+          <p>Setup, story review, and audience manager launch in one restrained operations surface.</p>
         </div>
-      </div>
-
-      <div class="lower-grid" style="margin-top:0; margin-bottom:18px;">
-        <section class="panel">
-          <div class="panel-inner">
-            <div class="section-title"><h2>Setup Checklist</h2><span class="muted">${escapeHtml(model.setupStatus?.ready ? "ready" : "action required")}</span></div>
-            ${setupChecklist}
-          </div>
-        </section>
-        <section class="panel">
-          <div class="panel-inner">
-            <div class="section-title"><h2>Audience Managers</h2><span class="muted">${escapeHtml(String(model.audiences.length))} audiences</span></div>
-            ${audienceImportPanel}
-            <div class="asset-grid" style="margin-top:12px;">${audienceManagerCards}</div>
-          </div>
-        </section>
-      </div>
-
-      <div class="layout">
-        <aside class="panel story-queue">
-          <div class="panel-inner">
-            <div class="section-title">
-              <h2>Story Queue</h2>
-              <span class="muted">${escapeHtml(String(model.stories.length))} stories</span>
-            </div>
-            <form method="GET" class="filter-grid">
-              <label>Status
-                <select name="status">
-                  ${renderStatusOptions(model.filters.status)}
-                </select>
-              </label>
-              <label>Review
-                <select name="review_status">
-                  ${renderReviewOptions(model.filters.review_status)}
-                </select>
-              </label>
-              <label>Audience
-                <select name="audience_id">
-                  <option value="">All audiences</option>
-                  ${audienceOptions}
-                </select>
-              </label>
-              <label>Search
-                <input type="text" name="search" value="${escapeAttribute(model.filters.search ?? "")}" placeholder="Search title or story text" />
-              </label>
-              <button type="submit">Apply Filters</button>
-            </form>
-            <div class="story-list">
-              ${storiesList || `<div class="empty-card">No stories match these filters.</div>`}
-            </div>
-          </div>
-        </aside>
-
-        <section class="workspace-grid">
-          <div class="workspace-stack">
-            <section class="panel">
-              <div class="panel-inner">
-                <div class="section-title">
-                  <h2>Story Editor</h2>
-                  <button type="button" class="ghost" id="toggle-audience-button">Audience Drawer</button>
-                </div>
-                ${model.activeStory ? `
-                  <div class="story-meta">
-                    <div class="meta-chip"><strong>Pipeline</strong><div>${escapeHtml(model.activeStory.status)}</div></div>
-                    <div class="meta-chip"><strong>Review</strong><div>${escapeHtml(model.activeStory.operator_review_status)}</div></div>
-                    <div class="meta-chip"><strong>Selected Asset</strong><div>${escapeHtml(selectedAssetId || "none")}</div></div>
-                    <div class="meta-chip"><strong>Audience</strong><div>${escapeHtml(model.activeStory.audience?.label ?? "unknown")}</div></div>
-                    <div class="meta-chip"><strong>Instance</strong><div>${escapeHtml(model.activeStory.instance?.service_name ?? "unassigned")}</div></div>
-                    <div class="meta-chip"><strong>Channel Target</strong><div>${escapeHtml(publicationTarget ? `${publicationTarget.channel}:${publicationTarget.target_identifier}` : "unconfigured")}</div></div>
-                  </div>
-                  <form id="story-form" data-story-id="${escapeAttribute(model.activeStory.id)}" class="filter-grid">
-                    <label>Title
-                      <input name="title" value="${escapeAttribute(model.activeStory.title)}" />
-                    </label>
-                    <label>Story Text
-                      <textarea name="story_text">${escapeHtml(model.activeStory.story_text)}</textarea>
-                    </label>
-                    <label>Summary
-                      <textarea name="summary">${escapeHtml(model.activeStory.summary ?? "")}</textarea>
-                    </label>
-                    <label>Metadata JSON
-                      <textarea name="metadata">${metadataJson}</textarea>
-                    </label>
-                    <div class="button-row">
-                      <button type="submit">Save Story</button>
-                    </div>
-                  </form>
-                ` : `<div class="empty-card">Select a story from the queue.</div>`}
-              </div>
-            </section>
-
-            <section class="panel">
-              <div class="panel-inner">
-                <div class="section-title">
-                  <h2>Asset Panel</h2>
-                  <span class="muted">Select or replace the publish asset</span>
-                </div>
-                <div class="asset-grid">
-                  ${assetCards}
-                </div>
-              </div>
-            </section>
-
-            <section class="panel">
-              <div class="panel-inner">
-                <div class="section-title">
-                  <h2>Publication Queue</h2>
-                  <span class="muted">Select asset, approve, then queue channel publication</span>
-                </div>
-                ${model.activeStory ? `
-                  <div class="story-meta" style="margin-bottom:12px;">
-                    <div class="meta-chip"><strong>Channel</strong><div>${escapeHtml(publicationTarget?.channel ?? "unconfigured")}</div></div>
-                    <div class="meta-chip"><strong>Target</strong><div>${escapeHtml(publicationTarget?.target_identifier ?? "unconfigured")}</div></div>
-                  </div>
-                  <form id="review-form" data-story-id="${escapeAttribute(model.activeStory.id)}" class="filter-grid">
-                    <label>Review Notes
-                      <textarea name="review_notes" placeholder="What changed or why is this ready?"></textarea>
-                    </label>
-                    <input type="hidden" name="selected_asset_id" value="${escapeAttribute(selectedAssetId)}" />
-                    <div class="button-row">
-                      <button type="button" data-review-status="approved">Approve</button>
-                      <button type="button" class="secondary" data-review-status="changes_requested">Request Changes</button>
-                      <button type="button" class="secondary" data-review-status="rejected">Reject</button>
-                    </div>
-                  </form>
-                  <div class="button-row" style="margin-top:12px;">
-                    <button type="button" id="queue-publication-button" data-story-id="${escapeAttribute(model.activeStory.id)}">Queue Channel Publication</button>
-                  </div>
-                ` : ""}
-                <h3 style="margin:18px 0 10px;">Queued Publications</h3>
-                <ul class="compact">${publicationItems}</ul>
-                <h3 style="margin:18px 0 10px;">Review History</h3>
-                <ul class="compact">${reviewItems}</ul>
-              </div>
-            </section>
-          </div>
-
-          <aside class="panel drawer" id="audience-drawer">
-            <div class="panel-inner">
-              <div class="section-title">
-                <h2>Audience Drawer</h2>
-                <button type="button" class="secondary" id="close-audience-button">Close</button>
-              </div>
-              ${audience ? `
-                <form id="audience-form" data-audience-id="${escapeAttribute(audience.id)}" class="filter-grid">
-                  ${audienceFields}
-                  <label>Profile Snapshot JSON
-                    <textarea name="profile_snapshot">${profileJson}</textarea>
-                  </label>
-                  <button type="submit">Save Audience</button>
-                </form>
-              ` : `<div class="empty-card">No audience selected.</div>`}
-            </div>
-          </aside>
-        </section>
-      </div>
-
-      <div class="lower-grid">
-        <section class="panel">
-          <div class="panel-inner">
-            <div class="section-title"><h2>Audit Log</h2></div>
-            <ul class="compact">${auditItems}</ul>
-          </div>
-        </section>
-        <section class="panel">
-          <div class="panel-inner">
-            <div class="section-title"><h2>Analytics Snapshot</h2></div>
-            <ul class="compact">${analyticsItems}</ul>
-          </div>
-        </section>
-        <section class="panel">
-          <div class="panel-inner">
-            <div class="section-title"><h2>Live Instances</h2><button type="button" id="deploy-all-button">Deploy All</button></div>
-            <ul class="compact">${liveInstances}</ul>
-          </div>
-        </section>
-        <section class="panel">
-          <div class="panel-inner">
-            <div class="section-title"><h2>Operator Console</h2></div>
-            <form id="chat-form" class="filter-grid">
-              <label>Audience ID
-                <input name="audience_id" placeholder="barcelona-family" />
-              </label>
-              <label>Message
-                <textarea name="message" rows="4" placeholder="status report"></textarea>
-              </label>
-              <label>Operator
-                <input name="operator" placeholder="operator@example.com" />
-              </label>
-              <button type="submit">Send To Instance</button>
-            </form>
-          </div>
-        </section>
-      </div>
+        ${renderWorkspaceTabs(activeTab)}
+      </header>
+      <section class="workspace">
+        ${workspace}
+      </section>
     </main>
 
-    <script>
+    ${renderDashboardScript()}
+  </body>
+</html>`;
+}
+
+function renderSetupWorkspace({ model, setupChecklist, audienceImportPanel }) {
+  return `<div class="split">
+    <section>
+      <div class="stat-row">
+        <div class="stat"><strong>${escapeHtml(model.setupStatus?.ready ? "Ready" : "Open")}</strong><span>Setup state</span></div>
+        <div class="stat"><strong>${escapeHtml(String(model.audiences.length))}</strong><span>Audiences</span></div>
+        <div class="stat"><strong>${escapeHtml(model.setupStatus?.llm?.model ?? "unset")}</strong><span>LLM model</span></div>
+      </div>
+      <section class="panel">
+        <div class="panel-inner">
+          <div class="section-title">
+            <div><h2>Setup Checklist</h2><p class="muted">Supabase, schema, LLM, and dashboard readiness.</p></div>
+            <span class="muted">${escapeHtml(model.setupStatus?.ready ? "ready" : "action required")}</span>
+          </div>
+          ${setupChecklist}
+        </div>
+      </section>
+    </section>
+    <section class="panel">
+      <div class="panel-inner">
+        <div class="section-title">
+          <div><h2>Create Audiences</h2><p class="muted">Import audience.md or create one investigated profile. Instances are not prepared until launch.</p></div>
+        </div>
+        ${audienceImportPanel}
+        <div class="plain-section" style="margin-top:22px;">
+          <h3>Create One Audience</h3>
+          <form id="create-audience-form" class="filter-grid">
+            <label>Raw audience brief, sources, photos, accounts
+              <textarea name="raw_text" placeholder="Describe the audience. Add Twitter accounts, similar photos, references, and constraints."></textarea>
+            </label>
+            <button type="submit">Run LLM Investigation</button>
+          </form>
+        </div>
+      </div>
+    </section>
+  </div>`;
+}
+
+function renderStoriesWorkspace(context) {
+  const {
+    model,
+    storiesList,
+    audienceOptions,
+    assetCards,
+    publicationItems,
+    reviewItems,
+    auditItems,
+    analyticsItems,
+    audience,
+    audienceFields,
+    metadataJson,
+    profileJson,
+    selectedAssetId,
+    publicationTarget
+  } = context;
+  return `<div class="workspace-grid">
+    <aside class="panel">
+      <div class="panel-inner">
+        <div class="section-title">
+          <div><h2>Story Queue</h2><p class="muted">Filter by pipeline, review state, and audience.</p></div>
+          <span class="muted">${escapeHtml(String(model.stories.length))} stories</span>
+        </div>
+        <form method="GET" class="filter-grid">
+          <input type="hidden" name="tab" value="stories" />
+          <label>Status
+            <select name="status">${renderStatusOptions(model.filters.status)}</select>
+          </label>
+          <label>Review
+            <select name="review_status">${renderReviewOptions(model.filters.review_status)}</select>
+          </label>
+          <label>Audience
+            <select name="audience_id">
+              <option value="">All audiences</option>
+              ${audienceOptions}
+            </select>
+          </label>
+          <label>Search
+            <input type="text" name="search" value="${escapeAttribute(model.filters.search ?? "")}" placeholder="Search title or story text" />
+          </label>
+          <button type="submit">Apply Filters</button>
+        </form>
+        <div class="story-list" style="margin-top:18px;">
+          ${storiesList || `<div class="empty-card">No stories match these filters.</div>`}
+        </div>
+      </div>
+    </aside>
+
+    <section class="workspace-stack">
+      <section class="panel">
+        <div class="panel-inner">
+          <div class="section-title">
+            <div><h2>Story Editor</h2><p class="muted">Review copy, metadata, owning audience, and publish target.</p></div>
+            <button type="button" class="ghost" id="toggle-audience-button">Audience Drawer</button>
+          </div>
+          ${model.activeStory ? `
+            <div class="story-meta">
+              <div class="meta-chip"><strong>Pipeline</strong><div>${escapeHtml(model.activeStory.status)}</div></div>
+              <div class="meta-chip"><strong>Review</strong><div>${escapeHtml(model.activeStory.operator_review_status)}</div></div>
+              <div class="meta-chip"><strong>Selected Asset</strong><div>${escapeHtml(selectedAssetId || "none")}</div></div>
+              <div class="meta-chip"><strong>Audience</strong><div>${escapeHtml(model.activeStory.audience?.label ?? "unknown")}</div></div>
+              <div class="meta-chip"><strong>Instance</strong><div>${escapeHtml(model.activeStory.instance?.service_name ?? "unassigned")}</div></div>
+              <div class="meta-chip"><strong>Channel Target</strong><div>${escapeHtml(publicationTarget ? `${publicationTarget.channel}:${publicationTarget.target_identifier}` : "unconfigured")}</div></div>
+            </div>
+            <form id="story-form" data-story-id="${escapeAttribute(model.activeStory.id)}" class="filter-grid">
+              <label>Title
+                <input name="title" value="${escapeAttribute(model.activeStory.title)}" />
+              </label>
+              <label>Story Text
+                <textarea name="story_text">${escapeHtml(model.activeStory.story_text)}</textarea>
+              </label>
+              <label>Summary
+                <textarea name="summary">${escapeHtml(model.activeStory.summary ?? "")}</textarea>
+              </label>
+              <label>Metadata JSON
+                <textarea name="metadata">${metadataJson}</textarea>
+              </label>
+              <div class="button-row"><button type="submit">Save Story</button></div>
+            </form>
+          ` : `<div class="empty-card">Select a story from the queue.</div>`}
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-inner">
+          <div class="section-title">
+            <div><h2>Asset Panel</h2><p class="muted">Select or replace the publish asset.</p></div>
+          </div>
+          <div class="asset-grid">${assetCards}</div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-inner">
+          <div class="section-title">
+            <div><h2>Publication Queue</h2><p class="muted">Approval requires a selected asset before channel queueing.</p></div>
+          </div>
+          ${model.activeStory ? `
+            <div class="story-meta" style="margin-bottom:12px;">
+              <div class="meta-chip"><strong>Channel</strong><div>${escapeHtml(publicationTarget?.channel ?? "unconfigured")}</div></div>
+              <div class="meta-chip"><strong>Target</strong><div>${escapeHtml(publicationTarget?.target_identifier ?? "unconfigured")}</div></div>
+            </div>
+            <form id="review-form" data-story-id="${escapeAttribute(model.activeStory.id)}" class="filter-grid">
+              <label>Review Notes
+                <textarea name="review_notes" placeholder="What changed or why is this ready?"></textarea>
+              </label>
+              <input type="hidden" name="selected_asset_id" value="${escapeAttribute(selectedAssetId)}" />
+              <div class="button-row">
+                <button type="button" data-review-status="approved">Approve</button>
+                <button type="button" class="secondary" data-review-status="changes_requested">Request Changes</button>
+                <button type="button" class="secondary" data-review-status="rejected">Reject</button>
+              </div>
+            </form>
+            <div class="button-row" style="margin-top:12px;">
+              <button type="button" id="queue-publication-button" data-story-id="${escapeAttribute(model.activeStory.id)}">Queue Channel Publication</button>
+            </div>
+          ` : ""}
+          <h3 style="margin:22px 0 8px;">Queued Publications</h3>
+          <ul class="compact">${publicationItems}</ul>
+          <h3 style="margin:22px 0 8px;">Review History</h3>
+          <ul class="compact">${reviewItems}</ul>
+        </div>
+      </section>
+
+      <section class="split">
+        <div class="panel"><div class="panel-inner"><div class="section-title"><h2>Audit Log</h2></div><ul class="compact">${auditItems}</ul></div></div>
+        <div class="panel"><div class="panel-inner"><div class="section-title"><h2>Analytics Snapshot</h2></div><ul class="compact">${analyticsItems}</ul></div></div>
+      </section>
+    </section>
+
+    <aside class="panel drawer" id="audience-drawer">
+      <div class="panel-inner">
+        <div class="section-title">
+          <h2>Audience Drawer</h2>
+          <button type="button" class="secondary" id="close-audience-button">Close</button>
+        </div>
+        ${audience ? `
+          <form id="audience-form" data-audience-id="${escapeAttribute(audience.id)}" class="filter-grid">
+            ${audienceFields}
+            <label>Profile Snapshot JSON
+              <textarea name="profile_snapshot">${profileJson}</textarea>
+            </label>
+            <button type="submit">Save Audience</button>
+          </form>
+        ` : `<div class="empty-card">No audience selected.</div>`}
+      </div>
+    </aside>
+  </div>`;
+}
+
+function renderAudiencesWorkspace({ model, audienceRows, liveInstances }) {
+  return `<div class="split">
+    <section class="panel">
+      <div class="panel-inner">
+        <div class="section-title">
+          <div><h2>Audiences</h2><p class="muted">Supabase audience profiles. Launch creates the OpenClaw instance after the audience exists.</p></div>
+          <span class="muted">${escapeHtml(String(model.audiences.length))} audiences</span>
+        </div>
+        <div class="audience-list">${audienceRows}</div>
+      </div>
+    </section>
+    <section class="workspace-stack">
+      <section class="panel">
+        <div class="panel-inner">
+          <div class="section-title"><div><h2>Live Instances</h2><p class="muted">Runtime containers and exact CLI commands.</p></div><button type="button" id="deploy-all-button">Deploy All</button></div>
+          <ul class="compact instance-list">${liveInstances}</ul>
+        </div>
+      </section>
+      <section class="panel">
+        <div class="panel-inner">
+          <div class="section-title"><h2>Operator Console</h2></div>
+          <form id="chat-form" class="filter-grid">
+            <label>Audience ID
+              <input name="audience_id" placeholder="barcelona-family" />
+            </label>
+            <label>Message
+              <textarea name="message" rows="4" placeholder="status report"></textarea>
+            </label>
+            <label>Operator
+              <input name="operator" placeholder="operator@example.com" />
+            </label>
+            <button type="submit">Send To Instance</button>
+          </form>
+        </div>
+      </section>
+    </section>
+  </div>`;
+}
+
+function renderWorkspaceTabs(activeTab) {
+  return `<nav class="workspace-tabs" aria-label="Workspace">
+    ${["setup", "stories", "audiences"].map((tab) => {
+      const label = tab[0].toUpperCase() + tab.slice(1);
+      const href = tab === "setup" ? "/" : `/?tab=${tab}`;
+      return `<a class="workspace-tab${activeTab === tab ? " active" : ""}" href="${escapeAttribute(href)}">${escapeHtml(label)}</a>`;
+    }).join("")}
+  </nav>`;
+}
+
+function renderDashboardScript() {
+  return `<script>
       async function sendJson(url, method, body) {
         const response = await fetch(url, {
           method,
@@ -1023,7 +1229,16 @@ function renderDashboard(model) {
         await sendJson("/api/audiences/import-confirm", "POST", {
           items: preview.items ?? []
         });
-        window.location.reload();
+        window.location.href = "/?tab=audiences";
+      });
+
+      document.getElementById("create-audience-form")?.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const form = event.currentTarget;
+        await sendJson("/api/audiences/create", "POST", {
+          raw_text: form.raw_text.value
+        });
+        window.location.href = "/?tab=audiences";
       });
 
       function splitList(value) {
@@ -1085,9 +1300,7 @@ function renderDashboard(model) {
           message: form.message.value || ""
         });
       });
-    </script>
-  </body>
-</html>`;
+    </script>`;
 }
 
 function renderAssetCard(story, asset) {
@@ -1126,14 +1339,16 @@ function renderAudienceImportPanel(preview) {
     return `<div class="empty-card">Audience import is not configured.</div>`;
   }
   const sourceLabel = preview.source_file_name ?? "No audience source";
+  const itemCount = preview.items?.length ?? preview.item_count ?? 0;
   const summary = preview.error
     ? escapeHtml(preview.error)
     : preview.import_required
-      ? `${preview.items?.length ?? 0} audience updates ready to import`
+      ? `${itemCount} audience updates ready to import`
       : "No audience import required";
   return `<div class="empty-card">
     <strong>Source</strong>
     <div class="muted">${escapeHtml(sourceLabel)}</div>
+    <div class="muted">LLM expansion runs before Supabase write.</div>
     <div class="muted">${summary}</div>
     ${preview.import_required ? `<div class="button-row" style="margin-top:10px;"><button type="button" id="import-audience-file-button">Import ${escapeHtml(sourceLabel)}</button></div>` : ""}
   </div>`;
@@ -1148,12 +1363,20 @@ function renderAudienceManagerCards(audiences, audienceInstances) {
     const instance = instancesByAudienceId.get(audience.id) ?? null;
     const runtimeConfig = instance?.runtime_config ?? {};
     const llmLabel = runtimeConfig.llm_model ?? "global default";
-    return `<article class="asset-card">
-      <strong>${escapeHtml(audience.label ?? audience.audience_key ?? audience.id)}</strong>
-      <div class="muted">${escapeHtml(audience.audience_key ?? audience.id)}</div>
-      <div class="muted">LLM: ${escapeHtml(llmLabel)}</div>
-      <div class="muted">Instance: ${escapeHtml(instance?.service_name ?? "not provisioned")}</div>
-      <div class="button-row" style="margin-top:10px;">
+    return `<article class="audience-profile">
+      <div>
+        <strong>${escapeHtml(audience.label ?? audience.audience_key ?? audience.id)}</strong>
+        <div class="muted">${escapeHtml(audience.audience_key ?? audience.id)}</div>
+        <div class="pill-line">
+          <span class="pill">${escapeHtml(audience.location ?? "unknown location")}</span>
+          <span class="pill">${escapeHtml(audience.language ?? "language unset")}</span>
+          <span class="pill">${escapeHtml(audience.status ?? "status unset")}</span>
+          <span class="pill">LLM: ${escapeHtml(llmLabel)}</span>
+          <span class="pill">Instance: ${escapeHtml(instance?.service_name ?? "not launched")}</span>
+        </div>
+        <p class="muted" style="margin-top:10px;">${escapeHtml(audience.family_context ?? audience.tone ?? "No profile summary stored.")}</p>
+      </div>
+      <div class="button-row">
         <button type="button" data-launch-audience-id="${escapeAttribute(audience.id)}">Launch Audience Manager</button>
       </div>
     </article>`;
@@ -1211,7 +1434,7 @@ function renderAudienceFields(audience) {
 }
 
 function renderStatusOptions(selected) {
-  return renderOptions(["", "new", "classifying", "classified", "media_decided", "asset_generating", "ready_to_publish", "published", "failed", "archived"], selected, "All statuses");
+  return renderOptions(["", "new", "classifying", "classified", "media_decided", "assets_collected", "asset_generating", "ready_to_publish", "published", "failed", "archived"], selected, "All statuses");
 }
 
 function renderReviewOptions(selected) {
@@ -1227,6 +1450,7 @@ function renderOptions(values, selected, blankLabel) {
 
 function buildDashboardHref(filters, storyId) {
   const url = new URL("http://localhost/");
+  url.searchParams.set("tab", "stories");
   if (filters.status) {
     url.searchParams.set("status", filters.status);
   }
@@ -1241,6 +1465,11 @@ function buildDashboardHref(filters, storyId) {
   }
   url.searchParams.set("story_id", storyId);
   return `${url.pathname}${url.search}`;
+}
+
+function normalizeDashboardTab(query = {}) {
+  const value = query.tab ?? "setup";
+  return ["setup", "stories", "audiences"].includes(value) ? value : "setup";
 }
 
 function normalizeStoryFilters(query = {}) {
