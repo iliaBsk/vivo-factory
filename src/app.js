@@ -942,8 +942,8 @@ function renderStoryDetailDrawer({ story, assetCards, publicationItems, reviewIt
 
       <dl class="grid grid-cols-3 divide-x divide-gray-200 dark:divide-gray-700 border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden">
         ${[
-          ["Pipeline", story.status],
-          ["Review", story.operator_review_status],
+          ["Pipeline", story.status ?? "unknown"],
+          ["Review", story.operator_review_status ?? "pending"],
           ["Asset", selectedAssetId || "none"],
           ["Instance", story.instance?.service_name ?? "unassigned"],
           ["Channel", publicationTarget ? `${publicationTarget.channel}:${publicationTarget.target_identifier}` : "unconfigured"]
