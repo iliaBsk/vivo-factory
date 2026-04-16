@@ -361,6 +361,124 @@ test("app exposes story queue filters, detail, story updates, reviews, asset rep
   assert.equal(repository.getStory("story-1").publications[0].target_identifier, "-1001111111111");
 });
 
+test("app exposes Marble audience profile summary, debug, fact sync, and decision ingestion routes", async () => {
+  const { createRepository, createApp } = await loadModules();
+  const repository = createRepository(createSeed());
+  const profileCalls = [];
+  const app = createApp({
+    repository,
+    profileClientFactory({ audience, instance }) {
+      profileCalls.push({
+        type: "factory",
+        audienceId: audience?.id ?? null,
+        instanceId: instance?.id ?? null
+      });
+      return {
+        async getSummary() {
+          profileCalls.push({ type: "summary" });
+          return {
+            ok: true,
+            data: {
+              profile: {
+                label: "Barcelona Family",
+                tone: "helpful"
+              }
+            }
+          };
+        },
+        async getDebug() {
+          profileCalls.push({ type: "debug" });
+          return {
+            ok: true,
+            data: {
+              profile: { label: "Barcelona Family" },
+              metadata: { event_websites: ["https://example.com/festival"] },
+              decisions: [{ decisionType: "operator_feedback" }],
+              memory_nodes: { interests: 2 }
+            }
+          };
+        },
+        async updateFacts(facts) {
+          profileCalls.push({ type: "facts", facts });
+          return {
+            ok: true,
+            data: {
+              profile: {
+                label: facts.label,
+                tone: facts.tone
+              }
+            }
+          };
+        },
+        async storeDecision(decision) {
+          profileCalls.push({ type: "decision", decision });
+          return { ok: true, data: { stored: true } };
+        }
+      };
+    },
+    clock: () => "2026-03-21T13:00:00.000Z"
+  });
+
+  const summaryResponse = await app.handle({
+    method: "GET",
+    pathname: "/api/audiences/aud-1/profile-summary"
+  });
+  const debugResponse = await app.handle({
+    method: "GET",
+    pathname: "/api/audiences/aud-1/profile-debug"
+  });
+  const factsResponse = await app.handle({
+    method: "POST",
+    pathname: "/api/audiences/aud-1/profile-facts",
+    body: JSON.stringify({
+      actor_id: "operator@example.com",
+      facts: {
+        label: "Barcelona Family Updated",
+        location: "Barcelona",
+        family_context: "Married with one child",
+        interests: ["beachwear", "local events"],
+        content_pillars: ["family plans"],
+        excluded_topics: ["politics"],
+        tone: "direct",
+        shopping_bias: "quality-first",
+        posting_schedule: "weekday mornings",
+        extra_metadata: {
+          shopping_data: ["Maremagnum"],
+          event_websites: ["https://example.com/events"]
+        }
+      }
+    })
+  });
+  const decisionResponse = await app.handle({
+    method: "POST",
+    pathname: "/api/audiences/aud-1/profile-decisions",
+    body: JSON.stringify({
+      actor_id: "operator@example.com",
+      decisionType: "operator_enrichment",
+      source: "dashboard",
+      content: {
+        shopping_data: ["Maremagnum"],
+        location_notes: ["Weekend traffic high near Barceloneta"]
+      }
+    })
+  });
+
+  assert.equal(summaryResponse.status, 200);
+  assert.equal(debugResponse.status, 200);
+  assert.equal(factsResponse.status, 200);
+  assert.equal(decisionResponse.status, 200);
+  assert.equal(JSON.parse(summaryResponse.body).profile.label, "Barcelona Family");
+  assert.equal(JSON.parse(debugResponse.body).metadata.event_websites[0], "https://example.com/festival");
+  assert.equal(repository.getAudience("aud-1").tone, "direct");
+  assert.equal(repository.getAudience("aud-1").shopping_bias, "quality-first");
+  assert.deepEqual(repository.getAudience("aud-1").profile_snapshot.extra_metadata, {
+    shopping_data: ["Maremagnum"],
+    event_websites: ["https://example.com/events"]
+  });
+  assert.equal(profileCalls.find((entry) => entry.type === "facts").facts.audience_id, "aud-1");
+  assert.equal(profileCalls.find((entry) => entry.type === "decision").decision.source, "dashboard");
+});
+
 test("app exposes setup status and audience import preview and confirmation", async () => {
   const { createRepository, createApp } = await loadModules();
   const repository = createRepository(createSeed());
@@ -640,6 +758,43 @@ test("audiences workspace renders audience data and launch controls after audien
   const repository = createRepository(createSeed());
   const app = createApp({
     repository,
+    profileClientFactory() {
+      return {
+        async getSummary() {
+          return {
+            ok: true,
+            data: {
+              profile: {
+                label: "Barcelona Family",
+                location: "Barcelona",
+                family_context: "Married with one child",
+                interests: ["beachwear"],
+                content_pillars: ["family plans"],
+                tone: "helpful",
+                shopping_bias: "quality-first",
+                excluded_topics: ["gambling"],
+                updated_at: "2026-03-21T13:00:00.000Z",
+                reasoning_summary: "Barcelona Family, based in Barcelona, focused on beachwear"
+              }
+            }
+          };
+        },
+        async getDebug() {
+          return {
+            ok: true,
+            data: {
+              profile: { label: "Barcelona Family" },
+              metadata: {
+                event_websites: ["https://example.com/events"],
+                shopping_data: ["Maremagnum"]
+              },
+              decisions: [{ decisionType: "operator_feedback" }],
+              memory_nodes: { interests: 1, preferences: 2 }
+            }
+          };
+        }
+      };
+    },
     instanceManager: {
       listInstances() {
         return [
@@ -672,9 +827,20 @@ test("audiences workspace renders audience data and launch controls after audien
   assert.match(response.body, /workspace-tab active[^>]*>Audiences/);
   assert.match(response.body, /Barcelona Family/);
   assert.match(response.body, /Deployment Config/);
+  assert.match(response.body, /Marble KG/);
+  assert.match(response.body, /Graph Summary/);
+  assert.match(response.body, /Graph Debug/);
+  assert.match(response.body, /Audience Data Enrichment/);
+  assert.match(response.body, /Audience Manager Feedback/);
   assert.match(response.body, /name="telegram_chat_id"/);
   assert.match(response.body, /name="telegram_bot_token"/);
   assert.match(response.body, /name="llm_model"/);
+  assert.match(response.body, /name="profile_engine_image"/);
+  assert.match(response.body, /name="profile_engine_command"/);
+  assert.match(response.body, /name="profile_engine_health_path"/);
+  assert.match(response.body, /name="profile_storage_path"/);
+  assert.match(response.body, /name="shopping_bias"/);
+  assert.match(response.body, /name="extra_metadata"/);
   assert.match(response.body, /Launch Deployment/);
   assert.match(response.body, /Deployments/);
   assert.match(response.body, /docker compose -f generated\/docker-compose\.yml exec/);

@@ -11,6 +11,9 @@ export function createProfileClient(options) {
     },
     getSummary() {
       return getJson(fetchImpl, `${baseUrl}/user-profile/graph/summary`);
+    },
+    getDebug() {
+      return getJson(fetchImpl, `${baseUrl}/user-profile/graph/debug`);
     }
   };
 }

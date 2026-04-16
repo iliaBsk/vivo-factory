@@ -48,7 +48,7 @@ test("createProfileClient stores decisions and reads graph summary", async () =>
       return {
         ok: true,
         async json() {
-          if (url.endsWith("/summary")) {
+          if (url.endsWith("/summary") || url.endsWith("/debug")) {
             return { ok: true, data: { profile: { tone: "helpful" } }, warnings: [], errors: [] };
           }
           return { ok: true, data: { status: "ok" }, warnings: [], errors: [] };
@@ -59,10 +59,13 @@ test("createProfileClient stores decisions and reads graph summary", async () =>
 
   await client.storeDecision({ decisionId: "d1", decisionType: "audience_bootstrap", content: { audience_id: "aud-1" } });
   const summary = await client.getSummary();
+  const debug = await client.getDebug();
 
   assert.equal(requests[0].url, "http://127.0.0.1:5400/user-profile/profile/decisions");
   assert.equal(requests[1].url, "http://127.0.0.1:5400/user-profile/graph/summary");
+  assert.equal(requests[2].url, "http://127.0.0.1:5400/user-profile/graph/debug");
   assert.deepEqual(summary.data.profile, { tone: "helpful" });
+  assert.deepEqual(debug.data.profile, { tone: "helpful" });
 });
 
 test("createProfileClient rejects non-loopback plugin endpoints", async () => {

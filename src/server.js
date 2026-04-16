@@ -9,6 +9,7 @@ import { createAudienceManagerLauncher } from "./audience-manager-launcher.js";
 import { createSupabaseProvisioningClient } from "./bootstrap-provisioning.js";
 import { createInstanceManager } from "./instance-manager.js";
 import { createOpenAiAudienceClient } from "./openai-audience-client.js";
+import { createProfileClient } from "./profile-client.js";
 import { createFileRepository, createSupabaseRepository } from "./repository.js";
 import { createSetupService, resolveLlmDefaults } from "./setup-service.js";
 import { loadEnvConfig, loadJsonConfig } from "./runtime-config.js";
@@ -57,10 +58,12 @@ const audienceManagerLauncher = createAudienceManagerLauncher({
   llmDefaults,
   execImpl: defaultExec
 });
+const profileClientFactory = createDashboardProfileClientFactory(runtimeConfig);
 
 const app = createApp({
   repository,
   instanceManager,
+  profileClientFactory,
   setupService,
   audienceImportService,
   audienceManagerLauncher,
@@ -150,4 +153,28 @@ async function defaultExec(command, args) {
       stderr: error.stderr ?? error.message
     };
   }
+}
+
+function createDashboardProfileClientFactory(runtimeConfig) {
+  return ({ audience, instance }) => {
+    const audienceKey = audience?.audience_key ?? audience?.audience_id ?? audience?.id ?? "";
+    const configuredAudience = audienceKey ? runtimeConfig.audiences?.[audienceKey] ?? {} : {};
+    const baseUrl = instance?.profile_base_url
+      ?? instance?.runtime_config?.profile_base_url
+      ?? instance?.runtime_config?.plugin_base_url
+      ?? configuredAudience.profile_base_url
+      ?? configuredAudience.plugin_base_url
+      ?? runtimeConfig.profile_base_url_default
+      ?? runtimeConfig.plugin_base_url_default
+      ?? "";
+
+    if (!String(baseUrl).trim()) {
+      return null;
+    }
+
+    return createProfileClient({
+      baseUrl,
+      fetchImpl: globalThis.fetch
+    });
+  };
 }

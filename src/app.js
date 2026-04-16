@@ -10,6 +10,7 @@ import {
 export function createApp(options) {
   const repository = options.repository;
   const instanceManager = options.instanceManager ?? null;
+  const profileClientFactory = options.profileClientFactory ?? null;
   const setupService = options.setupService ?? null;
   const audienceImportService = options.audienceImportService ?? null;
   const audienceManagerLauncher = options.audienceManagerLauncher ?? null;
@@ -22,6 +23,7 @@ export function createApp(options) {
         return await handleRequest({
           repository,
           instanceManager,
+          profileClientFactory,
           setupService,
           audienceImportService,
           audienceManagerLauncher,
@@ -40,6 +42,7 @@ async function handleRequest(context) {
   const {
     repository,
     instanceManager,
+    profileClientFactory,
     setupService,
     audienceImportService,
     audienceManagerLauncher,
@@ -244,6 +247,68 @@ async function handleRequest(context) {
     return json(200, audience);
   }
 
+  if (request.method === "GET" && matchPath(request.pathname, /^\/api\/audiences\/([^/]+)\/profile-summary$/)) {
+    const audienceId = request.pathname.split("/")[3];
+    const profileClient = await resolveProfileClient({ repository, profileClientFactory, audienceId });
+    if (!profileClient) {
+      return json(404, { error: "Audience Marble profile is not configured." });
+    }
+    const summary = await profileClient.getSummary();
+    return json(200, summary.data ?? {});
+  }
+
+  if (request.method === "GET" && matchPath(request.pathname, /^\/api\/audiences\/([^/]+)\/profile-debug$/)) {
+    const audienceId = request.pathname.split("/")[3];
+    const profileClient = await resolveProfileClient({ repository, profileClientFactory, audienceId });
+    if (!profileClient?.getDebug) {
+      return json(404, { error: "Audience Marble debug view is not configured." });
+    }
+    const debug = await profileClient.getDebug();
+    return json(200, debug.data ?? {});
+  }
+
+  if (request.method === "POST" && matchPath(request.pathname, /^\/api\/audiences\/([^/]+)\/profile-facts$/)) {
+    const audienceId = request.pathname.split("/")[3];
+    const body = readBody(request.body);
+    const audience = await repository.getAudience(audienceId);
+    if (!audience) {
+      return json(404, { error: "Audience not found" });
+    }
+    const profileClient = await resolveProfileClient({ repository, profileClientFactory, audienceId, audience });
+    if (!profileClient?.updateFacts) {
+      return json(404, { error: "Audience Marble profile is not configured." });
+    }
+
+    const facts = normalizeAudienceProfileFacts(audience, body.facts ?? body);
+    await repository.updateAudience(audienceId, buildAudienceChangesFromFacts(facts), {
+      actorId: body.actor_id ?? body.operator ?? "unknown",
+      timestamp: clock()
+    });
+    const summary = await profileClient.updateFacts(facts);
+    return json(200, summary.data ?? {});
+  }
+
+  if (request.method === "POST" && matchPath(request.pathname, /^\/api\/audiences\/([^/]+)\/profile-decisions$/)) {
+    const audienceId = request.pathname.split("/")[3];
+    const body = readBody(request.body);
+    const audience = await repository.getAudience(audienceId);
+    if (!audience) {
+      return json(404, { error: "Audience not found" });
+    }
+    const profileClient = await resolveProfileClient({ repository, profileClientFactory, audienceId, audience });
+    if (!profileClient?.storeDecision) {
+      return json(404, { error: "Audience Marble profile is not configured." });
+    }
+
+    const result = await profileClient.storeDecision({
+      decisionType: body.decisionType ?? body.decision_type ?? "operator_feedback",
+      source: body.source ?? "dashboard",
+      content: body.content ?? {},
+      recorded_at: body.recorded_at ?? clock()
+    });
+    return json(200, result.data ?? {});
+  }
+
   if (request.method === "POST" && matchPath(request.pathname, /^\/api\/audiences\/([^/]+)\/launch$/)) {
     if (!audienceManagerLauncher) {
       return json(404, { error: "Audience manager launch is not configured." });
@@ -382,6 +447,9 @@ async function handleRequest(context) {
     }
     const audiences = await safeLoad(() => repository.listAudiences(), []);
     const audienceInstances = repository.listInstances && activeTab === "audiences" ? await safeLoad(() => repository.listInstances(), []) : [];
+    const audienceProfiles = activeTab === "audiences"
+      ? await loadAudienceProfiles(audiences, audienceInstances, profileClientFactory)
+      : new Map();
     const stories = shouldSkipStoryData || activeTab !== "stories"
       ? []
       : (await safeLoad(() => repository.listStories(filters), [])).map((story) => ({
@@ -408,6 +476,7 @@ async function handleRequest(context) {
       audienceImportPreview,
       audiences,
       audienceInstances,
+      audienceProfiles,
       stories,
       activeStory,
       auditItems,
@@ -424,6 +493,95 @@ function readBody(body) {
     return {};
   }
   return typeof body === "string" ? JSON.parse(body) : body;
+}
+
+async function loadAudienceProfiles(audiences, audienceInstances, profileClientFactory) {
+  if (typeof profileClientFactory !== "function") {
+    return new Map();
+  }
+
+  const instancesByAudienceId = new Map((audienceInstances ?? []).map((instance) => [instance.audience_id, instance]));
+  const entries = await Promise.all((audiences ?? []).map(async (audience) => {
+    const instance = instancesByAudienceId.get(audience.id) ?? null;
+    try {
+      const profileClient = await profileClientFactory({ audience, instance });
+      if (!profileClient?.getSummary) {
+        return [audience.id, { error: "Marble profile sidecar is not configured for this audience." }];
+      }
+      const summary = await profileClient.getSummary();
+      const debug = profileClient.getDebug ? await profileClient.getDebug() : { data: null };
+      return [audience.id, { summary: summary.data ?? null, debug: debug.data ?? null }];
+    } catch (error) {
+      return [audience.id, { error: error.message }];
+    }
+  }));
+
+  return new Map(entries);
+}
+
+async function resolveProfileClient({ repository, profileClientFactory, audienceId, audience = null }) {
+  if (typeof profileClientFactory !== "function") {
+    return null;
+  }
+  const resolvedAudience = audience ?? await repository.getAudience(audienceId);
+  if (!resolvedAudience) {
+    return null;
+  }
+  const instance = typeof repository.getInstanceByAudience === "function"
+    ? await safeLoad(() => repository.getInstanceByAudience(audienceId), null)
+    : null;
+  return profileClientFactory({ audience: resolvedAudience, instance });
+}
+
+function normalizeAudienceProfileFacts(audience, input = {}) {
+  const baseSnapshot = audience.profile_snapshot ?? {};
+  return {
+    audience_id: String(input.audience_id ?? audience.id ?? "").trim(),
+    label: String(input.label ?? audience.label ?? "").trim(),
+    location: String(input.location ?? audience.location ?? "").trim(),
+    family_context: String(input.family_context ?? audience.family_context ?? "").trim(),
+    interests: normalizeStringList(input.interests ?? audience.interests ?? []),
+    content_pillars: normalizeStringList(input.content_pillars ?? audience.content_pillars ?? []),
+    excluded_topics: normalizeStringList(input.excluded_topics ?? audience.excluded_topics ?? []),
+    tone: String(input.tone ?? audience.tone ?? "").trim(),
+    shopping_bias: String(input.shopping_bias ?? audience.shopping_bias ?? "").trim(),
+    posting_schedule: String(input.posting_schedule ?? audience.posting_schedule ?? "").trim(),
+    extra_metadata: normalizeObject(input.extra_metadata ?? baseSnapshot.extra_metadata ?? {})
+  };
+}
+
+function buildAudienceChangesFromFacts(facts) {
+  return {
+    label: facts.label,
+    location: facts.location,
+    family_context: facts.family_context,
+    interests: facts.interests,
+    content_pillars: facts.content_pillars,
+    excluded_topics: facts.excluded_topics,
+    tone: facts.tone,
+    shopping_bias: facts.shopping_bias,
+    posting_schedule: facts.posting_schedule,
+    profile_snapshot: {
+      extra_metadata: facts.extra_metadata
+    }
+  };
+}
+
+function normalizeStringList(values) {
+  if (Array.isArray(values)) {
+    return values.map((value) => String(value).trim()).filter(Boolean);
+  }
+  return String(values ?? "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+}
+
+function normalizeObject(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {};
+  }
+  return value;
 }
 
 function buildAudienceInstance(audience, runtimeConfig = {}) {
@@ -490,7 +648,7 @@ function normalizeLaunchRuntimeConfig(runtimeConfig = {}) {
 function renderDashboard(model) {
   const activeTab = model.activeTab ?? "setup";
   const setupChecklist = renderSetupChecklist(model.setupStatus);
-  const audienceRows = renderAudienceManagerCards(model.audiences, model.audienceInstances ?? []);
+  const audienceRows = renderAudienceManagerCards(model.audiences, model.audienceInstances ?? [], model.audienceProfiles ?? new Map());
   const audienceImportPanel = renderAudienceImportPanel(model.audienceImportPreview);
   const storyTableRows = renderStoryTableRows(model.stories, model.filters, model.activeStory?.id ?? "");
 
@@ -918,6 +1076,55 @@ function renderDashboard(model) {
       .audience-profile:hover {
         border-color: var(--line-strong);
         transform: translateY(-1px);
+      }
+      .audience-profile-section,
+      .profile-editor,
+      .debug-panel {
+        display: grid;
+        gap: 14px;
+        padding: 16px;
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        background: var(--surface-muted);
+      }
+      .audience-metric-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 10px;
+      }
+      .metric-card {
+        display: grid;
+        gap: 6px;
+        padding: 12px;
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        background: var(--surface);
+      }
+      .metric-card strong {
+        font-size: 12px;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+      }
+      .metric-card span {
+        color: var(--muted);
+        font-size: 13px;
+        line-height: 1.45;
+      }
+      .debug-panel summary {
+        cursor: pointer;
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: var(--muted);
+      }
+      .debug-panel pre {
+        margin: 0;
+        padding: 12px;
+        border-radius: 12px;
+        background: var(--code-bg);
+        overflow-x: auto;
+        font-size: 12px;
+        line-height: 1.45;
       }
       .pill-line {
         display: flex;
@@ -1489,6 +1696,20 @@ function renderDeploymentInstance(instance) {
       ${instance.env_file ? `<span>Env: ${escapeHtml(instance.env_file)}</span>` : ""}
     </div>
     ${actions}
+    <form class="profile-editor" data-instance-chat-form="${escapeAttribute(instance.audience_id)}">
+      <div class="section-title"><div><h3>Audience Manager Feedback</h3><p class="muted">Send operator feedback directly to this OpenClaw audience manager.</p></div></div>
+      <div class="launch-grid">
+        <label>Operator
+          <input name="operator" value="operator@example.com" />
+        </label>
+        <label>Message
+          <textarea name="message" rows="4" placeholder="Refine the audience plan using the new Marble notes."></textarea>
+        </label>
+      </div>
+      <div class="button-row">
+        <button type="submit" class="secondary">Send Feedback</button>
+      </div>
+    </form>
     <div class="command-list">
       ${renderCommandBlock("OpenClaw Shell", instance.commands?.openclaw_shell)}
       ${renderCommandBlock("Profile Shell", instance.commands?.profile_shell)}
@@ -1677,6 +1898,14 @@ function renderDashboardScript() {
         return value.split(",").map((item) => item.trim()).filter(Boolean);
       }
 
+      function parseJsonField(value, fallback = {}) {
+        const trimmed = String(value || "").trim();
+        if (!trimmed) {
+          return fallback;
+        }
+        return JSON.parse(trimmed);
+      }
+
       function formRuntimeConfig(form) {
         return Object.fromEntries(
           [...new FormData(form).entries()]
@@ -1734,12 +1963,55 @@ function renderDashboardScript() {
         });
       });
 
+      document.querySelectorAll("form[data-profile-facts-audience-id]").forEach((form) => {
+        form.addEventListener("submit", async (event) => {
+          event.preventDefault();
+          await postInstance("/api/audiences/" + form.dataset.profileFactsAudienceId + "/profile-facts", {
+            actor_id: form.operator.value || "operator@example.com",
+            facts: {
+              label: form.label.value,
+              location: form.location.value,
+              family_context: form.family_context.value,
+              interests: splitList(form.interests.value),
+              content_pillars: splitList(form.content_pillars.value),
+              excluded_topics: splitList(form.excluded_topics.value),
+              tone: form.tone.value,
+              shopping_bias: form.shopping_bias.value,
+              posting_schedule: form.posting_schedule.value,
+              extra_metadata: parseJsonField(form.extra_metadata.value, {})
+            }
+          });
+        });
+      });
+
+      document.querySelectorAll("form[data-profile-decision-audience-id]").forEach((form) => {
+        form.addEventListener("submit", async (event) => {
+          event.preventDefault();
+          await postInstance("/api/audiences/" + form.dataset.profileDecisionAudienceId + "/profile-decisions", {
+            actor_id: form.operator.value || "operator@example.com",
+            decisionType: form.decision_type.value || "operator_enrichment",
+            source: form.source.value || "dashboard",
+            content: parseJsonField(form.content.value, {})
+          });
+        });
+      });
+
       document.getElementById("chat-form")?.addEventListener("submit", async (event) => {
         event.preventDefault();
         const form = event.currentTarget;
         await postInstance("/api/instances/" + form.audience_id.value + "/chat", {
           operator: form.operator.value || "operator@example.com",
           message: form.message.value || ""
+        });
+      });
+
+      document.querySelectorAll("form[data-instance-chat-form]").forEach((form) => {
+        form.addEventListener("submit", async (event) => {
+          event.preventDefault();
+          await postInstance("/api/instances/" + form.dataset.instanceChatForm + "/chat", {
+            operator: form.operator.value || "operator@example.com",
+            message: form.message.value || ""
+          });
         });
       });
     </script>`;
@@ -1796,7 +2068,7 @@ function renderAudienceImportPanel(preview) {
   </div>`;
 }
 
-function renderAudienceManagerCards(audiences, audienceInstances) {
+function renderAudienceManagerCards(audiences, audienceInstances, audienceProfiles) {
   const instancesByAudienceId = new Map((audienceInstances ?? []).map((instance) => [instance.audience_id, instance]));
   if (!audiences.length) {
     return `<div class="empty-card">No audiences are configured.</div>`;
@@ -1805,6 +2077,7 @@ function renderAudienceManagerCards(audiences, audienceInstances) {
     const instance = instancesByAudienceId.get(audience.id) ?? null;
     const runtimeConfig = instance?.runtime_config ?? {};
     const llmLabel = runtimeConfig.llm_model ?? "global default";
+    const profileState = audienceProfiles.get(audience.id) ?? {};
     return `<article class="audience-profile">
       <div>
         <strong>${escapeHtml(audience.label ?? audience.audience_key ?? audience.id)}</strong>
@@ -1818,9 +2091,121 @@ function renderAudienceManagerCards(audiences, audienceInstances) {
         </div>
         <p class="muted" style="margin-top:10px;">${escapeHtml(audience.family_context ?? audience.tone ?? "No profile summary stored.")}</p>
       </div>
+      ${renderAudienceMarblePanel(audience, profileState)}
       ${renderLaunchConfigForm(audience, instance)}
     </article>`;
   }).join("");
+}
+
+function renderAudienceMarblePanel(audience, profileState = {}) {
+  const summary = profileState.summary?.profile ?? {};
+  const debug = profileState.debug ?? null;
+  const error = profileState.error ?? "";
+  const merged = {
+    label: summary.label ?? audience.label ?? "",
+    location: summary.location ?? audience.location ?? "",
+    family_context: summary.family_context ?? audience.family_context ?? "",
+    interests: summary.interests ?? audience.interests ?? [],
+    content_pillars: summary.content_pillars ?? audience.content_pillars ?? [],
+    excluded_topics: summary.excluded_topics ?? audience.excluded_topics ?? [],
+    tone: summary.tone ?? audience.tone ?? "",
+    shopping_bias: summary.shopping_bias ?? audience.shopping_bias ?? "",
+    posting_schedule: debug?.metadata?.posting_schedule ?? audience.posting_schedule ?? "",
+    reasoning_summary: summary.reasoning_summary ?? "",
+    updated_at: summary.updated_at ?? "",
+    extra_metadata: debug?.metadata?.extra_metadata ?? audience.profile_snapshot?.extra_metadata ?? {}
+  };
+  const interestCount = debug?.memory_nodes?.interests ?? merged.interests.length;
+  const preferenceCount = debug?.memory_nodes?.preferences ?? debug?.memory_nodes?.preference_count ?? 0;
+  const decisionCount = Array.isArray(debug?.decisions) ? debug.decisions.length : 0;
+  const debugJson = error
+    ? ""
+    : escapeHtml(JSON.stringify(debug ?? {
+        profile: summary,
+        metadata: merged.extra_metadata
+      }, null, 2));
+
+  return `<section class="audience-profile-section">
+    <div class="launch-config-title">
+      <div><h3>Marble KG</h3><p class="muted">Edit seeded KG fields, inspect the stored graph, and append enrichment data for this audience.</p></div>
+      <span class="badge ${error ? "warning" : "ready"}">${escapeHtml(error ? "unavailable" : "connected")}</span>
+    </div>
+    ${error ? `<div class="empty-card">${escapeHtml(error)}</div>` : ""}
+    <div class="audience-metric-grid">
+      <div class="metric-card"><strong>Graph Summary</strong><span>${escapeHtml(merged.reasoning_summary || "No Marble summary stored.")}</span></div>
+      <div class="metric-card"><strong>Memory Nodes</strong><span>${escapeHtml(String(interestCount))} interests · ${escapeHtml(String(preferenceCount))} preferences</span></div>
+      <div class="metric-card"><strong>Decision Audit</strong><span>${escapeHtml(String(decisionCount))} stored events</span></div>
+      <div class="metric-card"><strong>Updated</strong><span>${escapeHtml(merged.updated_at || "never")}</span></div>
+    </div>
+    <div class="pill-line">
+      ${(merged.interests ?? []).map((interest) => `<span class="pill">${escapeHtml(interest)}</span>`).join("") || '<span class="pill">No interests</span>'}
+    </div>
+    <form class="profile-editor" data-profile-facts-audience-id="${escapeAttribute(audience.id)}">
+      <div class="section-title"><div><h3>KG Editor</h3><p class="muted">Use this to rewrite audience interests, tone, exclusions, and operator metadata.</p></div></div>
+      <div class="launch-grid">
+        <label>Label
+          <input name="label" value="${escapeAttribute(merged.label)}" required />
+        </label>
+        <label>Location
+          <input name="location" value="${escapeAttribute(merged.location)}" required />
+        </label>
+        <label>Family Context
+          <textarea name="family_context" rows="4">${escapeHtml(merged.family_context)}</textarea>
+        </label>
+        <label>Posting Schedule
+          <input name="posting_schedule" value="${escapeAttribute(merged.posting_schedule)}" placeholder="weekday mornings" />
+        </label>
+        <label>Interests
+          <input name="interests" value="${escapeAttribute((merged.interests ?? []).join(", "))}" />
+        </label>
+        <label>Content Pillars
+          <input name="content_pillars" value="${escapeAttribute((merged.content_pillars ?? []).join(", "))}" />
+        </label>
+        <label>Excluded Topics
+          <input name="excluded_topics" value="${escapeAttribute((merged.excluded_topics ?? []).join(", "))}" />
+        </label>
+        <label>Tone
+          <input name="tone" value="${escapeAttribute(merged.tone)}" />
+        </label>
+        <label>Shopping Bias
+          <input name="shopping_bias" value="${escapeAttribute(merged.shopping_bias)}" placeholder="quality-first" />
+        </label>
+        <label>Operator
+          <input name="operator" value="operator@example.com" />
+        </label>
+      </div>
+      <label>Extra Metadata
+        <textarea name="extra_metadata" rows="8" placeholder='{"shopping_data":["Maremagnum"],"event_websites":["https://example.com/events"],"location_notes":["Near Barceloneta"]}'>${escapeHtml(JSON.stringify(merged.extra_metadata ?? {}, null, 2))}</textarea>
+      </label>
+      <div class="button-row launch-actions">
+        <button type="submit">Sync Marble KG</button>
+      </div>
+    </form>
+    <form class="profile-editor" data-profile-decision-audience-id="${escapeAttribute(audience.id)}">
+      <div class="section-title"><div><h3>Audience Data Enrichment</h3><p class="muted">Add shopping data, event websites, location notes, or operator judgments without rewriting the seeded profile.</p></div></div>
+      <div class="launch-grid">
+        <label>Decision Type
+          <input name="decision_type" value="operator_enrichment" />
+        </label>
+        <label>Source
+          <input name="source" value="dashboard" />
+        </label>
+        <label>Operator
+          <input name="operator" value="operator@example.com" />
+        </label>
+      </div>
+      <label>Content JSON
+        <textarea name="content" rows="8" placeholder='{"shopping_data":["Passeig de Gracia"],"event_websites":["https://event-site.example"],"locations":["Barcelona waterfront"]}'>{}</textarea>
+      </label>
+      <div class="button-row launch-actions">
+        <button type="submit" class="secondary">Store Enrichment Event</button>
+      </div>
+    </form>
+    <details class="debug-panel">
+      <summary>Graph Debug</summary>
+      <pre>${debugJson || "No Marble debug payload available."}</pre>
+    </details>
+  </section>`;
 }
 
 function renderLaunchConfigForm(audience, instance) {
@@ -1846,6 +2231,18 @@ function renderLaunchConfigForm(audience, instance) {
       </label>
       <label>Profile Base URL
         <input name="plugin_base_url" value="${value("plugin_base_url", instance?.profile_base_url ?? "")}" placeholder="http://127.0.0.1:5410" />
+      </label>
+      <label>Profile Engine Image
+        <input name="profile_engine_image" value="${value("profile_engine_image")}" placeholder="ghcr.io/openclaw/marble-profile-service:latest" />
+      </label>
+      <label>Profile Engine Command
+        <input name="profile_engine_command" value="${value("profile_engine_command")}" placeholder="node api/profile-server.js" />
+      </label>
+      <label>Profile Health Path
+        <input name="profile_engine_health_path" value="${value("profile_engine_health_path", "/healthz")}" placeholder="/healthz" />
+      </label>
+      <label>Profile Storage Path
+        <input name="profile_storage_path" value="${value("profile_storage_path")}" placeholder="/srv/marble-profile" />
       </label>
       <label>LLM Provider
         <input name="llm_provider" value="${value("llm_provider", "openai")}" />

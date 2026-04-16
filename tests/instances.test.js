@@ -320,6 +320,9 @@ test("dashboard HTML renders live instance controls", async () => {
         },
         async getSummary() {
           return { ok: true, data: { profile: {} } };
+        },
+        async getDebug() {
+          return { ok: true, data: { profile: {}, metadata: {}, decisions: [], memory_nodes: {} } };
         }
       };
     },
@@ -336,6 +339,8 @@ test("dashboard HTML renders live instance controls", async () => {
   assert.equal(response.status, 200);
   assert.match(response.body, /Live Instances/);
   assert.match(response.body, /Operator Console/);
+  assert.match(response.body, /Audience Manager Feedback/);
+  assert.match(response.body, /data-instance-chat-form/);
   assert.match(response.body, /-1001111111111/);
   assert.match(response.body, /Deploy/);
 });
