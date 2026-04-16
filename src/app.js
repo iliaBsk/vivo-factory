@@ -768,40 +768,61 @@ function renderDashboard(model) {
 }
 
 function renderSetupWorkspace({ model, setupChecklist, audienceImportPanel }) {
-  return `<div class="split">
-    <section>
-      <div class="stat-row">
-        ${renderTremorMetric({ value: model.setupStatus?.ready ? "Ready" : "Open", label: "Setup state" })}
-        ${renderTremorMetric({ value: String(model.audiences.length), label: "Audiences" })}
-        ${renderTremorMetric({ value: model.setupStatus?.llm?.model ?? "unset", label: "LLM model" })}
-      </div>
-      <section class="panel">
-        <div class="panel-inner">
-          <div class="section-title">
-            <div><h2>Setup Checklist</h2><p class="muted">Supabase, schema, LLM, and dashboard readiness.</p></div>
-            <span class="muted">${escapeHtml(model.setupStatus?.ready ? "ready" : "action required")}</span>
+  return `<div>
+    <div class="mb-6">
+      <h1 class="text-lg font-semibold text-gray-900 dark:text-gray-100">Setup</h1>
+      <p class="text-sm text-gray-500 dark:text-gray-400 mt-0.5">Supabase, LLM configuration, and audience provisioning.</p>
+    </div>
+    <div class="grid grid-cols-2 gap-6 items-start">
+    <div class="space-y-5">
+      <dl class="grid grid-cols-3 divide-x divide-gray-200 dark:divide-gray-700 border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden">
+        <div class="bg-white dark:bg-gray-800 px-5 py-4">
+          <dt class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Setup state</dt>
+          <dd class="mt-1 text-2xl font-semibold tracking-tight text-gray-900 dark:text-gray-100">${escapeHtml(model.setupStatus?.ready ? "Ready" : "Open")}</dd>
+        </div>
+        <div class="bg-white dark:bg-gray-800 px-5 py-4">
+          <dt class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Audiences</dt>
+          <dd class="mt-1 text-2xl font-semibold tracking-tight text-gray-900 dark:text-gray-100">${escapeHtml(String(model.audiences.length))}</dd>
+        </div>
+        <div class="bg-white dark:bg-gray-800 px-5 py-4">
+          <dt class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">LLM model</dt>
+          <dd class="mt-1 text-xl font-semibold tracking-tight text-gray-900 dark:text-gray-100 truncate">${escapeHtml(model.setupStatus?.llm?.model ?? "unset")}</dd>
+        </div>
+      </dl>
+      <div class="bg-white dark:bg-gray-800 ring-1 ring-gray-200 dark:ring-gray-700 rounded-lg shadow-sm overflow-hidden">
+        <div class="px-5 py-4 border-b border-gray-200 dark:border-gray-700 flex items-start justify-between gap-3">
+          <div>
+            <h2 class="text-sm font-semibold text-gray-900 dark:text-gray-100">Setup Checklist</h2>
+            <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">Supabase, schema, LLM, and dashboard readiness.</p>
           </div>
-          ${setupChecklist}
+          <span class="text-xs text-gray-500 dark:text-gray-400">${escapeHtml(model.setupStatus?.ready ? "ready" : "action required")}</span>
         </div>
-      </section>
-    </section>
-    <section class="panel">
-      <div class="panel-inner">
-        <div class="section-title">
-          <div><h2>Create Audiences</h2><p class="muted">Import audience.md or create one investigated profile. Instances are not prepared until launch.</p></div>
+        <div class="px-5 py-4">${setupChecklist}</div>
+      </div>
+    </div>
+    <div class="space-y-5">
+      <div class="bg-white dark:bg-gray-800 ring-1 ring-gray-200 dark:ring-gray-700 rounded-lg shadow-sm overflow-hidden">
+        <div class="px-5 py-4 border-b border-gray-200 dark:border-gray-700">
+          <h2 class="text-sm font-semibold text-gray-900 dark:text-gray-100">Create Audiences</h2>
+          <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">Import audience.md or create one investigated profile. Instances are not prepared until launch.</p>
         </div>
-        ${audienceImportPanel}
-        <div class="plain-section" style="margin-top:22px;">
-          <h3>Create One Audience</h3>
-          <form id="create-audience-form" class="filter-grid">
-            <label>Raw audience brief, sources, photos, accounts
-              <textarea name="raw_text" placeholder="Describe the audience. Add Twitter accounts, similar photos, references, and constraints."></textarea>
-            </label>
-            <button type="submit">Run LLM Investigation</button>
-          </form>
+        <div class="px-5 py-4 space-y-5">
+          ${audienceImportPanel}
+          <div class="border-t border-gray-200 dark:border-gray-700 pt-5">
+            <h3 class="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-3">Create One Audience</h3>
+            <form id="create-audience-form" class="space-y-3">
+              <label class="block">
+                <span class="block text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-1.5">Raw audience brief, sources, photos, accounts</span>
+                <textarea name="raw_text" rows="5" placeholder="Describe the audience. Add Twitter accounts, similar photos, references, and constraints."
+                          class="block w-full rounded-md border-0 py-1.5 px-3 text-sm text-gray-900 dark:text-gray-100 dark:bg-gray-700 ring-1 ring-inset ring-gray-300 dark:ring-gray-600 placeholder:text-gray-400 focus:ring-2 focus:ring-blue-500 focus:outline-none resize-y"></textarea>
+              </label>
+              <button type="submit" class="rounded-md bg-gray-900 dark:bg-gray-100 px-3 py-1.5 text-sm font-medium text-white dark:text-gray-900 hover:bg-gray-700 transition-colors cursor-pointer">Run LLM Investigation</button>
+            </form>
+          </div>
         </div>
       </div>
-    </section>
+    </div>
+  </div>
   </div>`;
 }
 
@@ -1749,14 +1770,20 @@ function renderAssetCard(story, asset) {
 
 function renderSetupChecklist(setupStatus) {
   const checks = setupStatus?.checks ?? {};
-  return `<ul class="compact">
-    ${Object.entries(checks).map(([key, value]) => `<li><strong>${escapeHtml(humanizeCheckName(key))}</strong> <span>${escapeHtml(value?.ok ? "ok" : "missing")}</span> <span>${escapeHtml(value?.message ?? "")}</span></li>`).join("")}
+  return `<ul class="divide-y divide-gray-100 dark:divide-gray-700">
+    ${Object.entries(checks).map(([key, value]) => `<li class="flex items-start justify-between gap-3 py-2.5">
+      <span class="text-sm text-gray-900 dark:text-gray-100 capitalize">${escapeHtml(humanizeCheckName(key))}</span>
+      <div class="flex items-center gap-2 text-right">
+        <span class="${value?.ok ? "inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400" : "inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400"}">${escapeHtml(value?.ok ? "ok" : "missing")}</span>
+        <span class="text-xs text-gray-500 dark:text-gray-400">${escapeHtml(value?.message ?? "")}</span>
+      </div>
+    </li>`).join("")}
   </ul>`;
 }
 
 function renderAudienceImportPanel(preview) {
   if (!preview) {
-    return `<div class="empty-card">Audience import is not configured.</div>`;
+    return `<div class="rounded-lg border border-dashed border-gray-200 dark:border-gray-700 p-5 text-sm text-gray-500 dark:text-gray-400">Audience import is not configured.</div>`;
   }
   const sourceLabel = preview.source_file_name ?? "No audience source";
   const itemCount = preview.items?.length ?? preview.item_count ?? 0;
@@ -1765,59 +1792,37 @@ function renderAudienceImportPanel(preview) {
     : preview.import_required
       ? `${itemCount} audience updates ready to import`
       : "No audience import required";
-  return `<div class="empty-card">
-    <strong>Source</strong>
-    <div class="muted">${escapeHtml(sourceLabel)}</div>
-    <div class="muted">LLM expansion runs before Supabase write.</div>
-    <div class="muted">${summary}</div>
-    ${preview.import_required ? `<div class="button-row" style="margin-top:10px;"><button type="button" id="import-audience-file-button">Import ${escapeHtml(sourceLabel)}</button></div>` : ""}
+  return `<div class="rounded-lg border border-gray-200 dark:border-gray-700 p-4 space-y-2">
+    <p class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Source</p>
+    <p class="text-sm font-medium text-gray-900 dark:text-gray-100">${escapeHtml(sourceLabel)}</p>
+    <p class="text-xs text-gray-500 dark:text-gray-400">LLM expansion runs before Supabase write.</p>
+    <p class="text-xs text-gray-500 dark:text-gray-400">${summary}</p>
+    ${preview.import_required ? `<div class="pt-1"><button type="button" id="import-audience-file-button" class="rounded-md bg-gray-900 dark:bg-gray-100 px-3 py-1.5 text-sm font-medium text-white dark:text-gray-900 hover:bg-gray-700 transition-colors cursor-pointer">Import ${escapeHtml(sourceLabel)}</button></div>` : ""}
   </div>`;
 }
 
 function renderLaunchConfigForm(audience, instance) {
   const runtime = instance?.runtime_config ?? {};
   const value = (key, fallback = "") => escapeAttribute(runtime[key] ?? instance?.[key] ?? fallback);
-  return `<form class="launch-config" data-launch-audience-id="${escapeAttribute(audience.id)}">
-    <div class="launch-grid">
-      <label>Telegram Bot Token
-        <input name="telegram_bot_token" value="${value("telegram_bot_token")}" autocomplete="off" required />
-      </label>
-      <label>Telegram Channel ID
-        <input name="telegram_chat_id" value="${value("telegram_chat_id")}" placeholder="-100..." required />
-      </label>
-      <label>Telegram Report ID
-        <input name="telegram_report_chat_id" value="${value("telegram_report_chat_id", runtime.telegram_chat_id ?? "")}" placeholder="-100..." />
-      </label>
-      <label>OpenClaw Admin URL
-        <input name="openclaw_admin_url" value="${value("openclaw_admin_url")}" placeholder="http://127.0.0.1:7610" />
-      </label>
-      <label>Profile Base URL
-        <input name="plugin_base_url" value="${value("plugin_base_url", instance?.profile_base_url ?? "")}" placeholder="http://127.0.0.1:5410" />
-      </label>
-      <label>Profile Engine Image
-        <input name="profile_engine_image" value="${value("profile_engine_image")}" placeholder="ghcr.io/openclaw/marble-profile-service:latest" />
-      </label>
-      <label>Profile Engine Command
-        <input name="profile_engine_command" value="${value("profile_engine_command")}" placeholder="node api/profile-server.js" />
-      </label>
-      <label>Profile Health Path
-        <input name="profile_engine_health_path" value="${value("profile_engine_health_path", "/healthz")}" placeholder="/healthz" />
-      </label>
-      <label>Profile Storage Path
-        <input name="profile_storage_path" value="${value("profile_storage_path")}" placeholder="/srv/marble-profile" />
-      </label>
-      <label>LLM Provider
-        <input name="llm_provider" value="${value("llm_provider", "openai")}" />
-      </label>
-      <label>LLM Model
-        <input name="llm_model" value="${value("llm_model")}" placeholder="global default" />
-      </label>
-      <label>LLM Base URL
-        <input name="llm_base_url" value="${value("llm_base_url")}" placeholder="global default" />
-      </label>
+  const inputClass = "block w-full rounded-md border-0 py-1.5 px-3 text-sm text-gray-900 dark:text-gray-100 dark:bg-gray-700 ring-1 ring-inset ring-gray-300 dark:ring-gray-600 placeholder:text-gray-400 focus:ring-2 focus:ring-blue-500 focus:outline-none";
+  const labelClass = "block text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-1.5";
+  return `<form class="space-y-4" data-launch-audience-id="${escapeAttribute(audience.id)}">
+    <div class="grid grid-cols-2 gap-3">
+      <label class="block"><span class="${labelClass}">Telegram Bot Token</span><input name="telegram_bot_token" value="${value("telegram_bot_token")}" autocomplete="off" required class="${inputClass}" /></label>
+      <label class="block"><span class="${labelClass}">Telegram Channel ID</span><input name="telegram_chat_id" value="${value("telegram_chat_id")}" placeholder="-100..." required class="${inputClass}" /></label>
+      <label class="block"><span class="${labelClass}">Telegram Report ID</span><input name="telegram_report_chat_id" value="${value("telegram_report_chat_id", runtime.telegram_chat_id ?? "")}" placeholder="-100..." class="${inputClass}" /></label>
+      <label class="block"><span class="${labelClass}">OpenClaw Admin URL</span><input name="openclaw_admin_url" value="${value("openclaw_admin_url")}" placeholder="http://127.0.0.1:7610" class="${inputClass}" /></label>
+      <label class="block"><span class="${labelClass}">Profile Base URL</span><input name="plugin_base_url" value="${value("plugin_base_url", instance?.profile_base_url ?? "")}" placeholder="http://127.0.0.1:5410" class="${inputClass}" /></label>
+      <label class="block"><span class="${labelClass}">Profile Engine Image</span><input name="profile_engine_image" value="${value("profile_engine_image")}" placeholder="ghcr.io/openclaw/marble-profile-service:latest" class="${inputClass}" /></label>
+      <label class="block"><span class="${labelClass}">Profile Engine Command</span><input name="profile_engine_command" value="${value("profile_engine_command")}" placeholder="node api/profile-server.js" class="${inputClass}" /></label>
+      <label class="block"><span class="${labelClass}">Profile Health Path</span><input name="profile_engine_health_path" value="${value("profile_engine_health_path", "/healthz")}" placeholder="/healthz" class="${inputClass}" /></label>
+      <label class="block"><span class="${labelClass}">Profile Storage Path</span><input name="profile_storage_path" value="${value("profile_storage_path")}" placeholder="/srv/marble-profile" class="${inputClass}" /></label>
+      <label class="block"><span class="${labelClass}">LLM Provider</span><input name="llm_provider" value="${value("llm_provider", "openai")}" class="${inputClass}" /></label>
+      <label class="block"><span class="${labelClass}">LLM Model</span><input name="llm_model" value="${value("llm_model")}" placeholder="global default" class="${inputClass}" /></label>
+      <label class="block"><span class="${labelClass}">LLM Base URL</span><input name="llm_base_url" value="${value("llm_base_url")}" placeholder="global default" class="${inputClass}" /></label>
     </div>
-    <div class="button-row launch-actions">
-      <button type="submit">Launch Deployment</button>
+    <div class="flex justify-end">
+      <button type="submit" class="rounded-md bg-gray-900 dark:bg-gray-100 px-3 py-1.5 text-sm font-medium text-white dark:text-gray-900 hover:bg-gray-700 transition-colors cursor-pointer">Launch Deployment</button>
     </div>
   </form>`;
 }
