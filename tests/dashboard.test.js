@@ -911,7 +911,7 @@ test("audiences workspace formats structured Marble fields and uses a three-plan
   });
 
   assert.equal(response.status, 200);
-  assert.match(response.body, /audiences-shell/);
+  assert.match(response.body, /Audiences/);
   assert.match(response.body, /Profile Canvas/);
   assert.match(response.body, /Knowledge Inputs/);
   assert.match(response.body, /Runtime Controls/);

@@ -742,7 +742,7 @@ function renderDashboard(model) {
 
       <div class="flex flex-1 flex-col overflow-hidden min-w-0">
         <main class="flex-1 overflow-y-auto" data-ui-framework="${TREMOR_DASHBOARD_FRAMEWORK}">
-          <div class="workspace px-6 py-6">
+          <div class="px-6 py-6">
             ${workspace}
           </div>
         </main>
@@ -1046,7 +1046,7 @@ function renderStoryDetailDrawer({ story, assetCards, publicationItems, reviewIt
 }
 
 function renderAudiencesWorkspace({ model, deployments, selectedAudience, selectedAudienceInstance, selectedProfileState, selectedDeployment }) {
-  return `<div class="audiences-shell">
+  return `<div>
     <div class="mb-6">
       <h1 class="text-lg font-semibold text-gray-900 dark:text-gray-100">Audiences</h1>
       <p class="text-sm text-gray-500 dark:text-gray-400 mt-0.5">Marble profile state, enrichment, and runtime delivery.</p>
