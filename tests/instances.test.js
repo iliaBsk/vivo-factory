@@ -338,8 +338,8 @@ test("dashboard HTML renders live instance controls", async () => {
 
   assert.equal(response.status, 200);
   assert.match(response.body, /Audience Directory/);
-  assert.match(response.body, /Selected Deployment/);
-  assert.match(response.body, /Audience Manager Feedback/);
+  assert.match(response.body, /Runtime Snapshot/);
+  assert.match(response.body, /Manager Console/);
   assert.match(response.body, /data-instance-chat-form/);
   assert.match(response.body, /-1001111111111/);
   assert.match(response.body, /Deploy/);
