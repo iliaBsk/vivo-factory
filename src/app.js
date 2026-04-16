@@ -4,7 +4,7 @@ import {
   renderTremorCard,
   renderTremorFrameworkMeta,
   renderTremorMetric,
-  renderTremorTabs
+  renderSidebarNav
 } from "./tremor-dashboard.js";
 
 export function createApp(options) {
@@ -2181,11 +2181,7 @@ function renderDeploymentIndex(deployments) {
 }
 
 function renderWorkspaceTabs(activeTab) {
-  return renderTremorTabs(activeTab, ["setup", "stories", "audiences"].map((tab) => ({
-    id: tab,
-    label: tab[0].toUpperCase() + tab.slice(1),
-    href: tab === "setup" ? "/" : `/?tab=${tab}`
-  })));
+  return renderSidebarNav(activeTab);
 }
 
 function renderDashboardScript() {

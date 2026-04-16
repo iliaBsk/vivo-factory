@@ -602,7 +602,7 @@ test("root HTML renders setup-first audience manager controls when setup is inco
   });
 
   assert.equal(response.status, 200);
-  assert.match(response.body, /workspace-tab active[^>]*>Setup/);
+  assert.match(response.body, /aria-current="page"[^>]*>Setup/);
   assert.match(response.body, /href="\/\?tab=stories"/);
   assert.match(response.body, /href="\/\?tab=audiences"/);
   assert.match(response.body, /Setup Checklist/);
@@ -703,10 +703,9 @@ test("stories workspace renders a Tremor-style table without opening details by 
   });
 
   assert.equal(response.status, 200);
-  assert.match(response.body, /workspace-tab active[^>]*>Stories/);
+  assert.match(response.body, /aria-current="page"[^>]*>Stories/);
   assert.match(response.body, /data-ui-framework="tremor-raw-dashboard"/);
   assert.match(response.body, /name="ui-framework" content="tremor-raw-dashboard"/);
-  assert.match(response.body, /data-tremor-component="TabNavigation"/);
   assert.match(response.body, /Stories Table/);
   assert.match(response.body, /data-tremor-component="Table"/);
   assert.match(response.body, /data-theme="light"/);
@@ -824,7 +823,7 @@ test("audiences workspace renders audience data and launch controls after audien
   });
 
   assert.equal(response.status, 200);
-  assert.match(response.body, /workspace-tab active[^>]*>Audiences/);
+  assert.match(response.body, /aria-current="page"[^>]*>Audiences/);
   assert.match(response.body, /Audience Directory/);
   assert.match(response.body, /Profile Canvas/);
   assert.match(response.body, /Knowledge Inputs/);
