@@ -825,12 +825,15 @@ test("audiences workspace renders audience data and launch controls after audien
 
   assert.equal(response.status, 200);
   assert.match(response.body, /workspace-tab active[^>]*>Audiences/);
+  assert.match(response.body, /Audience Directory/);
+  assert.match(response.body, /Audience Workspace/);
+  assert.match(response.body, /Profile State/);
+  assert.match(response.body, /Marble Editor/);
+  assert.match(response.body, /Enrichment Feed/);
+  assert.match(response.body, /Delivery Runtime/);
   assert.match(response.body, /Barcelona Family/);
-  assert.match(response.body, /Deployment Config/);
-  assert.match(response.body, /Marble KG/);
-  assert.match(response.body, /Graph Summary/);
-  assert.match(response.body, /Graph Debug/);
-  assert.match(response.body, /Audience Data Enrichment/);
+  assert.match(response.body, /Reasoning Summary/);
+  assert.match(response.body, /Selected Deployment/);
   assert.match(response.body, /Audience Manager Feedback/);
   assert.match(response.body, /name="telegram_chat_id"/);
   assert.match(response.body, /name="telegram_bot_token"/);
@@ -842,7 +845,6 @@ test("audiences workspace renders audience data and launch controls after audien
   assert.match(response.body, /name="shopping_bias"/);
   assert.match(response.body, /name="extra_metadata"/);
   assert.match(response.body, /Launch Deployment/);
-  assert.match(response.body, /Deployments/);
   assert.match(response.body, /docker compose -f generated\/docker-compose\.yml exec/);
   assert.doesNotMatch(response.body, /Deploy All/);
 });

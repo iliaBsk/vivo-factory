@@ -471,6 +471,7 @@ async function handleRequest(context) {
     const instances = instanceManager && activeTab === "audiences" ? instanceManager.listInstances() : [];
     return html(200, renderDashboard({
       activeTab,
+      selectedAudienceId: request.query?.audience_id ?? "",
       filters,
       setupStatus,
       audienceImportPreview,
@@ -648,9 +649,15 @@ function normalizeLaunchRuntimeConfig(runtimeConfig = {}) {
 function renderDashboard(model) {
   const activeTab = model.activeTab ?? "setup";
   const setupChecklist = renderSetupChecklist(model.setupStatus);
-  const audienceRows = renderAudienceManagerCards(model.audiences, model.audienceInstances ?? [], model.audienceProfiles ?? new Map());
   const audienceImportPanel = renderAudienceImportPanel(model.audienceImportPreview);
   const storyTableRows = renderStoryTableRows(model.stories, model.filters, model.activeStory?.id ?? "");
+  const deployments = collectDeploymentInstances(model.audienceInstances ?? [], model.instances ?? []);
+  const selectedAudience = selectAudience(model.audiences ?? [], model.selectedAudienceId);
+  const selectedProfileState = selectedAudience ? model.audienceProfiles?.get(selectedAudience.id) ?? {} : {};
+  const selectedAudienceInstance = selectedAudience
+    ? (model.audienceInstances ?? []).find((instance) => instance.audience_id === selectedAudience.id) ?? null
+    : null;
+  const selectedDeployment = selectAudienceDeployment(deployments, selectedAudience);
 
   const audienceOptions = model.audiences.map((audience) => `<option value="${escapeAttribute(audience.id)}"${audience.id === model.filters.audience_id ? " selected" : ""}>${escapeHtml(audience.label)}</option>`).join("");
   const assetCards = model.activeStory
@@ -668,7 +675,6 @@ function renderDashboard(model) {
   const analyticsItems = model.analyticsItems.length
     ? model.analyticsItems.map((item) => `<li><strong>${escapeHtml(item.story_id ?? item.topic ?? "feedback")}</strong> <span>${escapeHtml(String(item.engagement_score ?? 0))}</span></li>`).join("")
     : "<li>No analytics snapshots</li>";
-  const liveInstances = renderDeploymentInstances(model.audienceInstances ?? [], model.instances ?? []);
 
   const audience = model.activeStory?.audience;
   const audienceFields = audience ? renderAudienceFields(audience) : `<p class="muted">No audience loaded.</p>`;
@@ -709,8 +715,11 @@ function renderDashboard(model) {
     : activeTab === "audiences"
       ? renderAudiencesWorkspace({
           model,
-          audienceRows,
-          liveInstances
+          deployments,
+          selectedAudience,
+          selectedAudienceInstance,
+          selectedProfileState,
+          selectedDeployment
         })
       : renderSetupWorkspace({
           model,
@@ -1054,61 +1063,126 @@ function renderDashboard(model) {
       }
       .stat strong { display: block; font-size: 28px; letter-spacing: -0.04em; }
       .stat span { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; }
-      .audiences-layout {
+      .eyebrow {
+        color: var(--muted);
+        font-size: 11px;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        margin-bottom: 10px;
+      }
+      .audiences-shell {
         display: grid;
-        grid-template-columns: minmax(620px, 1.35fr) minmax(360px, 0.65fr);
+        grid-template-columns: 280px minmax(0, 1fr) 360px;
         gap: 24px;
         align-items: start;
       }
-      .audience-workspace-main {
+      .audience-directory-panel,
+      .audience-workspace-panel,
+      .audience-inspector-rail > .panel {
         min-width: 0;
       }
-      .audience-profile {
+      .audience-directory-list,
+      .audience-canvas,
+      .deployment-index {
         display: grid;
-        grid-template-columns: minmax(240px, 0.8fr) minmax(360px, 1.2fr);
-        gap: 24px;
-        padding: 22px 0;
-        border-bottom: 1px solid var(--line);
-        align-items: start;
-        transition: border-color 180ms ease, transform 180ms ease;
+        gap: 12px;
       }
-      .audience-profile:first-child { padding-top: 0; }
-      .audience-profile:hover {
-        border-color: var(--line-strong);
+      .audience-directory-row {
+        display: grid;
+        gap: 10px;
+        padding: 16px;
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        background: var(--surface-muted);
+        transition: transform 160ms ease, border-color 160ms ease, background 160ms ease;
+      }
+      .audience-directory-row:hover,
+      .audience-directory-row.active {
+        border-color: var(--accent);
+        background: color-mix(in srgb, var(--accent) 7%, var(--surface));
         transform: translateY(-1px);
       }
-      .audience-profile-section,
-      .profile-editor,
+      .audience-directory-head {
+        display: flex;
+        align-items: start;
+        justify-content: space-between;
+        gap: 10px;
+      }
+      .audience-directory-meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px 12px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+      .audience-hero {
+        display: grid;
+        grid-template-columns: minmax(0, 1.25fr) minmax(240px, 0.75fr);
+        gap: 18px;
+        padding-bottom: 18px;
+        border-bottom: 1px solid var(--line);
+      }
+      .audience-hero-pills {
+        align-content: start;
+        justify-content: start;
+      }
+      .audience-summary-strip {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 1px;
+        border: 1px solid var(--line);
+        border-radius: 20px;
+        overflow: hidden;
+      }
+      .audience-section,
+      .profile-form,
       .debug-panel {
         display: grid;
         gap: 14px;
-        padding: 16px;
+        padding: 18px;
         border: 1px solid var(--line);
-        border-radius: 14px;
+        border-radius: 18px;
         background: var(--surface-muted);
       }
-      .audience-metric-grid {
+      .audience-state-grid,
+      .audience-tag-grid {
         display: grid;
         grid-template-columns: repeat(2, minmax(0, 1fr));
-        gap: 10px;
+        gap: 12px;
       }
-      .metric-card {
+      .state-card {
         display: grid;
-        gap: 6px;
-        padding: 12px;
+        gap: 10px;
+        padding: 14px;
         border: 1px solid var(--line);
-        border-radius: 14px;
+        border-radius: 16px;
         background: var(--surface);
       }
-      .metric-card strong {
-        font-size: 12px;
-        letter-spacing: 0.06em;
-        text-transform: uppercase;
+      .state-card p {
+        margin: 0;
+        line-height: 1.5;
       }
-      .metric-card span {
+      .state-label {
+        font-size: 12px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
         color: var(--muted);
+      }
+      .state-list {
+        list-style: none;
+        padding: 0;
+        margin: 0;
+        display: grid;
+        gap: 10px;
+      }
+      .state-list li {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
         font-size: 13px;
-        line-height: 1.45;
+      }
+      .state-list li span {
+        color: var(--muted);
       }
       .debug-panel summary {
         cursor: pointer;
@@ -1142,19 +1216,7 @@ function renderDashboard(model) {
       .launch-config {
         display: grid;
         gap: 14px;
-        padding: 16px;
-        border: 1px solid var(--line);
-        border-radius: 14px;
-        background: var(--surface-muted);
-      }
-      .launch-config-title {
-        display: flex;
-        align-items: start;
-        justify-content: space-between;
-        gap: 12px;
-      }
-      .launch-config-title p {
-        margin-top: 4px;
+        padding: 0;
       }
       .launch-grid {
         display: grid;
@@ -1164,7 +1226,7 @@ function renderDashboard(model) {
       .launch-actions {
         justify-content: end;
       }
-      .instance-card {
+      .deployment-inspector {
         display: grid;
         gap: 12px;
       }
@@ -1189,7 +1251,6 @@ function renderDashboard(model) {
       .command-list {
         display: grid;
         gap: 8px;
-        margin-top: 12px;
       }
       .command-block {
         display: grid;
@@ -1208,6 +1269,12 @@ function renderDashboard(model) {
         max-height: 240px;
         object-fit: cover;
         border-radius: 14px;
+      }
+      .deployment-index-row {
+        display: grid;
+        gap: 4px;
+        padding: 12px 0;
+        border-bottom: 1px solid var(--line);
       }
       .tremor-card {
         background: var(--surface);
@@ -1357,16 +1424,23 @@ function renderDashboard(model) {
         from { opacity: 0; }
         to { opacity: 1; }
       }
-      @media (max-width: 1080px) {
-        main { padding: 18px 16px 44px; }
-        .topbar, .split, .workspace-grid, .audience-profile {
-          grid-template-columns: 1fr;
-          display: grid;
-        }
-        .audiences-layout, .launch-grid { grid-template-columns: 1fr; }
-        .tremor-filterbar { grid-template-columns: 1fr; }
-        .story-detail-drawer {
-          inset: 8px;
+          @media (max-width: 1080px) {
+            main { padding: 18px 16px 44px; }
+            .topbar, .split, .workspace-grid {
+              grid-template-columns: 1fr;
+              display: grid;
+            }
+            .audiences-shell,
+            .audience-hero,
+            .audience-summary-strip,
+            .audience-state-grid,
+            .audience-tag-grid,
+            .launch-grid {
+              grid-template-columns: 1fr;
+            }
+            .tremor-filterbar { grid-template-columns: 1fr; }
+            .story-detail-drawer {
+              inset: 8px;
           width: auto;
           min-width: 0;
         }
@@ -1594,46 +1668,31 @@ function renderStoryDetailDrawer({ story, assetCards, publicationItems, reviewIt
 </div>`;
 }
 
-function renderAudiencesWorkspace({ model, audienceRows, liveInstances }) {
-  return `<div class="audiences-layout">
-    <section class="panel audience-workspace-main">
+function renderAudiencesWorkspace({ model, deployments, selectedAudience, selectedAudienceInstance, selectedProfileState, selectedDeployment }) {
+  return `<div class="audiences-shell">
+    <section class="panel audience-directory-panel">
       <div class="panel-inner">
         <div class="section-title">
-          <div><h2>Audiences</h2><p class="muted">Approved Supabase profiles. Deployment config is captured at launch and written to the generated env file.</p></div>
+          <div><h2>Audience Directory</h2><p class="muted">Select one audience to inspect Marble state, enrich profile data, and manage runtime delivery.</p></div>
           <span class="muted">${escapeHtml(String(model.audiences.length))} audiences</span>
         </div>
-        <div class="audience-list">${audienceRows}</div>
+        ${renderAudienceDirectory(model.audiences ?? [], deployments, model.audienceProfiles ?? new Map(), selectedAudience?.id ?? "")}
       </div>
     </section>
-    <section class="workspace-stack">
-      <section class="panel">
-        <div class="panel-inner">
-          <div class="section-title"><div><h2>Deployments</h2><p class="muted">Live Instances, generated env files, and exact CLI commands.</p></div></div>
-          <ul class="compact instance-list">${liveInstances}</ul>
-        </div>
-      </section>
-      <section class="panel">
-        <div class="panel-inner">
-          <div class="section-title"><h2>Operator Console</h2></div>
-          <form id="chat-form" class="filter-grid">
-            <label>Audience ID
-              <input name="audience_id" placeholder="barcelona-family" />
-            </label>
-            <label>Message
-              <textarea name="message" rows="4" placeholder="status report"></textarea>
-            </label>
-            <label>Operator
-              <input name="operator" placeholder="operator@example.com" />
-            </label>
-            <button type="submit">Send To Instance</button>
-          </form>
-        </div>
-      </section>
+    <section class="panel audience-workspace-panel">
+      <div class="panel-inner">
+        <div class="section-title">
+          <div><h2>Audience Workspace</h2><p class="muted">Profile state first, edit surfaces second, delivery runtime last.</p></div></div>
+        ${renderAudienceWorkspaceCanvas(selectedAudience, selectedAudienceInstance, selectedProfileState)}
+      </div>
+    </section>
+    <section class="workspace-stack audience-inspector-rail">
+      ${renderAudienceInspector(selectedAudience, selectedDeployment, deployments)}
     </section>
   </div>`;
 }
 
-function renderDeploymentInstances(audienceInstances, staticInstances) {
+function collectDeploymentInstances(audienceInstances, staticInstances) {
   const deployments = new Map();
   for (const instance of audienceInstances ?? []) {
     deployments.set(instance.service_name ?? instance.instance_key ?? instance.id, normalizeDeploymentInstance(instance, "created"));
@@ -1641,11 +1700,7 @@ function renderDeploymentInstances(audienceInstances, staticInstances) {
   for (const instance of staticInstances ?? []) {
     deployments.set(instance.service_name ?? instance.instance_key ?? instance.audience_id, normalizeDeploymentInstance(instance, "static"));
   }
-  const items = [...deployments.values()];
-  if (!items.length) {
-    return `<li class="instance-card"><strong>No deployments</strong><div class="muted">Create an audience, add runtime config, then launch deployment.</div></li>`;
-  }
-  return items.map(renderDeploymentInstance).join("");
+  return [...deployments.values()];
 }
 
 function normalizeDeploymentInstance(instance, source) {
@@ -1672,7 +1727,267 @@ function normalizeDeploymentInstance(instance, source) {
   };
 }
 
-function renderDeploymentInstance(instance) {
+function selectAudience(audiences, selectedAudienceId) {
+  if (!audiences?.length) {
+    return null;
+  }
+  return audiences.find((audience) => audience.id === selectedAudienceId) ?? audiences[0];
+}
+
+function selectAudienceDeployment(deployments, audience) {
+  if (!deployments?.length) {
+    return null;
+  }
+  if (!audience) {
+    return deployments[0];
+  }
+  return deployments.find((deployment) => deploymentMatchesAudience(deployment, audience)) ?? deployments[0];
+}
+
+function deploymentMatchesAudience(deployment, audience) {
+  const audienceKey = audience?.audience_key ?? audience?.id ?? "";
+  return [
+    deployment.audience_id,
+    deployment.audience_key
+  ].includes(audience.id) || [
+    deployment.audience_id,
+    deployment.audience_key
+  ].includes(audienceKey);
+}
+
+function renderAudienceDirectory(audiences, deployments, audienceProfiles, selectedAudienceId) {
+  if (!audiences.length) {
+    return `<div class="empty-card">No audiences are configured.</div>`;
+  }
+
+  return `<div class="audience-directory-list">
+    ${audiences.map((audience) => {
+      const deployment = deployments.find((item) => deploymentMatchesAudience(item, audience)) ?? null;
+      const summary = audienceProfiles.get(audience.id)?.summary?.profile ?? {};
+      const href = buildAudienceWorkspaceHref(audience.id);
+      const isActive = audience.id === selectedAudienceId;
+      return `<a class="audience-directory-row${isActive ? " active" : ""}" href="${escapeAttribute(href)}" data-audience-link="${escapeAttribute(audience.id)}">
+        <div class="audience-directory-head">
+          <strong>${escapeHtml(audience.label ?? audience.audience_key ?? audience.id)}</strong>
+          ${renderTremorBadge(deployment?.status ?? audience.status ?? "draft", { tone: deployment?.status === "active" ? "success" : "neutral" })}
+        </div>
+        <div class="muted">${escapeHtml(audience.audience_key ?? audience.id)}</div>
+        <div class="audience-directory-meta">
+          <span>${escapeHtml(audience.location ?? "Location unset")}</span>
+          <span>${escapeHtml(deployment?.service_name ?? "Instance not launched")}</span>
+        </div>
+        <p class="muted">${escapeHtml(summary.reasoning_summary ?? audience.family_context ?? "No Marble summary stored.")}</p>
+      </a>`;
+    }).join("")}
+  </div>`;
+}
+
+function renderAudienceWorkspaceCanvas(audience, instance, profileState = {}) {
+  if (!audience) {
+    return `<div class="empty-card">Create an audience to unlock Marble profile editing and runtime launch controls.</div>`;
+  }
+
+  const summary = profileState.summary?.profile ?? {};
+  const debug = profileState.debug ?? null;
+  const error = profileState.error ?? "";
+  const merged = {
+    label: summary.label ?? audience.label ?? "",
+    location: summary.location ?? audience.location ?? "",
+    family_context: summary.family_context ?? audience.family_context ?? "",
+    interests: summary.interests ?? audience.interests ?? [],
+    content_pillars: summary.content_pillars ?? audience.content_pillars ?? [],
+    excluded_topics: summary.excluded_topics ?? audience.excluded_topics ?? [],
+    tone: summary.tone ?? audience.tone ?? "",
+    shopping_bias: summary.shopping_bias ?? audience.shopping_bias ?? "",
+    posting_schedule: debug?.metadata?.posting_schedule ?? audience.posting_schedule ?? "",
+    reasoning_summary: summary.reasoning_summary ?? "",
+    updated_at: summary.updated_at ?? "",
+    extra_metadata: debug?.metadata?.extra_metadata ?? audience.profile_snapshot?.extra_metadata ?? {}
+  };
+  const interestCount = debug?.memory_nodes?.interests ?? merged.interests.length;
+  const preferenceCount = debug?.memory_nodes?.preferences ?? debug?.memory_nodes?.preference_count ?? 0;
+  const decisionCount = Array.isArray(debug?.decisions) ? debug.decisions.length : 0;
+  const debugJson = error
+    ? ""
+    : escapeHtml(JSON.stringify(debug ?? {
+        profile: summary,
+        metadata: merged.extra_metadata
+      }, null, 2));
+
+  return `<div class="audience-canvas">
+    <section class="audience-hero">
+      <div>
+        <div class="eyebrow">Selected Audience</div>
+        <h2>${escapeHtml(audience.label ?? audience.audience_key ?? audience.id)}</h2>
+        <p class="muted">${escapeHtml(merged.family_context || "Family context is not set yet.")}</p>
+      </div>
+      <div class="pill-line audience-hero-pills">
+        <span class="pill">${escapeHtml(audience.audience_key ?? audience.id)}</span>
+        <span class="pill">${escapeHtml(merged.location || "Location unset")}</span>
+        <span class="pill">${escapeHtml(audience.language ?? "Language unset")}</span>
+        <span class="pill">${escapeHtml(instance?.status ?? "not launched")}</span>
+      </div>
+    </section>
+
+    <section class="audience-summary-strip">
+      ${renderTremorMetric({ value: merged.interests.length || 0, label: "Tracked Interests" })}
+      ${renderTremorMetric({ value: preferenceCount || 0, label: "Preferences" })}
+      ${renderTremorMetric({ value: decisionCount || 0, label: "Decision Events" })}
+      ${renderTremorMetric({ value: merged.updated_at ? formatShortDate(merged.updated_at) : "never", label: "Last Sync" })}
+    </section>
+
+    <section class="audience-section" data-tremor-component="Card">
+      <div class="section-title">
+        <div><h3>Profile State</h3><p class="muted">Current Marble interpretation of this audience.</p></div>
+        <span class="badge ${error ? "warning" : "ready"}">${escapeHtml(error ? "Marble unavailable" : "Marble connected")}</span>
+      </div>
+      ${error ? `<div class="empty-card">${escapeHtml(error)}</div>` : ""}
+      <div class="audience-state-grid">
+        <div class="state-card">
+          <span class="state-label">Reasoning Summary</span>
+          <p>${escapeHtml(merged.reasoning_summary || "No Marble summary stored.")}</p>
+        </div>
+        <div class="state-card">
+          <span class="state-label">Audience Shape</span>
+          <ul class="state-list">
+            <li><strong>Tone</strong><span>${escapeHtml(merged.tone || "unset")}</span></li>
+            <li><strong>Shopping Bias</strong><span>${escapeHtml(merged.shopping_bias || "unset")}</span></li>
+            <li><strong>Posting Schedule</strong><span>${escapeHtml(merged.posting_schedule || "unset")}</span></li>
+            <li><strong>Memory Nodes</strong><span>${escapeHtml(String(interestCount))} interests</span></li>
+          </ul>
+        </div>
+      </div>
+      <div class="audience-tag-grid">
+        ${renderAudienceTagBlock("Interests", merged.interests)}
+        ${renderAudienceTagBlock("Content Pillars", merged.content_pillars)}
+        ${renderAudienceTagBlock("Excluded Topics", merged.excluded_topics)}
+      </div>
+    </section>
+
+    <section class="audience-section" data-tremor-component="Card">
+      <div class="section-title">
+        <div><h3>Marble Editor</h3><p class="muted">Edit seeded KG fields without leaving the audience workspace.</p></div>
+      </div>
+      <form class="profile-form" data-profile-facts-audience-id="${escapeAttribute(audience.id)}">
+        <div class="launch-grid">
+          <label>Label
+            <input name="label" value="${escapeAttribute(merged.label)}" required />
+          </label>
+          <label>Location
+            <input name="location" value="${escapeAttribute(merged.location)}" required />
+          </label>
+          <label>Family Context
+            <textarea name="family_context" rows="4">${escapeHtml(merged.family_context)}</textarea>
+          </label>
+          <label>Posting Schedule
+            <input name="posting_schedule" value="${escapeAttribute(merged.posting_schedule)}" placeholder="weekday mornings" />
+          </label>
+          <label>Interests
+            <input name="interests" value="${escapeAttribute((merged.interests ?? []).join(", "))}" />
+          </label>
+          <label>Content Pillars
+            <input name="content_pillars" value="${escapeAttribute((merged.content_pillars ?? []).join(", "))}" />
+          </label>
+          <label>Excluded Topics
+            <input name="excluded_topics" value="${escapeAttribute((merged.excluded_topics ?? []).join(", "))}" />
+          </label>
+          <label>Tone
+            <input name="tone" value="${escapeAttribute(merged.tone)}" />
+          </label>
+          <label>Shopping Bias
+            <input name="shopping_bias" value="${escapeAttribute(merged.shopping_bias)}" placeholder="quality-first" />
+          </label>
+          <label>Operator
+            <input name="operator" value="operator@example.com" />
+          </label>
+        </div>
+        <label>Extra Metadata
+          <textarea name="extra_metadata" rows="8" placeholder='{"shopping_data":["Maremagnum"],"event_websites":["https://example.com/events"],"location_notes":["Near Barceloneta"]}'>${escapeHtml(JSON.stringify(merged.extra_metadata ?? {}, null, 2))}</textarea>
+        </label>
+        <div class="button-row launch-actions">
+          <button type="submit">Sync Marble KG</button>
+        </div>
+      </form>
+    </section>
+
+    <section class="audience-section" data-tremor-component="Card">
+      <div class="section-title">
+        <div><h3>Enrichment Feed</h3><p class="muted">Append shopping data, venues, event sites, and operator judgments as structured Marble events.</p></div>
+      </div>
+      <form class="profile-form" data-profile-decision-audience-id="${escapeAttribute(audience.id)}">
+        <div class="launch-grid">
+          <label>Decision Type
+            <input name="decision_type" value="operator_enrichment" />
+          </label>
+          <label>Source
+            <input name="source" value="dashboard" />
+          </label>
+          <label>Operator
+            <input name="operator" value="operator@example.com" />
+          </label>
+        </div>
+        <label>Content JSON
+          <textarea name="content" rows="8" placeholder='{"shopping_data":["Passeig de Gracia"],"event_websites":["https://event-site.example"],"locations":["Barcelona waterfront"]}'>{}</textarea>
+        </label>
+        <div class="button-row launch-actions">
+          <button type="submit" class="secondary">Store Enrichment Event</button>
+        </div>
+      </form>
+      <details class="debug-panel">
+        <summary>Graph Debug</summary>
+        <pre>${debugJson || "No Marble debug payload available."}</pre>
+      </details>
+    </section>
+
+    <section class="audience-section" data-tremor-component="Card">
+      <div class="section-title">
+        <div><h3>Delivery Runtime</h3><p class="muted">Telegram, sidecar, and runtime overrides written at launch time.</p></div>
+      </div>
+      ${renderLaunchConfigForm(audience, instance)}
+    </section>
+  </div>`;
+}
+
+function renderAudienceTagBlock(label, values) {
+  return `<div class="state-card">
+    <span class="state-label">${escapeHtml(label)}</span>
+    <div class="pill-line">${(values ?? []).length ? values.map((value) => `<span class="pill">${escapeHtml(value)}</span>`).join("") : '<span class="pill">None</span>'}</div>
+  </div>`;
+}
+
+function renderAudienceInspector(audience, selectedDeployment, deployments) {
+  return `
+    <section class="panel">
+      <div class="panel-inner">
+        <div class="section-title">
+          <div><h2>Selected Deployment</h2><p class="muted">Runtime status, exact commands, and service endpoints for the current audience.</p></div>
+        </div>
+        ${renderSelectedDeployment(selectedDeployment)}
+      </div>
+    </section>
+    <section class="panel">
+      <div class="panel-inner">
+        <div class="section-title">
+          <div><h2>Audience Manager Feedback</h2><p class="muted">Send direct operator feedback to the selected OpenClaw audience manager.</p></div>
+        </div>
+        ${renderOperatorConsole(audience, selectedDeployment)}
+      </div>
+    </section>
+    <section class="panel">
+      <div class="panel-inner">
+        <div class="section-title">
+          <div><h2>Deployments</h2><p class="muted">Live instance index across the factory.</p></div>
+        </div>
+        ${renderDeploymentIndex(deployments)}
+      </div>
+    </section>`;
+}
+
+function renderSelectedDeployment(instance) {
+  if (!instance) {
+    return `<div class="empty-card">No deployment selected.</div>`;
+  }
+
   const actions = instance.source === "static"
     ? `<div class="instance-actions">
           <button type="button" data-instance-action="deploy" data-audience-id="${escapeAttribute(instance.audience_id)}">Deploy</button>
@@ -1681,10 +1996,11 @@ function renderDeploymentInstance(instance) {
           <button type="button" data-instance-action="logs" data-audience-id="${escapeAttribute(instance.audience_id)}">Logs</button>
         </div>`
     : "";
-  return `<li class="instance-card">
+
+  return `<div class="deployment-inspector">
     <div class="instance-heading">
       <strong>${escapeHtml(instance.service_name ?? instance.audience_id)}</strong>
-      <span class="badge ${instance.status === "active" ? "ready" : ""}">${escapeHtml(instance.status)}</span>
+      ${renderTremorBadge(instance.status ?? "configured", { tone: instance.status === "active" ? "success" : "neutral" })}
     </div>
     <div class="instance-meta">
       <span>Audience: ${escapeHtml(instance.audience_key ?? instance.audience_id)}</span>
@@ -1696,28 +2012,56 @@ function renderDeploymentInstance(instance) {
       ${instance.env_file ? `<span>Env: ${escapeHtml(instance.env_file)}</span>` : ""}
     </div>
     ${actions}
-    <form class="profile-editor" data-instance-chat-form="${escapeAttribute(instance.audience_id)}">
-      <div class="section-title"><div><h3>Audience Manager Feedback</h3><p class="muted">Send operator feedback directly to this OpenClaw audience manager.</p></div></div>
-      <div class="launch-grid">
-        <label>Operator
-          <input name="operator" value="operator@example.com" />
-        </label>
-        <label>Message
-          <textarea name="message" rows="4" placeholder="Refine the audience plan using the new Marble notes."></textarea>
-        </label>
+    <details class="debug-panel">
+      <summary>Runtime Commands</summary>
+      <div class="command-list">
+        ${renderCommandBlock("OpenClaw Shell", instance.commands?.openclaw_shell)}
+        ${renderCommandBlock("Profile Shell", instance.commands?.profile_shell)}
+        ${renderCommandBlock("OpenClaw Env", instance.commands?.openclaw_env)}
+        ${renderCommandBlock("OpenClaw Logs", instance.commands?.openclaw_logs)}
+        ${renderCommandBlock("Profile Logs", instance.commands?.profile_logs)}
       </div>
-      <div class="button-row">
-        <button type="submit" class="secondary">Send Feedback</button>
-      </div>
-    </form>
-    <div class="command-list">
-      ${renderCommandBlock("OpenClaw Shell", instance.commands?.openclaw_shell)}
-      ${renderCommandBlock("Profile Shell", instance.commands?.profile_shell)}
-      ${renderCommandBlock("OpenClaw Env", instance.commands?.openclaw_env)}
-      ${renderCommandBlock("OpenClaw Logs", instance.commands?.openclaw_logs)}
-      ${renderCommandBlock("Profile Logs", instance.commands?.profile_logs)}
+    </details>
+  </div>`;
+}
+
+function renderOperatorConsole(audience, selectedDeployment) {
+  const audienceId = audience?.id ?? selectedDeployment?.audience_id ?? "";
+  const audienceKey = audience?.audience_key ?? selectedDeployment?.audience_key ?? audienceId;
+  if (!audienceId) {
+    return `<div class="empty-card">Select an audience or launch a deployment to send operator feedback.</div>`;
+  }
+  return `<form class="profile-form" data-instance-chat-form="${escapeAttribute(audienceId)}">
+    <label>Audience ID
+      <input name="audience_id" value="${escapeAttribute(audienceId)}" placeholder="barcelona-family" />
+    </label>
+    <label>Audience Key
+      <input value="${escapeAttribute(audienceKey)}" disabled />
+    </label>
+    <label>Message
+      <textarea name="message" rows="5" placeholder="Use the new Marble enrichment data when refining venue and product selections."></textarea>
+    </label>
+    <label>Operator
+      <input name="operator" value="operator@example.com" />
+    </label>
+    <div class="button-row">
+      <button type="submit">Send To Instance</button>
     </div>
-  </li>`;
+  </form>`;
+}
+
+function renderDeploymentIndex(deployments) {
+  if (!deployments.length) {
+    return `<div class="empty-card">No deployments</div>`;
+  }
+
+  return `<div class="deployment-index">
+    ${deployments.map((instance) => `<div class="deployment-index-row">
+      <strong>${escapeHtml(instance.audience_key ?? instance.audience_id)}</strong>
+      <span>${escapeHtml(instance.service_name ?? "unset")}</span>
+      ${renderTremorBadge(instance.status ?? "configured", { tone: instance.status === "active" ? "success" : "neutral" })}
+    </div>`).join("")}
+  </div>`;
 }
 
 function renderWorkspaceTabs(activeTab) {
@@ -2068,154 +2412,10 @@ function renderAudienceImportPanel(preview) {
   </div>`;
 }
 
-function renderAudienceManagerCards(audiences, audienceInstances, audienceProfiles) {
-  const instancesByAudienceId = new Map((audienceInstances ?? []).map((instance) => [instance.audience_id, instance]));
-  if (!audiences.length) {
-    return `<div class="empty-card">No audiences are configured.</div>`;
-  }
-  return audiences.map((audience) => {
-    const instance = instancesByAudienceId.get(audience.id) ?? null;
-    const runtimeConfig = instance?.runtime_config ?? {};
-    const llmLabel = runtimeConfig.llm_model ?? "global default";
-    const profileState = audienceProfiles.get(audience.id) ?? {};
-    return `<article class="audience-profile">
-      <div>
-        <strong>${escapeHtml(audience.label ?? audience.audience_key ?? audience.id)}</strong>
-        <div class="muted">${escapeHtml(audience.audience_key ?? audience.id)}</div>
-        <div class="pill-line">
-          <span class="pill">${escapeHtml(audience.location ?? "unknown location")}</span>
-          <span class="pill">${escapeHtml(audience.language ?? "language unset")}</span>
-          <span class="pill">${escapeHtml(audience.status ?? "status unset")}</span>
-          <span class="pill">LLM: ${escapeHtml(llmLabel)}</span>
-          <span class="pill">Instance: ${escapeHtml(instance?.service_name ?? "not launched")}</span>
-        </div>
-        <p class="muted" style="margin-top:10px;">${escapeHtml(audience.family_context ?? audience.tone ?? "No profile summary stored.")}</p>
-      </div>
-      ${renderAudienceMarblePanel(audience, profileState)}
-      ${renderLaunchConfigForm(audience, instance)}
-    </article>`;
-  }).join("");
-}
-
-function renderAudienceMarblePanel(audience, profileState = {}) {
-  const summary = profileState.summary?.profile ?? {};
-  const debug = profileState.debug ?? null;
-  const error = profileState.error ?? "";
-  const merged = {
-    label: summary.label ?? audience.label ?? "",
-    location: summary.location ?? audience.location ?? "",
-    family_context: summary.family_context ?? audience.family_context ?? "",
-    interests: summary.interests ?? audience.interests ?? [],
-    content_pillars: summary.content_pillars ?? audience.content_pillars ?? [],
-    excluded_topics: summary.excluded_topics ?? audience.excluded_topics ?? [],
-    tone: summary.tone ?? audience.tone ?? "",
-    shopping_bias: summary.shopping_bias ?? audience.shopping_bias ?? "",
-    posting_schedule: debug?.metadata?.posting_schedule ?? audience.posting_schedule ?? "",
-    reasoning_summary: summary.reasoning_summary ?? "",
-    updated_at: summary.updated_at ?? "",
-    extra_metadata: debug?.metadata?.extra_metadata ?? audience.profile_snapshot?.extra_metadata ?? {}
-  };
-  const interestCount = debug?.memory_nodes?.interests ?? merged.interests.length;
-  const preferenceCount = debug?.memory_nodes?.preferences ?? debug?.memory_nodes?.preference_count ?? 0;
-  const decisionCount = Array.isArray(debug?.decisions) ? debug.decisions.length : 0;
-  const debugJson = error
-    ? ""
-    : escapeHtml(JSON.stringify(debug ?? {
-        profile: summary,
-        metadata: merged.extra_metadata
-      }, null, 2));
-
-  return `<section class="audience-profile-section">
-    <div class="launch-config-title">
-      <div><h3>Marble KG</h3><p class="muted">Edit seeded KG fields, inspect the stored graph, and append enrichment data for this audience.</p></div>
-      <span class="badge ${error ? "warning" : "ready"}">${escapeHtml(error ? "unavailable" : "connected")}</span>
-    </div>
-    ${error ? `<div class="empty-card">${escapeHtml(error)}</div>` : ""}
-    <div class="audience-metric-grid">
-      <div class="metric-card"><strong>Graph Summary</strong><span>${escapeHtml(merged.reasoning_summary || "No Marble summary stored.")}</span></div>
-      <div class="metric-card"><strong>Memory Nodes</strong><span>${escapeHtml(String(interestCount))} interests · ${escapeHtml(String(preferenceCount))} preferences</span></div>
-      <div class="metric-card"><strong>Decision Audit</strong><span>${escapeHtml(String(decisionCount))} stored events</span></div>
-      <div class="metric-card"><strong>Updated</strong><span>${escapeHtml(merged.updated_at || "never")}</span></div>
-    </div>
-    <div class="pill-line">
-      ${(merged.interests ?? []).map((interest) => `<span class="pill">${escapeHtml(interest)}</span>`).join("") || '<span class="pill">No interests</span>'}
-    </div>
-    <form class="profile-editor" data-profile-facts-audience-id="${escapeAttribute(audience.id)}">
-      <div class="section-title"><div><h3>KG Editor</h3><p class="muted">Use this to rewrite audience interests, tone, exclusions, and operator metadata.</p></div></div>
-      <div class="launch-grid">
-        <label>Label
-          <input name="label" value="${escapeAttribute(merged.label)}" required />
-        </label>
-        <label>Location
-          <input name="location" value="${escapeAttribute(merged.location)}" required />
-        </label>
-        <label>Family Context
-          <textarea name="family_context" rows="4">${escapeHtml(merged.family_context)}</textarea>
-        </label>
-        <label>Posting Schedule
-          <input name="posting_schedule" value="${escapeAttribute(merged.posting_schedule)}" placeholder="weekday mornings" />
-        </label>
-        <label>Interests
-          <input name="interests" value="${escapeAttribute((merged.interests ?? []).join(", "))}" />
-        </label>
-        <label>Content Pillars
-          <input name="content_pillars" value="${escapeAttribute((merged.content_pillars ?? []).join(", "))}" />
-        </label>
-        <label>Excluded Topics
-          <input name="excluded_topics" value="${escapeAttribute((merged.excluded_topics ?? []).join(", "))}" />
-        </label>
-        <label>Tone
-          <input name="tone" value="${escapeAttribute(merged.tone)}" />
-        </label>
-        <label>Shopping Bias
-          <input name="shopping_bias" value="${escapeAttribute(merged.shopping_bias)}" placeholder="quality-first" />
-        </label>
-        <label>Operator
-          <input name="operator" value="operator@example.com" />
-        </label>
-      </div>
-      <label>Extra Metadata
-        <textarea name="extra_metadata" rows="8" placeholder='{"shopping_data":["Maremagnum"],"event_websites":["https://example.com/events"],"location_notes":["Near Barceloneta"]}'>${escapeHtml(JSON.stringify(merged.extra_metadata ?? {}, null, 2))}</textarea>
-      </label>
-      <div class="button-row launch-actions">
-        <button type="submit">Sync Marble KG</button>
-      </div>
-    </form>
-    <form class="profile-editor" data-profile-decision-audience-id="${escapeAttribute(audience.id)}">
-      <div class="section-title"><div><h3>Audience Data Enrichment</h3><p class="muted">Add shopping data, event websites, location notes, or operator judgments without rewriting the seeded profile.</p></div></div>
-      <div class="launch-grid">
-        <label>Decision Type
-          <input name="decision_type" value="operator_enrichment" />
-        </label>
-        <label>Source
-          <input name="source" value="dashboard" />
-        </label>
-        <label>Operator
-          <input name="operator" value="operator@example.com" />
-        </label>
-      </div>
-      <label>Content JSON
-        <textarea name="content" rows="8" placeholder='{"shopping_data":["Passeig de Gracia"],"event_websites":["https://event-site.example"],"locations":["Barcelona waterfront"]}'>{}</textarea>
-      </label>
-      <div class="button-row launch-actions">
-        <button type="submit" class="secondary">Store Enrichment Event</button>
-      </div>
-    </form>
-    <details class="debug-panel">
-      <summary>Graph Debug</summary>
-      <pre>${debugJson || "No Marble debug payload available."}</pre>
-    </details>
-  </section>`;
-}
-
 function renderLaunchConfigForm(audience, instance) {
   const runtime = instance?.runtime_config ?? {};
   const value = (key, fallback = "") => escapeAttribute(runtime[key] ?? instance?.[key] ?? fallback);
   return `<form class="launch-config" data-launch-audience-id="${escapeAttribute(audience.id)}">
-    <div class="launch-config-title">
-      <div><h3>Deployment Config</h3><p class="muted">Written into generated/audience-managers env on launch.</p></div>
-      <span class="badge">${escapeHtml(instance?.status ?? "not launched")}</span>
-    </div>
     <div class="launch-grid">
       <label>Telegram Bot Token
         <input name="telegram_bot_token" value="${value("telegram_bot_token")}" autocomplete="off" required />
@@ -2258,6 +2458,15 @@ function renderLaunchConfigForm(audience, instance) {
       <button type="submit">Launch Deployment</button>
     </div>
   </form>`;
+}
+
+function buildAudienceWorkspaceHref(audienceId) {
+  const url = new URL("http://localhost/");
+  url.searchParams.set("tab", "audiences");
+  if (audienceId) {
+    url.searchParams.set("audience_id", audienceId);
+  }
+  return `${url.pathname}${url.search}`;
 }
 
 function humanizeCheckName(value) {
