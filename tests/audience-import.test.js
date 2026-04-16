@@ -115,3 +115,44 @@ test("createAudienceImportService creates one LLM-expanded audience from raw set
   assert.equal(result.instance, null);
   assert.equal(writes.length, 1);
 });
+
+test("createAudienceImportService coerces string list fields from LLM expansion during audience creation", async () => {
+  const { createAudienceImportService } = await loadAudienceImportModule();
+  const writes = [];
+  const service = createAudienceImportService({
+    repository: {
+      async listAudiences() {
+        return [];
+      }
+    },
+    llmClient: {
+      async expandAudience() {
+        return {
+          label: "Barcelona Family Weekend Planner",
+          interests: "beachwear, football, football",
+          content_pillars: "weekend plans, local events",
+          excluded_topics: "politics",
+          tone: "practical"
+        };
+      }
+    },
+    provisioningClient: {
+      async ensureFactory(factory) {
+        return { id: "factory-1", ...factory };
+      },
+      async upsertAudience(factory, audience) {
+        writes.push({ factory, audience });
+        return { id: "aud-1", ...audience };
+      }
+    }
+  });
+
+  const result = await service.createAudience({
+    raw_text: "Bald high man in early 40s living in Barcelona, married with 8-10 year old boy. Loves beachwear, sportswear, football, and practical family weekend plans."
+  });
+
+  assert.deepEqual(result.audience.interests, ["beachwear", "football"]);
+  assert.deepEqual(result.audience.content_pillars, ["weekend plans", "local events"]);
+  assert.deepEqual(result.audience.excluded_topics, ["politics"]);
+  assert.equal(writes.length, 1);
+});

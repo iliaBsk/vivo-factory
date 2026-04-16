@@ -209,7 +209,12 @@ function mergeAudienceExpansion(normalized, expanded) {
 }
 
 function dedupeList(values) {
-  return [...new Set((values ?? []).filter(Boolean))];
+  const normalizedValues = Array.isArray(values)
+    ? values
+    : String(values ?? "")
+        .split(",");
+
+  return [...new Set(normalizedValues.map((value) => String(value).trim()).filter(Boolean))];
 }
 
 function defaultLlmClient() {
