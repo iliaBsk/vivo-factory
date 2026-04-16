@@ -826,15 +826,14 @@ test("audiences workspace renders audience data and launch controls after audien
   assert.equal(response.status, 200);
   assert.match(response.body, /workspace-tab active[^>]*>Audiences/);
   assert.match(response.body, /Audience Directory/);
-  assert.match(response.body, /Audience Workspace/);
-  assert.match(response.body, /Profile State/);
-  assert.match(response.body, /Marble Editor/);
+  assert.match(response.body, /Profile Canvas/);
+  assert.match(response.body, /Knowledge Inputs/);
   assert.match(response.body, /Enrichment Feed/);
-  assert.match(response.body, /Delivery Runtime/);
+  assert.match(response.body, /Runtime Controls/);
   assert.match(response.body, /Barcelona Family/);
   assert.match(response.body, /Reasoning Summary/);
-  assert.match(response.body, /Selected Deployment/);
-  assert.match(response.body, /Audience Manager Feedback/);
+  assert.match(response.body, /Runtime Snapshot/);
+  assert.match(response.body, /Manager Console/);
   assert.match(response.body, /name="telegram_chat_id"/);
   assert.match(response.body, /name="telegram_bot_token"/);
   assert.match(response.body, /name="llm_model"/);
@@ -847,6 +846,87 @@ test("audiences workspace renders audience data and launch controls after audien
   assert.match(response.body, /Launch Deployment/);
   assert.match(response.body, /docker compose -f generated\/docker-compose\.yml exec/);
   assert.doesNotMatch(response.body, /Deploy All/);
+});
+
+test("audiences workspace formats structured Marble fields and uses a three-plane operator layout", async () => {
+  const { createRepository, createApp } = await loadModules();
+  const repository = createRepository(createSeed());
+  const app = createApp({
+    repository,
+    profileClientFactory() {
+      return {
+        async getSummary() {
+          return {
+            ok: true,
+            data: {
+              profile: {
+                label: "Bald tall man in his early 40s in Barcelona with school-age son",
+                location: {
+                  city: "Barcelona",
+                  country: "Spain",
+                  region: "Catalonia"
+                },
+                family_context: {
+                  marital_status: "married",
+                  children: [{ relation: "son", age_range: "8-10" }]
+                },
+                interests: [
+                  { name: "beachwear" },
+                  { name: "football" }
+                ],
+                content_pillars: [
+                  { name: "family outings" },
+                  { name: "local events" }
+                ],
+                excluded_topics: [
+                  { name: "politics" }
+                ],
+                tone: "precise",
+                shopping_bias: "quality-first",
+                updated_at: "2026-03-21T13:00:00.000Z",
+                reasoning_summary: "Prefers practical family outings near the Barcelona coast."
+              }
+            }
+          };
+        },
+        async getDebug() {
+          return {
+            ok: true,
+            data: {
+              metadata: {
+                posting_schedule: "weekend mornings",
+                extra_metadata: {
+                  event_websites: ["https://example.com/events"]
+                }
+              },
+              decisions: [{ decisionType: "operator_feedback" }],
+              memory_nodes: { interests: 2, preferences: 2 }
+            }
+          };
+        }
+      };
+    },
+    clock: () => "2026-03-21T13:00:00.000Z"
+  });
+
+  const response = await app.handle({
+    method: "GET",
+    pathname: "/",
+    query: { tab: "audiences" }
+  });
+
+  assert.equal(response.status, 200);
+  assert.match(response.body, /audiences-shell/);
+  assert.match(response.body, /Profile Canvas/);
+  assert.match(response.body, /Knowledge Inputs/);
+  assert.match(response.body, /Runtime Controls/);
+  assert.match(response.body, /Manager Console/);
+  assert.match(response.body, /Live Deployments/);
+  assert.match(response.body, /Barcelona/);
+  assert.match(response.body, /married/);
+  assert.match(response.body, /beachwear/);
+  assert.match(response.body, /family outings/);
+  assert.doesNotMatch(response.body, /\[object Object\]/);
 });
 
 test("dashboard HTML still renders setup checklist when Supabase schema is incomplete", async () => {

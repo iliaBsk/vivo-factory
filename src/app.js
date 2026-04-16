@@ -1072,14 +1072,31 @@ function renderDashboard(model) {
       }
       .audiences-shell {
         display: grid;
-        grid-template-columns: 280px minmax(0, 1fr) 360px;
-        gap: 24px;
+        grid-template-columns: minmax(220px, 260px) minmax(0, 1fr) minmax(280px, 320px);
+        gap: 32px;
         align-items: start;
       }
       .audience-directory-panel,
       .audience-workspace-panel,
       .audience-inspector-rail > .panel {
         min-width: 0;
+      }
+      .audience-directory-panel,
+      .audience-inspector-rail {
+        position: sticky;
+        top: 24px;
+      }
+      .audience-directory-panel,
+      .audience-workspace-panel,
+      .audience-inspector-rail > .panel {
+        background: transparent;
+        border: none;
+        box-shadow: none;
+      }
+      .audience-directory-panel .panel-inner,
+      .audience-workspace-panel .panel-inner,
+      .audience-inspector-rail > .panel .panel-inner {
+        padding: 0;
       }
       .audience-directory-list,
       .audience-canvas,
@@ -1089,18 +1106,21 @@ function renderDashboard(model) {
       }
       .audience-directory-row {
         display: grid;
-        gap: 10px;
-        padding: 16px;
-        border: 1px solid var(--line);
-        border-radius: 16px;
-        background: var(--surface-muted);
+        gap: 8px;
+        padding: 14px 0 14px 16px;
+        border-top: 1px solid var(--line);
+        border-left: 1px solid transparent;
+        background: transparent;
         transition: transform 160ms ease, border-color 160ms ease, background 160ms ease;
       }
       .audience-directory-row:hover,
       .audience-directory-row.active {
         border-color: var(--accent);
-        background: color-mix(in srgb, var(--accent) 7%, var(--surface));
+        background: color-mix(in srgb, var(--accent) 5%, transparent);
         transform: translateY(-1px);
+      }
+      .audience-directory-list .audience-directory-row:last-child {
+        border-bottom: 1px solid var(--line);
       }
       .audience-directory-head {
         display: flex;
@@ -1115,34 +1135,87 @@ function renderDashboard(model) {
         color: var(--muted);
         font-size: 12px;
       }
+      .audience-directory-panel .section-title {
+        margin-bottom: 10px;
+      }
+      .audience-canvas {
+        gap: 26px;
+        padding: 28px;
+        border: 1px solid var(--line);
+        border-radius: 28px;
+        background:
+          linear-gradient(180deg, color-mix(in srgb, var(--surface) 90%, transparent) 0%, var(--surface) 100%);
+        box-shadow: var(--shadow);
+      }
       .audience-hero {
         display: grid;
-        grid-template-columns: minmax(0, 1.25fr) minmax(240px, 0.75fr);
-        gap: 18px;
-        padding-bottom: 18px;
+        grid-template-columns: minmax(0, 1fr) 240px;
+        gap: 24px;
+        align-items: end;
+        padding-bottom: 24px;
         border-bottom: 1px solid var(--line);
+      }
+      .audience-hero-copy {
+        display: grid;
+        gap: 12px;
+        min-width: 0;
+      }
+      .audience-hero-copy h2 {
+        max-width: 13ch;
+        font-size: clamp(36px, 4vw, 58px);
+        line-height: 0.94;
+        overflow-wrap: anywhere;
+      }
+      .audience-hero-summary {
+        max-width: 56ch;
+        color: var(--muted);
+        line-height: 1.6;
+      }
+      .audience-hero-meta {
+        display: grid;
+        gap: 12px;
+      }
+      .audience-hero-fact {
+        display: grid;
+        gap: 4px;
+        padding-top: 10px;
+        border-top: 1px solid var(--line);
+      }
+      .audience-hero-fact:first-child {
+        padding-top: 0;
+        border-top: none;
+      }
+      .audience-hero-fact strong {
+        font-size: 11px;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+      .audience-hero-fact span {
+        overflow-wrap: anywhere;
       }
       .audience-hero-pills {
         align-content: start;
         justify-content: start;
+        margin-top: 0;
       }
       .audience-summary-strip {
         display: grid;
         grid-template-columns: repeat(4, minmax(0, 1fr));
-        gap: 1px;
-        border: 1px solid var(--line);
-        border-radius: 20px;
-        overflow: hidden;
+        gap: 16px;
+        padding: 18px 0;
+        border-top: 1px solid var(--line);
+        border-bottom: 1px solid var(--line);
       }
-      .audience-section,
-      .profile-form,
-      .debug-panel {
+      .audience-module {
         display: grid;
-        gap: 14px;
-        padding: 18px;
-        border: 1px solid var(--line);
-        border-radius: 18px;
-        background: var(--surface-muted);
+        gap: 16px;
+        padding-top: 22px;
+        border-top: 1px solid var(--line);
+      }
+      .audience-module:first-of-type {
+        padding-top: 0;
+        border-top: none;
       }
       .audience-state-grid,
       .audience-tag-grid {
@@ -1150,13 +1223,16 @@ function renderDashboard(model) {
         grid-template-columns: repeat(2, minmax(0, 1fr));
         gap: 12px;
       }
+      .audience-tag-grid {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }
       .state-card {
         display: grid;
         gap: 10px;
         padding: 14px;
         border: 1px solid var(--line);
         border-radius: 16px;
-        background: var(--surface);
+        background: color-mix(in srgb, var(--surface) 88%, transparent);
       }
       .state-card p {
         margin: 0;
@@ -1204,7 +1280,7 @@ function renderDashboard(model) {
         display: flex;
         flex-wrap: wrap;
         gap: 7px;
-        margin-top: 10px;
+        margin-top: 0;
       }
       .pill {
         border: 1px solid var(--line);
@@ -1218,13 +1294,29 @@ function renderDashboard(model) {
         gap: 14px;
         padding: 0;
       }
+      .profile-form {
+        display: grid;
+        gap: 14px;
+      }
       .launch-grid {
         display: grid;
         grid-template-columns: repeat(2, minmax(0, 1fr));
-        gap: 10px;
+        gap: 12px 14px;
       }
       .launch-actions {
         justify-content: end;
+      }
+      .audience-inspector-rail {
+        display: grid;
+        gap: 24px;
+      }
+      .audience-inspector-rail > .panel {
+        padding-top: 18px;
+        border-top: 1px solid var(--line);
+      }
+      .audience-inspector-rail > .panel:first-child {
+        padding-top: 0;
+        border-top: none;
       }
       .deployment-inspector {
         display: grid;
@@ -1241,6 +1333,9 @@ function renderDashboard(model) {
         gap: 6px;
         color: var(--muted);
         font-size: 12px;
+      }
+      .instance-meta span {
+        overflow-wrap: anywhere;
       }
       .instance-actions {
         display: flex;
@@ -1274,7 +1369,10 @@ function renderDashboard(model) {
         display: grid;
         gap: 4px;
         padding: 12px 0;
-        border-bottom: 1px solid var(--line);
+        border-top: 1px solid var(--line);
+      }
+      .deployment-index-row:first-child {
+        border-top: none;
       }
       .tremor-card {
         background: var(--surface);
@@ -1353,6 +1451,9 @@ function renderDashboard(model) {
         color: var(--warning);
         border-color: var(--warning-line);
         background: color-mix(in srgb, var(--warning) 12%, transparent);
+      }
+      .audience-workspace-panel .badge {
+        justify-self: start;
       }
       .drawer-portal {
         position: fixed;
@@ -1437,6 +1538,13 @@ function renderDashboard(model) {
             .audience-tag-grid,
             .launch-grid {
               grid-template-columns: 1fr;
+            }
+            .audience-directory-panel,
+            .audience-inspector-rail {
+              position: static;
+            }
+            .audience-canvas {
+              padding: 22px 18px;
             }
             .tremor-filterbar { grid-template-columns: 1fr; }
             .story-detail-drawer {
@@ -1773,10 +1881,10 @@ function renderAudienceDirectory(audiences, deployments, audienceProfiles, selec
         </div>
         <div class="muted">${escapeHtml(audience.audience_key ?? audience.id)}</div>
         <div class="audience-directory-meta">
-          <span>${escapeHtml(audience.location ?? "Location unset")}</span>
+          <span>${escapeHtml(formatStructuredText(audience.location, "Location unset"))}</span>
           <span>${escapeHtml(deployment?.service_name ?? "Instance not launched")}</span>
         </div>
-        <p class="muted">${escapeHtml(summary.reasoning_summary ?? audience.family_context ?? "No Marble summary stored.")}</p>
+        <p class="muted">${escapeHtml(formatStructuredText(summary.reasoning_summary ?? audience.family_context, "No Marble summary stored."))}</p>
       </a>`;
     }).join("")}
   </div>`;
@@ -1791,16 +1899,16 @@ function renderAudienceWorkspaceCanvas(audience, instance, profileState = {}) {
   const debug = profileState.debug ?? null;
   const error = profileState.error ?? "";
   const merged = {
-    label: summary.label ?? audience.label ?? "",
-    location: summary.location ?? audience.location ?? "",
-    family_context: summary.family_context ?? audience.family_context ?? "",
-    interests: summary.interests ?? audience.interests ?? [],
-    content_pillars: summary.content_pillars ?? audience.content_pillars ?? [],
-    excluded_topics: summary.excluded_topics ?? audience.excluded_topics ?? [],
-    tone: summary.tone ?? audience.tone ?? "",
-    shopping_bias: summary.shopping_bias ?? audience.shopping_bias ?? "",
-    posting_schedule: debug?.metadata?.posting_schedule ?? audience.posting_schedule ?? "",
-    reasoning_summary: summary.reasoning_summary ?? "",
+    label: formatStructuredText(summary.label ?? audience.label, audience.label ?? ""),
+    location: formatStructuredText(summary.location ?? audience.location, audience.location ?? ""),
+    family_context: formatStructuredText(summary.family_context ?? audience.family_context, audience.family_context ?? ""),
+    interests: normalizeAudienceList(summary.interests ?? audience.interests ?? []),
+    content_pillars: normalizeAudienceList(summary.content_pillars ?? audience.content_pillars ?? []),
+    excluded_topics: normalizeAudienceList(summary.excluded_topics ?? audience.excluded_topics ?? []),
+    tone: formatStructuredText(summary.tone ?? audience.tone, audience.tone ?? ""),
+    shopping_bias: formatStructuredText(summary.shopping_bias ?? audience.shopping_bias, audience.shopping_bias ?? ""),
+    posting_schedule: formatStructuredText(debug?.metadata?.posting_schedule ?? audience.posting_schedule, audience.posting_schedule ?? ""),
+    reasoning_summary: formatStructuredText(summary.reasoning_summary, ""),
     updated_at: summary.updated_at ?? "",
     extra_metadata: debug?.metadata?.extra_metadata ?? audience.profile_snapshot?.extra_metadata ?? {}
   };
@@ -1816,16 +1924,16 @@ function renderAudienceWorkspaceCanvas(audience, instance, profileState = {}) {
 
   return `<div class="audience-canvas">
     <section class="audience-hero">
-      <div>
+      <div class="audience-hero-copy">
         <div class="eyebrow">Selected Audience</div>
-        <h2>${escapeHtml(audience.label ?? audience.audience_key ?? audience.id)}</h2>
-        <p class="muted">${escapeHtml(merged.family_context || "Family context is not set yet.")}</p>
+        <h2>${escapeHtml(merged.label || audience.label || audience.audience_key || audience.id)}</h2>
+        <p class="audience-hero-summary">${escapeHtml(merged.family_context || "Family context is not set yet.")}</p>
       </div>
-      <div class="pill-line audience-hero-pills">
-        <span class="pill">${escapeHtml(audience.audience_key ?? audience.id)}</span>
-        <span class="pill">${escapeHtml(merged.location || "Location unset")}</span>
-        <span class="pill">${escapeHtml(audience.language ?? "Language unset")}</span>
-        <span class="pill">${escapeHtml(instance?.status ?? "not launched")}</span>
+      <div class="audience-hero-meta">
+        ${renderAudienceHeroFact("Audience Key", audience.audience_key ?? audience.id)}
+        ${renderAudienceHeroFact("Location", merged.location || "Location unset")}
+        ${renderAudienceHeroFact("Language", formatStructuredText(audience.language, "Language unset"))}
+        ${renderAudienceHeroFact("Runtime", instance?.status ?? "not launched")}
       </div>
     </section>
 
@@ -1836,9 +1944,9 @@ function renderAudienceWorkspaceCanvas(audience, instance, profileState = {}) {
       ${renderTremorMetric({ value: merged.updated_at ? formatShortDate(merged.updated_at) : "never", label: "Last Sync" })}
     </section>
 
-    <section class="audience-section" data-tremor-component="Card">
+    <section class="audience-module" data-tremor-component="Card">
       <div class="section-title">
-        <div><h3>Profile State</h3><p class="muted">Current Marble interpretation of this audience.</p></div>
+        <div><h3>Profile Canvas</h3><p class="muted">Current Marble interpretation, summarized for operator review.</p></div>
         <span class="badge ${error ? "warning" : "ready"}">${escapeHtml(error ? "Marble unavailable" : "Marble connected")}</span>
       </div>
       ${error ? `<div class="empty-card">${escapeHtml(error)}</div>` : ""}
@@ -1864,9 +1972,9 @@ function renderAudienceWorkspaceCanvas(audience, instance, profileState = {}) {
       </div>
     </section>
 
-    <section class="audience-section" data-tremor-component="Card">
+    <section class="audience-module" data-tremor-component="Card">
       <div class="section-title">
-        <div><h3>Marble Editor</h3><p class="muted">Edit seeded KG fields without leaving the audience workspace.</p></div>
+        <div><h3>Knowledge Inputs</h3><p class="muted">Edit the seeded facts that shape future Marble reads and delivery decisions.</p></div>
       </div>
       <form class="profile-form" data-profile-facts-audience-id="${escapeAttribute(audience.id)}">
         <div class="launch-grid">
@@ -1910,7 +2018,7 @@ function renderAudienceWorkspaceCanvas(audience, instance, profileState = {}) {
       </form>
     </section>
 
-    <section class="audience-section" data-tremor-component="Card">
+    <section class="audience-module" data-tremor-component="Card">
       <div class="section-title">
         <div><h3>Enrichment Feed</h3><p class="muted">Append shopping data, venues, event sites, and operator judgments as structured Marble events.</p></div>
       </div>
@@ -1939,9 +2047,9 @@ function renderAudienceWorkspaceCanvas(audience, instance, profileState = {}) {
       </details>
     </section>
 
-    <section class="audience-section" data-tremor-component="Card">
+    <section class="audience-module" data-tremor-component="Card">
       <div class="section-title">
-        <div><h3>Delivery Runtime</h3><p class="muted">Telegram, sidecar, and runtime overrides written at launch time.</p></div>
+        <div><h3>Runtime Controls</h3><p class="muted">Telegram, sidecar, and runtime overrides written at launch time.</p></div>
       </div>
       ${renderLaunchConfigForm(audience, instance)}
     </section>
@@ -1949,9 +2057,17 @@ function renderAudienceWorkspaceCanvas(audience, instance, profileState = {}) {
 }
 
 function renderAudienceTagBlock(label, values) {
+  const items = normalizeAudienceList(values);
   return `<div class="state-card">
     <span class="state-label">${escapeHtml(label)}</span>
-    <div class="pill-line">${(values ?? []).length ? values.map((value) => `<span class="pill">${escapeHtml(value)}</span>`).join("") : '<span class="pill">None</span>'}</div>
+    <div class="pill-line">${items.length ? items.map((value) => `<span class="pill">${escapeHtml(value)}</span>`).join("") : '<span class="pill">None</span>'}</div>
+  </div>`;
+}
+
+function renderAudienceHeroFact(label, value) {
+  return `<div class="audience-hero-fact">
+    <strong>${escapeHtml(label)}</strong>
+    <span>${escapeHtml(formatStructuredText(value, "unset"))}</span>
   </div>`;
 }
 
@@ -1960,7 +2076,7 @@ function renderAudienceInspector(audience, selectedDeployment, deployments) {
     <section class="panel">
       <div class="panel-inner">
         <div class="section-title">
-          <div><h2>Selected Deployment</h2><p class="muted">Runtime status, exact commands, and service endpoints for the current audience.</p></div>
+          <div><h2>Runtime Snapshot</h2><p class="muted">Current deployment status, exact commands, and service endpoints for the selected audience.</p></div>
         </div>
         ${renderSelectedDeployment(selectedDeployment)}
       </div>
@@ -1968,7 +2084,7 @@ function renderAudienceInspector(audience, selectedDeployment, deployments) {
     <section class="panel">
       <div class="panel-inner">
         <div class="section-title">
-          <div><h2>Audience Manager Feedback</h2><p class="muted">Send direct operator feedback to the selected OpenClaw audience manager.</p></div>
+          <div><h2>Manager Console</h2><p class="muted">Send direct operator feedback to the selected OpenClaw audience manager.</p></div>
         </div>
         ${renderOperatorConsole(audience, selectedDeployment)}
       </div>
@@ -1976,7 +2092,7 @@ function renderAudienceInspector(audience, selectedDeployment, deployments) {
     <section class="panel">
       <div class="panel-inner">
         <div class="section-title">
-          <div><h2>Deployments</h2><p class="muted">Live instance index across the factory.</p></div>
+          <div><h2>Live Deployments</h2><p class="muted">Instance index across the factory, grouped for fast scanning.</p></div>
         </div>
         ${renderDeploymentIndex(deployments)}
       </div>
@@ -2458,6 +2574,46 @@ function renderLaunchConfigForm(audience, instance) {
       <button type="submit">Launch Deployment</button>
     </div>
   </form>`;
+}
+
+function formatStructuredText(value, fallback = "") {
+  const parts = dedupeStrings(flattenStructuredValue(value));
+  return parts.length ? parts.join(", ") : fallback;
+}
+
+function normalizeAudienceList(values) {
+  if (Array.isArray(values)) {
+    return dedupeStrings(values.flatMap((value) => flattenStructuredValue(value)));
+  }
+  if (typeof values === "string") {
+    return dedupeStrings(values.split(",").map((value) => value.trim()).filter(Boolean));
+  }
+  return dedupeStrings(flattenStructuredValue(values));
+}
+
+function flattenStructuredValue(value) {
+  if (value == null) {
+    return [];
+  }
+  if (Array.isArray(value)) {
+    return value.flatMap((item) => flattenStructuredValue(item));
+  }
+  if (typeof value === "object") {
+    const preferredKeys = ["label", "name", "title", "value", "city", "country", "region", "marital_status", "relation", "age_range", "type"];
+    const preferredValues = preferredKeys.flatMap((key) => (
+      Object.prototype.hasOwnProperty.call(value, key) ? flattenStructuredValue(value[key]) : []
+    ));
+    if (preferredValues.length) {
+      return preferredValues;
+    }
+    return Object.values(value).flatMap((item) => flattenStructuredValue(item));
+  }
+  const normalized = String(value).trim();
+  return normalized ? [normalized] : [];
+}
+
+function dedupeStrings(values) {
+  return [...new Set((values ?? []).map((value) => String(value).trim()).filter(Boolean))];
 }
 
 function buildAudienceWorkspaceHref(audienceId) {

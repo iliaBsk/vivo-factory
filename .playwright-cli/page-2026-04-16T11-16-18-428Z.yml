@@ -1,0 +1,43 @@
+- main [ref=e2]:
+  - generic [ref=e3]:
+    - generic [ref=e4]:
+      - heading "Vivo Factory" [level=1] [ref=e5]
+      - paragraph [ref=e6]: Setup, story review, and audience manager launch in one restrained operations surface.
+    - generic [ref=e7]:
+      - navigation "Workspace" [ref=e8]:
+        - link "Setup" [ref=e9] [cursor=pointer]:
+          - /url: /
+        - link "Stories" [ref=e10] [cursor=pointer]:
+          - /url: /?tab=stories
+        - link "Audiences" [ref=e11] [cursor=pointer]:
+          - /url: /?tab=audiences
+      - button "Switch to dark theme" [ref=e12] [cursor=pointer]: Dark
+  - generic [ref=e14]:
+    - generic [ref=e16]:
+      - generic [ref=e17]:
+        - generic [ref=e18]:
+          - heading "Audience Directory" [level=2] [ref=e19]
+          - paragraph [ref=e20]: Select one audience to inspect Marble state, enrich profile data, and manage runtime delivery.
+        - generic [ref=e21]: 0 audiences
+      - generic [ref=e22]: No audiences are configured.
+    - generic [ref=e24]:
+      - generic [ref=e26]:
+        - heading "Audience Workspace" [level=2] [ref=e27]
+        - paragraph [ref=e28]: Profile state first, edit surfaces second, delivery runtime last.
+      - generic [ref=e29]: Create an audience to unlock Marble profile editing and runtime launch controls.
+    - generic [ref=e30]:
+      - generic [ref=e32]:
+        - generic [ref=e34]:
+          - heading "Runtime Snapshot" [level=2] [ref=e35]
+          - paragraph [ref=e36]: Current deployment status, exact commands, and service endpoints for the selected audience.
+        - generic [ref=e37]: No deployment selected.
+      - generic [ref=e39]:
+        - generic [ref=e41]:
+          - heading "Manager Console" [level=2] [ref=e42]
+          - paragraph [ref=e43]: Send direct operator feedback to the selected OpenClaw audience manager.
+        - generic [ref=e44]: Select an audience or launch a deployment to send operator feedback.
+      - generic [ref=e46]:
+        - generic [ref=e48]:
+          - heading "Live Deployments" [level=2] [ref=e49]
+          - paragraph [ref=e50]: Instance index across the factory, grouped for fast scanning.
+        - generic [ref=e51]: No deployments
