@@ -676,10 +676,7 @@ function renderDashboard(model) {
     ? model.analyticsItems.map((item) => `<li class="flex items-start justify-between gap-3 py-2.5 text-sm"><strong class="text-gray-900 dark:text-gray-100">${escapeHtml(item.story_id ?? item.topic ?? "feedback")}</strong> <span class="text-gray-500 dark:text-gray-400">${escapeHtml(String(item.engagement_score ?? 0))}</span></li>`).join("")
     : `<li class="py-2.5 text-sm text-gray-500 dark:text-gray-400">No analytics snapshots</li>`;
 
-  const audience = model.activeStory?.audience;
-  const audienceFields = audience ? renderAudienceFields(audience) : `<p class="muted">No audience loaded.</p>`;
   const metadataJson = escapeHtml(JSON.stringify(model.activeStory?.metadata ?? {}, null, 2));
-  const profileJson = escapeHtml(JSON.stringify(audience?.profile_snapshot ?? {}, null, 2));
   const selectedAssetId = model.activeStory?.selected_asset_id ?? "";
   const publicationTarget = model.activeStory?.publication_target ?? null;
   const drawerOpen = activeTab === "stories" && Boolean(model.activeStory);
@@ -700,17 +697,8 @@ function renderDashboard(model) {
         model,
         storyTableRows,
         audienceOptions,
-        assetCards,
-        publicationItems,
-        reviewItems,
         auditItems,
-        analyticsItems,
-        audience,
-        audienceFields,
-        metadataJson,
-        profileJson,
-        selectedAssetId,
-        publicationTarget
+        analyticsItems
       })
     : activeTab === "audiences"
       ? renderAudiencesWorkspace({
@@ -884,20 +872,26 @@ function renderStoriesWorkspace(context) {
       </div>`
   });
 
-  return `<div class="space-y-5">
-    ${storiesTable}
-    <div class="grid grid-cols-2 gap-5">
-      <div class="bg-white dark:bg-gray-800 ring-1 ring-gray-200 dark:ring-gray-700 rounded-lg shadow-sm overflow-hidden">
-        <div class="px-5 py-4 border-b border-gray-200 dark:border-gray-700">
-          <h2 class="text-sm font-semibold text-gray-900 dark:text-gray-100">Audit Log</h2>
+  return `<div>
+    <div class="mb-6">
+      <h1 class="text-lg font-semibold text-gray-900 dark:text-gray-100">Stories</h1>
+      <p class="text-sm text-gray-500 dark:text-gray-400 mt-0.5">Review, approve, and publish story assets to Telegram channels.</p>
+    </div>
+    <div class="space-y-5">
+      ${storiesTable}
+      <div class="grid grid-cols-2 gap-5">
+        <div class="bg-white dark:bg-gray-800 ring-1 ring-gray-200 dark:ring-gray-700 rounded-lg shadow-sm overflow-hidden">
+          <div class="px-5 py-4 border-b border-gray-200 dark:border-gray-700">
+            <h2 class="text-sm font-semibold text-gray-900 dark:text-gray-100">Audit Log</h2>
+          </div>
+          <ul class="divide-y divide-gray-100 dark:divide-gray-700 px-5">${auditItems}</ul>
         </div>
-        <ul class="divide-y divide-gray-100 dark:divide-gray-700 px-5">${auditItems}</ul>
-      </div>
-      <div class="bg-white dark:bg-gray-800 ring-1 ring-gray-200 dark:ring-gray-700 rounded-lg shadow-sm overflow-hidden">
-        <div class="px-5 py-4 border-b border-gray-200 dark:border-gray-700">
-          <h2 class="text-sm font-semibold text-gray-900 dark:text-gray-100">Analytics Snapshot</h2>
+        <div class="bg-white dark:bg-gray-800 ring-1 ring-gray-200 dark:ring-gray-700 rounded-lg shadow-sm overflow-hidden">
+          <div class="px-5 py-4 border-b border-gray-200 dark:border-gray-700">
+            <h2 class="text-sm font-semibold text-gray-900 dark:text-gray-100">Analytics Snapshot</h2>
+          </div>
+          <ul class="divide-y divide-gray-100 dark:divide-gray-700 px-5">${analyticsItems}</ul>
         </div>
-        <ul class="divide-y divide-gray-100 dark:divide-gray-700 px-5">${analyticsItems}</ul>
       </div>
     </div>
   </div>`;
