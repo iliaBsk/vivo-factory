@@ -662,19 +662,19 @@ function renderDashboard(model) {
   const audienceOptions = model.audiences.map((audience) => `<option value="${escapeAttribute(audience.id)}"${audience.id === model.filters.audience_id ? " selected" : ""}>${escapeHtml(audience.label)}</option>`).join("");
   const assetCards = model.activeStory
     ? model.activeStory.assets.map((asset) => renderAssetCard(model.activeStory, asset)).join("")
-    : `<div class="empty-card">Select a story to review assets.</div>`;
+    : `<div class="rounded-lg border border-dashed border-gray-200 dark:border-gray-700 p-6 text-sm text-gray-500 dark:text-gray-400">Select a story to review assets.</div>`;
   const publicationItems = model.activeStory?.publications?.length
-    ? model.activeStory.publications.map((publication) => `<li><strong>${escapeHtml(publication.channel)}</strong> <span>${escapeHtml(publication.status)}</span> <span>${escapeHtml(publication.target_identifier)}</span></li>`).join("")
-    : "<li>No queued publications</li>";
+    ? model.activeStory.publications.map((publication) => `<li class="flex items-start justify-between gap-3 py-2.5 text-sm"><strong class="text-gray-900 dark:text-gray-100">${escapeHtml(publication.channel)}</strong> <span class="text-gray-500 dark:text-gray-400">${escapeHtml(publication.status)}</span> <span class="text-gray-500 dark:text-gray-400">${escapeHtml(publication.target_identifier)}</span></li>`).join("")
+    : `<li class="py-2.5 text-sm text-gray-500 dark:text-gray-400">No queued publications</li>`;
   const reviewItems = model.activeStory?.reviews?.length
-    ? model.activeStory.reviews.map((review) => `<li><strong>${escapeHtml(review.review_status)}</strong> <span>${escapeHtml(review.actor_id)}</span> <span>${escapeHtml(review.review_notes ?? "")}</span></li>`).join("")
-    : "<li>No review history</li>";
+    ? model.activeStory.reviews.map((review) => `<li class="flex items-start justify-between gap-3 py-2.5 text-sm"><strong class="text-gray-900 dark:text-gray-100">${escapeHtml(review.review_status)}</strong> <span class="text-gray-500 dark:text-gray-400">${escapeHtml(review.actor_id)}</span> <span class="text-gray-500 dark:text-gray-400">${escapeHtml(review.review_notes ?? "")}</span></li>`).join("")
+    : `<li class="py-2.5 text-sm text-gray-500 dark:text-gray-400">No review history</li>`;
   const auditItems = model.auditItems.length
-    ? model.auditItems.map((item) => `<li><strong>${escapeHtml(item.type)}</strong> <span>${escapeHtml(item.timestamp ?? "")}</span></li>`).join("")
-    : "<li>No audit events</li>";
+    ? model.auditItems.map((item) => `<li class="flex items-start justify-between gap-3 py-2.5 text-sm"><strong class="text-gray-900 dark:text-gray-100">${escapeHtml(item.type)}</strong> <span class="text-gray-500 dark:text-gray-400">${escapeHtml(item.timestamp ?? "")}</span></li>`).join("")
+    : `<li class="py-2.5 text-sm text-gray-500 dark:text-gray-400">No audit events</li>`;
   const analyticsItems = model.analyticsItems.length
-    ? model.analyticsItems.map((item) => `<li><strong>${escapeHtml(item.story_id ?? item.topic ?? "feedback")}</strong> <span>${escapeHtml(String(item.engagement_score ?? 0))}</span></li>`).join("")
-    : "<li>No analytics snapshots</li>";
+    ? model.analyticsItems.map((item) => `<li class="flex items-start justify-between gap-3 py-2.5 text-sm"><strong class="text-gray-900 dark:text-gray-100">${escapeHtml(item.story_id ?? item.topic ?? "feedback")}</strong> <span class="text-gray-500 dark:text-gray-400">${escapeHtml(String(item.engagement_score ?? 0))}</span></li>`).join("")
+    : `<li class="py-2.5 text-sm text-gray-500 dark:text-gray-400">No analytics snapshots</li>`;
 
   const audience = model.activeStory?.audience;
   const audienceFields = audience ? renderAudienceFields(audience) : `<p class="muted">No audience loaded.</p>`;
@@ -813,57 +813,72 @@ function renderStoriesWorkspace(context) {
     auditItems,
     analyticsItems
   } = context;
+
   const storiesTable = renderTremorCard({
-    title: "Stories Table",
+    title: "Stories",
     description: "Select a row to open details, assets, approval, and publication controls.",
-    action: `<span class="muted">${escapeHtml(String(model.stories.length))} stories</span>`,
+    action: `<span class="text-xs text-gray-500 dark:text-gray-400">${escapeHtml(String(model.stories.length))} stories</span>`,
     children: `
-      <form method="GET" class="tremor-filterbar">
+      <form method="GET" class="flex flex-wrap items-end gap-3 px-5 py-3 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50">
         <input type="hidden" name="tab" value="stories" />
-        <label>Status
-          <select name="status">${renderStatusOptions(model.filters.status)}</select>
+        <label class="flex flex-col gap-1 min-w-[120px]">
+          <span class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Status</span>
+          <select name="status" class="block rounded-md border-0 py-1.5 px-3 text-sm text-gray-900 dark:text-gray-100 dark:bg-gray-700 ring-1 ring-inset ring-gray-300 dark:ring-gray-600 focus:ring-2 focus:ring-blue-500 focus:outline-none">${renderStatusOptions(model.filters.status)}</select>
         </label>
-        <label>Review
-          <select name="review_status">${renderReviewOptions(model.filters.review_status)}</select>
+        <label class="flex flex-col gap-1 min-w-[120px]">
+          <span class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Review</span>
+          <select name="review_status" class="block rounded-md border-0 py-1.5 px-3 text-sm text-gray-900 dark:text-gray-100 dark:bg-gray-700 ring-1 ring-inset ring-gray-300 dark:ring-gray-600 focus:ring-2 focus:ring-blue-500 focus:outline-none">${renderReviewOptions(model.filters.review_status)}</select>
         </label>
-        <label>Audience
-          <select name="audience_id">
+        <label class="flex flex-col gap-1 min-w-[120px]">
+          <span class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Audience</span>
+          <select name="audience_id" class="block rounded-md border-0 py-1.5 px-3 text-sm text-gray-900 dark:text-gray-100 dark:bg-gray-700 ring-1 ring-inset ring-gray-300 dark:ring-gray-600 focus:ring-2 focus:ring-blue-500 focus:outline-none">
             <option value="">All audiences</option>
             ${audienceOptions}
           </select>
         </label>
-        <label>Search
-          <input type="text" name="search" value="${escapeAttribute(model.filters.search ?? "")}" placeholder="Search title or story text" />
+        <label class="flex flex-col gap-1 flex-1 min-w-[160px]">
+          <span class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Search</span>
+          <input type="text" name="search" value="${escapeAttribute(model.filters.search ?? "")}" placeholder="Search title or story text"
+                 class="block w-full rounded-md border-0 py-1.5 px-3 text-sm text-gray-900 dark:text-gray-100 dark:bg-gray-700 ring-1 ring-inset ring-gray-300 dark:ring-gray-600 placeholder:text-gray-400 focus:ring-2 focus:ring-blue-500 focus:outline-none" />
         </label>
-        <button type="submit">Apply Filters</button>
+        <button type="submit" class="rounded-md bg-gray-900 dark:bg-gray-100 px-3 py-1.5 text-sm font-medium text-white dark:text-gray-900 hover:bg-gray-700 dark:hover:bg-gray-200 transition-colors cursor-pointer">Apply</button>
       </form>
-      <div class="tremor-table-wrap">
-        <table class="tremor-table" data-tremor-component="Table">
-          <thead>
+      <div class="overflow-x-auto">
+        <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700" data-tremor-component="Table">
+          <thead class="bg-gray-50 dark:bg-gray-800/50">
             <tr>
-              <th>Story</th>
-              <th>Audience</th>
-              <th>Status</th>
-              <th>Review</th>
-              <th>Asset</th>
-              <th>Channel</th>
-              <th>Updated</th>
+              <th class="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Story</th>
+              <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Audience</th>
+              <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Status</th>
+              <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Review</th>
+              <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Asset</th>
+              <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Channel</th>
+              <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Updated</th>
             </tr>
           </thead>
-          <tbody>
-            ${storyTableRows || `<tr><td colspan="7" class="muted">No stories match these filters.</td></tr>`}
+          <tbody class="divide-y divide-gray-100 dark:divide-gray-700 bg-white dark:bg-gray-800">
+            ${storyTableRows || `<tr><td colspan="7" class="px-6 py-4 text-sm text-gray-500 dark:text-gray-400">No stories match these filters.</td></tr>`}
           </tbody>
         </table>
       </div>`
   });
 
-  return `<div class="workspace-grid">
+  return `<div class="space-y-5">
     ${storiesTable}
-
-    <section class="split" style="margin-top:22px;">
-      <div class="panel"><div class="panel-inner"><div class="section-title"><h2>Audit Log</h2></div><ul class="compact">${auditItems}</ul></div></div>
-      <div class="panel"><div class="panel-inner"><div class="section-title"><h2>Analytics Snapshot</h2></div><ul class="compact">${analyticsItems}</ul></div></div>
-    </section>
+    <div class="grid grid-cols-2 gap-5">
+      <div class="bg-white dark:bg-gray-800 ring-1 ring-gray-200 dark:ring-gray-700 rounded-lg shadow-sm overflow-hidden">
+        <div class="px-5 py-4 border-b border-gray-200 dark:border-gray-700">
+          <h2 class="text-sm font-semibold text-gray-900 dark:text-gray-100">Audit Log</h2>
+        </div>
+        <ul class="divide-y divide-gray-100 dark:divide-gray-700 px-5">${auditItems}</ul>
+      </div>
+      <div class="bg-white dark:bg-gray-800 ring-1 ring-gray-200 dark:ring-gray-700 rounded-lg shadow-sm overflow-hidden">
+        <div class="px-5 py-4 border-b border-gray-200 dark:border-gray-700">
+          <h2 class="text-sm font-semibold text-gray-900 dark:text-gray-100">Analytics Snapshot</h2>
+        </div>
+        <ul class="divide-y divide-gray-100 dark:divide-gray-700 px-5">${analyticsItems}</ul>
+      </div>
+    </div>
   </div>`;
 }
 
@@ -873,92 +888,143 @@ function renderStoryTableRows(stories, filters, activeStoryId) {
     const targetLabel = story.publication_target
       ? `${story.publication_target.channel}:${story.publication_target.target_identifier}`
       : "unconfigured";
-    return `<tr class="${story.id === activeStoryId ? "active" : ""}" data-story-href="${escapeAttribute(href)}">
-      <td>
-        <a class="story-title-link" href="${escapeAttribute(href)}">
-          <strong>${escapeHtml(story.title)}</strong>
-          <span>${escapeHtml(truncateText(story.summary ?? story.story_text ?? "", 86))}</span>
+    const isActive = story.id === activeStoryId;
+    return `<tr class="${isActive ? "bg-blue-50 dark:bg-blue-900/20" : "hover:bg-gray-50 dark:hover:bg-gray-700/50"} transition-colors cursor-pointer" data-story-href="${escapeAttribute(href)}">
+      <td class="px-6 py-3">
+        <a class="block" href="${escapeAttribute(href)}">
+          <div class="text-sm font-medium text-gray-900 dark:text-gray-100">${escapeHtml(story.title)}</div>
+          <div class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">${escapeHtml(truncateText(story.summary ?? story.story_text ?? "", 86))}</div>
         </a>
       </td>
-      <td>${escapeHtml(story.audience?.label ?? "Unknown audience")}</td>
-      <td>${renderStatusBadge(story.status)}</td>
-      <td>${renderReviewBadge(story.operator_review_status)}</td>
-      <td>${escapeHtml(story.selected_asset_id ?? "none")}</td>
-      <td>${escapeHtml(targetLabel)}</td>
-      <td>${escapeHtml(formatShortDate(story.updated_at ?? story.created_at))}</td>
+      <td class="px-4 py-3 text-sm text-gray-600 dark:text-gray-300">${escapeHtml(story.audience?.label ?? "Unknown audience")}</td>
+      <td class="px-4 py-3">${renderStatusBadge(story.status)}</td>
+      <td class="px-4 py-3">${renderReviewBadge(story.operator_review_status)}</td>
+      <td class="px-4 py-3 text-xs text-gray-500 dark:text-gray-400 font-mono">${escapeHtml(story.selected_asset_id ?? "none")}</td>
+      <td class="px-4 py-3 text-xs text-gray-500 dark:text-gray-400">${escapeHtml(targetLabel)}</td>
+      <td class="px-4 py-3 text-xs text-gray-500 dark:text-gray-400">${escapeHtml(formatShortDate(story.updated_at ?? story.created_at))}</td>
     </tr>`;
   }).join("");
 }
 
 function renderStoryDetailDrawer({ story, assetCards, publicationItems, reviewItems, metadataJson, selectedAssetId, publicationTarget, closeHref }) {
-  return `<div class="drawer-portal" data-tremor-component="DrawerPortal">
-  <a class="drawer-scrim" href="${escapeAttribute(closeHref)}" aria-label="Close story details"></a>
-  <aside class="story-detail-drawer open" data-tremor-component="Drawer" aria-label="Story details">
-    <div class="drawer-header">
+  return `<div class="fixed inset-0 z-40" data-tremor-component="DrawerPortal">
+  <a class="fixed inset-0 bg-gray-900/50 dark:bg-gray-900/70 backdrop-blur-sm z-40"
+     href="${escapeAttribute(closeHref)}" aria-label="Close story details"></a>
+  <aside class="fixed inset-y-0 right-0 flex w-full max-w-2xl flex-col bg-white dark:bg-gray-800
+                shadow-xl z-50 overflow-hidden"
+         data-tremor-component="Drawer" aria-label="Story details">
+    <div class="sticky top-0 z-10 flex items-start justify-between gap-4 border-b
+                border-gray-200 dark:border-gray-700 bg-white/90 dark:bg-gray-800/90
+                backdrop-blur px-6 py-4">
       <div>
-        <h2>Story Details</h2>
-        <p class="muted">${escapeHtml(story.audience?.label ?? "Unknown audience")}</p>
+        <h2 class="text-base font-semibold text-gray-900 dark:text-gray-100">Story Details</h2>
+        <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">${escapeHtml(story.audience?.label ?? "Unknown audience")}</p>
       </div>
-      <a class="button-like secondary" href="${escapeAttribute(closeHref)}">Close</a>
+      <a class="rounded-md bg-white dark:bg-gray-700 px-3 py-1.5 text-sm font-medium text-gray-700 dark:text-gray-200 ring-1 ring-inset ring-gray-300 dark:ring-gray-600 hover:bg-gray-50 transition-colors"
+         href="${escapeAttribute(closeHref)}">Close</a>
     </div>
-    <div class="drawer-body">
-      <div class="story-meta">
-        <div class="meta-chip"><strong>Pipeline</strong><div>${escapeHtml(story.status)}</div></div>
-        <div class="meta-chip"><strong>Review</strong><div>${escapeHtml(story.operator_review_status)}</div></div>
-        <div class="meta-chip"><strong>Selected Asset</strong><div>${escapeHtml(selectedAssetId || "none")}</div></div>
-        <div class="meta-chip"><strong>Instance</strong><div>${escapeHtml(story.instance?.service_name ?? "unassigned")}</div></div>
-        <div class="meta-chip"><strong>Channel Target</strong><div>${escapeHtml(publicationTarget ? `${publicationTarget.channel}:${publicationTarget.target_identifier}` : "unconfigured")}</div></div>
-      </div>
+    <div class="flex-1 overflow-y-auto px-6 py-5 space-y-6">
+
+      <dl class="grid grid-cols-3 divide-x divide-gray-200 dark:divide-gray-700 border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden">
+        ${[
+          ["Pipeline", story.status],
+          ["Review", story.operator_review_status],
+          ["Asset", selectedAssetId || "none"],
+          ["Instance", story.instance?.service_name ?? "unassigned"],
+          ["Channel", publicationTarget ? `${publicationTarget.channel}:${publicationTarget.target_identifier}` : "unconfigured"]
+        ].map(([k, v]) => `<div class="bg-gray-50 dark:bg-gray-800/50 px-4 py-3">
+          <dt class="text-xs font-medium text-gray-500 dark:text-gray-400">${escapeHtml(k)}</dt>
+          <dd class="mt-0.5 text-sm font-medium text-gray-900 dark:text-gray-100 break-all">${escapeHtml(v)}</dd>
+        </div>`).join("")}
+      </dl>
 
       <section>
-        <div class="section-title"><div><h3>Story Copy</h3><p class="muted">Edit story text and metadata.</p></div></div>
-        <form id="story-form" data-story-id="${escapeAttribute(story.id)}" class="filter-grid">
-          <label>Title
-            <input name="title" value="${escapeAttribute(story.title)}" />
-          </label>
-          <label>Story Text
-            <textarea name="story_text">${escapeHtml(story.story_text)}</textarea>
-          </label>
-          <label>Summary
-            <textarea name="summary">${escapeHtml(story.summary ?? "")}</textarea>
-          </label>
-          <label>Metadata JSON
-            <textarea name="metadata">${metadataJson}</textarea>
-          </label>
-          <div class="button-row"><button type="submit">Save Story</button></div>
-        </form>
-      </section>
-
-      <section class="drawer-section">
-        <div class="section-title"><div><h3>Asset Panel</h3><p class="muted">Select or replace the publish asset.</p></div></div>
-        <div class="asset-grid">${assetCards}</div>
-      </section>
-
-      <section class="drawer-section">
-        <div class="section-title"><div><h3>Publication Queue</h3><p class="muted">Approve with a selected asset before queueing.</p></div></div>
-        <div class="story-meta" style="margin-bottom:12px;">
-          <div class="meta-chip"><strong>Channel</strong><div>${escapeHtml(publicationTarget?.channel ?? "unconfigured")}</div></div>
-          <div class="meta-chip"><strong>Target</strong><div>${escapeHtml(publicationTarget?.target_identifier ?? "unconfigured")}</div></div>
+        <div class="flex items-start justify-between gap-3 mb-4">
+          <div>
+            <h3 class="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Story Copy</h3>
+            <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">Edit story text and metadata.</p>
+          </div>
         </div>
-        <form id="review-form" data-story-id="${escapeAttribute(story.id)}" class="filter-grid">
-          <label>Review Notes
-            <textarea name="review_notes" placeholder="What changed or why is this ready?"></textarea>
+        <form id="story-form" data-story-id="${escapeAttribute(story.id)}" class="space-y-3">
+          <label class="block">
+            <span class="block text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-1.5">Title</span>
+            <input name="title" value="${escapeAttribute(story.title)}"
+                   class="block w-full rounded-md border-0 py-1.5 px-3 text-sm text-gray-900 dark:text-gray-100 dark:bg-gray-700 ring-1 ring-inset ring-gray-300 dark:ring-gray-600 focus:ring-2 focus:ring-blue-500 focus:outline-none" />
           </label>
-          <input type="hidden" name="selected_asset_id" value="${escapeAttribute(selectedAssetId)}" />
-          <div class="button-row">
-            <button type="button" data-review-status="approved">Approve</button>
-            <button type="button" class="secondary" data-review-status="changes_requested">Request Changes</button>
-            <button type="button" class="secondary" data-review-status="rejected">Reject</button>
+          <label class="block">
+            <span class="block text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-1.5">Story Text</span>
+            <textarea name="story_text" rows="5"
+                      class="block w-full rounded-md border-0 py-1.5 px-3 text-sm text-gray-900 dark:text-gray-100 dark:bg-gray-700 ring-1 ring-inset ring-gray-300 dark:ring-gray-600 focus:ring-2 focus:ring-blue-500 focus:outline-none resize-y">${escapeHtml(story.story_text)}</textarea>
+          </label>
+          <label class="block">
+            <span class="block text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-1.5">Summary</span>
+            <textarea name="summary" rows="3"
+                      class="block w-full rounded-md border-0 py-1.5 px-3 text-sm text-gray-900 dark:text-gray-100 dark:bg-gray-700 ring-1 ring-inset ring-gray-300 dark:ring-gray-600 focus:ring-2 focus:ring-blue-500 focus:outline-none resize-y">${escapeHtml(story.summary ?? "")}</textarea>
+          </label>
+          <label class="block">
+            <span class="block text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-1.5">Metadata JSON</span>
+            <textarea name="metadata" rows="4"
+                      class="block w-full rounded-md border-0 py-1.5 px-3 text-sm font-mono text-gray-900 dark:text-gray-100 dark:bg-gray-700 ring-1 ring-inset ring-gray-300 dark:ring-gray-600 focus:ring-2 focus:ring-blue-500 focus:outline-none resize-y">${metadataJson}</textarea>
+          </label>
+          <div class="flex gap-2">
+            <button type="submit" class="rounded-md bg-gray-900 dark:bg-gray-100 px-3 py-1.5 text-sm font-medium text-white dark:text-gray-900 hover:bg-gray-700 dark:hover:bg-gray-200 transition-colors cursor-pointer">Save Story</button>
           </div>
         </form>
-        <div class="button-row" style="margin-top:12px;">
-          <button type="button" id="queue-publication-button" data-story-id="${escapeAttribute(story.id)}">Queue Channel Publication</button>
-        </div>
-        <h3 style="margin:22px 0 8px;">Queued Publications</h3>
-        <ul class="compact">${publicationItems}</ul>
-        <h3 style="margin:22px 0 8px;">Review History</h3>
-        <ul class="compact">${reviewItems}</ul>
       </section>
+
+      <section class="border-t border-gray-200 dark:border-gray-700 pt-5">
+        <div class="flex items-start justify-between gap-3 mb-4">
+          <div>
+            <h3 class="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Asset Panel</h3>
+            <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">Select or replace the publish asset.</p>
+          </div>
+        </div>
+        <div class="grid grid-cols-2 gap-3">${assetCards}</div>
+      </section>
+
+      <section class="border-t border-gray-200 dark:border-gray-700 pt-5">
+        <div class="flex items-start justify-between gap-3 mb-4">
+          <div>
+            <h3 class="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Publication Queue</h3>
+            <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">Approve with a selected asset before queueing.</p>
+          </div>
+        </div>
+        <dl class="grid grid-cols-2 divide-x divide-gray-200 dark:divide-gray-700 border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden mb-4">
+          <div class="bg-gray-50 dark:bg-gray-800/50 px-4 py-3">
+            <dt class="text-xs font-medium text-gray-500 dark:text-gray-400">Channel</dt>
+            <dd class="mt-0.5 text-sm font-medium text-gray-900 dark:text-gray-100">${escapeHtml(publicationTarget?.channel ?? "unconfigured")}</dd>
+          </div>
+          <div class="bg-gray-50 dark:bg-gray-800/50 px-4 py-3">
+            <dt class="text-xs font-medium text-gray-500 dark:text-gray-400">Target</dt>
+            <dd class="mt-0.5 text-sm font-medium text-gray-900 dark:text-gray-100">${escapeHtml(publicationTarget?.target_identifier ?? "unconfigured")}</dd>
+          </div>
+        </dl>
+        <form id="review-form" data-story-id="${escapeAttribute(story.id)}" class="space-y-3">
+          <label class="block">
+            <span class="block text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-1.5">Review Notes</span>
+            <textarea name="review_notes" placeholder="What changed or why is this ready?" rows="3"
+                      class="block w-full rounded-md border-0 py-1.5 px-3 text-sm text-gray-900 dark:text-gray-100 dark:bg-gray-700 ring-1 ring-inset ring-gray-300 dark:ring-gray-600 placeholder:text-gray-400 focus:ring-2 focus:ring-blue-500 focus:outline-none resize-y"></textarea>
+          </label>
+          <input type="hidden" name="selected_asset_id" value="${escapeAttribute(selectedAssetId)}" />
+          <div class="flex flex-wrap gap-2">
+            <button type="button" data-review-status="approved"
+                    class="rounded-md bg-gray-900 dark:bg-gray-100 px-3 py-1.5 text-sm font-medium text-white dark:text-gray-900 hover:bg-gray-700 transition-colors cursor-pointer">Approve</button>
+            <button type="button" data-review-status="changes_requested"
+                    class="rounded-md bg-white dark:bg-gray-700 px-3 py-1.5 text-sm font-medium text-gray-700 dark:text-gray-200 ring-1 ring-inset ring-gray-300 dark:ring-gray-600 hover:bg-gray-50 transition-colors cursor-pointer">Request Changes</button>
+            <button type="button" data-review-status="rejected"
+                    class="rounded-md bg-white dark:bg-gray-700 px-3 py-1.5 text-sm font-medium text-gray-700 dark:text-gray-200 ring-1 ring-inset ring-gray-300 dark:ring-gray-600 hover:bg-gray-50 transition-colors cursor-pointer">Reject</button>
+          </div>
+        </form>
+        <div class="mt-4 flex gap-2">
+          <button type="button" id="queue-publication-button" data-story-id="${escapeAttribute(story.id)}"
+                  class="rounded-md bg-gray-900 dark:bg-gray-100 px-3 py-1.5 text-sm font-medium text-white dark:text-gray-900 hover:bg-gray-700 transition-colors cursor-pointer">Queue Channel Publication</button>
+        </div>
+        <h3 class="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400 mt-5 mb-2">Queued Publications</h3>
+        <ul class="divide-y divide-gray-100 dark:divide-gray-700">${publicationItems}</ul>
+        <h3 class="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400 mt-5 mb-2">Review History</h3>
+        <ul class="divide-y divide-gray-100 dark:divide-gray-700">${reviewItems}</ul>
+      </section>
+
     </div>
   </aside>
 </div>`;
@@ -1658,26 +1724,26 @@ function renderDashboardScript() {
 }
 
 function renderAssetCard(story, asset) {
-  const selected = asset.is_selected ? " selected" : "";
   const replaceUrl = `/api/stories/${story.id}/assets/${asset.id}/replace`;
   const selectUrl = `/api/stories/${story.id}/assets/${asset.id}/select`;
   const previewUrl = asset.preview_url ?? asset.download_url ?? asset.source_asset_url ?? "";
   const preview = previewUrl
     ? renderAssetPreview(asset, previewUrl)
-    : escapeHtml(asset.storage_object?.file_name ?? asset.source_asset_url ?? `${asset.asset_type} asset`);
+    : `<div class="flex items-center justify-center h-24 text-xs text-gray-400 dark:text-gray-500">${escapeHtml(asset.storage_object?.file_name ?? asset.source_asset_url ?? `${asset.asset_type} asset`)}</div>`;
+  const isSelected = asset.is_selected;
 
-  return `<article class="asset-card${selected}" data-asset-card>
-    <div class="asset-preview">${preview}</div>
-    <div class="muted">${escapeHtml(asset.asset_type)} · ${escapeHtml(asset.status)} · ${asset.is_selected ? "selected" : "not selected"}</div>
-    <div class="button-row" style="margin-top:10px;">
-      <button type="button" class="secondary" data-asset-select="${escapeAttribute(selectUrl)}">Select</button>
-    </div>
-    <label style="margin-top:10px;">Replace Asset
-      <input type="file" accept="image/*,video/mp4" />
+  return `<article class="rounded-lg border ${isSelected ? "border-blue-500 ring-1 ring-blue-500" : "border-gray-200 dark:border-gray-700"} bg-white dark:bg-gray-800 p-3 space-y-2" data-asset-card>
+    <div class="rounded-md overflow-hidden bg-gray-100 dark:bg-gray-700 min-h-[96px] flex items-center justify-center">${preview}</div>
+    <p class="text-xs text-gray-500 dark:text-gray-400">${escapeHtml(asset.asset_type)} · ${escapeHtml(asset.status)} · ${isSelected ? "selected" : "not selected"}</p>
+    <button type="button" data-asset-select="${escapeAttribute(selectUrl)}"
+            class="w-full rounded-md bg-white dark:bg-gray-700 px-2 py-1 text-xs font-medium text-gray-700 dark:text-gray-200 ring-1 ring-inset ring-gray-300 dark:ring-gray-600 hover:bg-gray-50 transition-colors cursor-pointer">Select</button>
+    <label class="block">
+      <span class="block text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-1">Replace Asset</span>
+      <input type="file" accept="image/*,video/mp4"
+             class="block w-full text-xs text-gray-500 dark:text-gray-400 file:mr-2 file:rounded file:border-0 file:bg-gray-100 file:px-2 file:py-1 file:text-xs file:font-medium file:text-gray-700 dark:file:bg-gray-700 dark:file:text-gray-300" />
     </label>
-    <div class="button-row" style="margin-top:10px;">
-      <button type="button" data-asset-replace="${escapeAttribute(replaceUrl)}">Upload Replacement</button>
-    </div>
+    <button type="button" data-asset-replace="${escapeAttribute(replaceUrl)}"
+            class="w-full rounded-md bg-gray-900 dark:bg-gray-100 px-2 py-1 text-xs font-medium text-white dark:text-gray-900 hover:bg-gray-700 transition-colors cursor-pointer">Upload Replacement</button>
   </article>`;
 }
 
