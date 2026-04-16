@@ -40,6 +40,15 @@ export function renderSidebarNav(activeTab) {
   </aside>`;
 }
 
+/**
+ * Renders a card container with optional header section.
+ * @param {Object} options
+ * @param {string} [options.title]       - Text content; auto-escaped.
+ * @param {string} [options.description] - Text content; auto-escaped.
+ * @param {string} [options.action]      - Raw HTML slot (pre-rendered, NOT auto-escaped). Caller is responsible for sanitizing any user data.
+ * @param {string} [options.children]    - Raw HTML slot (pre-rendered, NOT auto-escaped). Caller is responsible for sanitizing any user data.
+ * @param {string} [options.className]   - CSS class string; auto-escaped in attribute position.
+ */
 export function renderTremorCard({ title, description = "", action = "", children = "", className = "" }) {
   const header = title || description || action
     ? `<div class="px-5 py-4 border-b border-gray-200 dark:border-gray-700">
