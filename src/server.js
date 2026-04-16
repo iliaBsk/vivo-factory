@@ -2,6 +2,7 @@ import http from "node:http";
 import path from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { readFile } from "node:fs/promises";
 
 import { createApp } from "./app.js";
 import { createAudienceImportService } from "./audience-import.js";
@@ -87,6 +88,19 @@ const app = createApp({
 
 const server = http.createServer(async (request, response) => {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? "127.0.0.1"}`);
+
+  if (url.pathname === "/styles.css") {
+    try {
+      const css = await readFile(new URL("../public/styles.css", import.meta.url), "utf8");
+      response.writeHead(200, { "content-type": "text/css; charset=utf-8" });
+      response.end(css);
+    } catch {
+      response.writeHead(404, { "content-type": "text/plain" });
+      response.end("styles.css not found — run npm run build:css");
+    }
+    return;
+  }
+
   const body = await readRequestBody(request);
   const result = await app.handle({
     method: request.method ?? "GET",

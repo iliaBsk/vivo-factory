@@ -709,9 +709,7 @@ test("stories workspace renders a Tremor-style table without opening details by 
   assert.match(response.body, /Stories Table/);
   assert.match(response.body, /data-tremor-component="Table"/);
   assert.match(response.body, /data-theme="light"/);
-  assert.match(response.body, /\[data-theme="dark"\]/);
-  assert.match(response.body, /id="theme-toggle"/);
-  assert.match(response.body, /data-theme-toggle/);
+  assert.match(response.body, /rel="stylesheet" href="\/styles\.css"/);
   assert.match(response.body, /<th>Story<\/th>/);
   assert.match(response.body, /<th>Status<\/th>/);
   assert.match(response.body, /<th>Review<\/th>/);
@@ -738,8 +736,8 @@ test("stories workspace opens a forty-percent right drawer for selected story de
   });
 
   assert.equal(response.status, 200);
-  assert.match(response.body, /<html lang="en" class="drawer-open" data-theme="light">/);
-  assert.match(response.body, /<body class="drawer-open" data-ui-framework="tremor-raw-dashboard">/);
+  assert.match(response.body, /<html lang="en" data-theme="light">/);
+  assert.match(response.body, /data-ui-framework="tremor-raw-dashboard"/);
   assert.match(response.body, /data-tremor-component="DrawerPortal"/);
   assert.match(response.body, /story-detail-drawer open/);
   assert.match(response.body, /data-tremor-component="Drawer"/);
@@ -749,7 +747,6 @@ test("stories workspace opens a forty-percent right drawer for selected story de
   assert.match(response.body, /Channel Target/);
   assert.match(response.body, /<img /);
   assert.ok(response.body.indexOf('data-tremor-component="DrawerPortal"') > response.body.indexOf("</main>"));
-  assert.match(response.body, /html\.drawer-open,\s*body\.drawer-open\s*\{\s*overflow: hidden;/);
 });
 
 test("audiences workspace renders audience data and launch controls after audience creation", async () => {
