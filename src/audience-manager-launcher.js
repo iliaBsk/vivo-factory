@@ -26,6 +26,12 @@ export function createAudienceManagerLauncher(options = {}) {
         openclaw: instance?.service_name ?? `${audienceKey}-openclaw`,
         profile: instance?.runtime_config?.profile_service_name ?? `${audienceKey}-profile`
       };
+      const profileEngine = {
+        image: runtime.profile_engine_image ?? runtimeConfig.profile_engine_image ?? runtimeConfig.openclaw_image ?? "ghcr.io/openclaw/openclaw:latest",
+        command: runtime.profile_engine_command ?? runtimeConfig.profile_engine_command ?? "profile-engine",
+        healthPath: runtime.profile_engine_health_path ?? runtimeConfig.profile_engine_health_path ?? "/healthz",
+        storagePath: runtime.profile_storage_path ?? runtimeConfig.profile_storage_path ?? "/data/user-profile"
+      };
       const dir = path.resolve(cwd, "generated/audience-managers");
       const envFile = path.join(dir, `${audienceKey}.env`);
       const composeFile = path.join(dir, `${audienceKey}.compose.yml`);
@@ -38,6 +44,7 @@ export function createAudienceManagerLauncher(options = {}) {
       }));
       writeTextFile(composeFile, renderComposeFile({
         openClawImage: runtimeConfig.openclaw_image ?? "ghcr.io/openclaw/openclaw:latest",
+        profileEngine,
         envFile,
         serviceNames
       }));
@@ -77,6 +84,10 @@ export function createAudienceManagerLauncher(options = {}) {
             llm_provider: effectiveLlm.provider,
             llm_model: effectiveLlm.model,
             llm_base_url: effectiveLlm.baseUrl,
+            profile_engine_image: profileEngine.image,
+            profile_engine_command: profileEngine.command,
+            profile_engine_health_path: profileEngine.healthPath,
+            profile_storage_path: profileEngine.storagePath,
             profile_service_name: serviceNames.profile,
             generated_env_file: envFile,
             generated_compose_file: composeFile,
@@ -116,18 +127,20 @@ function renderEnvFile({ audienceKey, runtime, effectiveLlm, pluginPath }) {
   ].join("\n");
 }
 
-function renderComposeFile({ openClawImage, envFile, serviceNames }) {
+function renderComposeFile({ openClawImage, profileEngine, envFile, serviceNames }) {
   return `services:
   ${serviceNames.openclaw}:
     image: ${openClawImage}
     env_file:
       - ${envFile}
   ${serviceNames.profile}:
-    image: ${openClawImage}
-    command: ["profile-engine"]
+    image: ${profileEngine.image}
+    command: ["sh", "-lc", "${escapeComposeCommand(profileEngine.command)}"]
     env_file:
       - ${envFile}
     network_mode: "service:${serviceNames.openclaw}"
+    volumes:
+      - ${profileEngine.storagePath}:/data/user-profile
 `;
 }
 
@@ -153,4 +166,8 @@ function resolveEffectiveLlmConfig(defaults, runtimeConfig) {
 
 async function defaultExec() {
   throw new Error("execImpl is required for audience manager launch");
+}
+
+function escapeComposeCommand(command) {
+  return String(command ?? "profile-engine").replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 }

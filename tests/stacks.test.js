@@ -72,6 +72,9 @@ test("renderDockerCompose emits separate services per audience", async () => {
   const manifests = generateStackManifests([{ audience_id: "aud-1" }, { audience_id: "aud-2" }], {
     openClawImage: "ghcr.io/openclaw/openclaw:latest",
     profilePluginPath: "/plugins/user-profile",
+    profileEngineImage: "ghcr.io/openclaw/marble-profile-service:latest",
+    profileEngineCommand: "node api/profile-server.js",
+    profileStoragePath: "/data/user-profile",
     dashboard: {
       imageName: "vivo-factory-dashboard",
       containerPort: 4310,
@@ -106,9 +109,37 @@ test("renderDockerCompose emits separate services per audience", async () => {
   assert.match(compose, /aud-1-openclaw:/);
   assert.match(compose, /aud-2-openclaw:/);
   assert.match(compose, /network_mode: "service:aud-1-openclaw"/);
+  assert.match(compose, /image: ghcr\.io\/openclaw\/marble-profile-service:latest/);
+  assert.match(compose, /command: \["sh", "-lc", "node api\/profile-server\.js"\]/);
+  assert.match(compose, /- aud-1-profile-data:\/data\/user-profile/);
   assert.match(compose, /TELEGRAM_CHAT_ID: "-1001"/);
   assert.match(compose, /TELEGRAM_BOT_TOKEN: token-1/);
   assert.match(compose, /OPENCLAW_ADMIN_URL: http:\/\/127\.0\.0\.1:7601/);
+});
+
+test("generateStackManifests carries profile engine runtime overrides", async () => {
+  const { generateStackManifests } = await loadStacksModule();
+  const manifests = generateStackManifests([{ audience_id: "aud-1" }], {
+    openClawImage: "ghcr.io/openclaw/openclaw:latest",
+    profilePluginPath: "/plugins/user-profile",
+    profileEngineImage: "ghcr.io/openclaw/marble-profile-service:latest",
+    profileEngineCommand: "node api/profile-server.js",
+    profileStoragePath: "/srv/marble-profile",
+    profileEngineHealthPath: "/healthz",
+    audienceRuntimeConfig: {
+      "aud-1": {
+        telegram_bot_token: "token-1",
+        telegram_chat_id: "-1001",
+        telegram_report_chat_id: "-1002",
+        openclaw_admin_url: "http://127.0.0.1:7601"
+      }
+    }
+  });
+
+  assert.equal(manifests[0].runtime.profile.image, "ghcr.io/openclaw/marble-profile-service:latest");
+  assert.equal(manifests[0].runtime.profile.command, "node api/profile-server.js");
+  assert.equal(manifests[0].runtime.profile.storage_path, "/srv/marble-profile");
+  assert.equal(manifests[0].runtime.profile.health_path, "/healthz");
 });
 
 test("renderDockerCompose emits only the dashboard when no audience manifests exist", async () => {

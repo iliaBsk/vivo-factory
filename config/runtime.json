@@ -3,6 +3,10 @@
   "compose_file": "generated/docker-compose.yml",
   "plugin_base_url_default": "http://127.0.0.1:5400",
   "openclaw_image": "ghcr.io/openclaw/openclaw:latest",
+  "profile_engine_image": "ghcr.io/openclaw/openclaw:latest",
+  "profile_engine_command": "profile-engine",
+  "profile_engine_health_path": "/healthz",
+  "profile_storage_path": "/data/user-profile",
   "profile_plugin_path": "/plugins/user-profile",
   "audiences": {}
 }

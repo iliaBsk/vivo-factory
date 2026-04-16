@@ -1,6 +1,6 @@
 # Vivo Factory
 
-Greenfield control plane for Telegram micro-channels backed by OpenClaw, `user-profile-plugin`, curated affiliate products, and an operator dashboard.
+Greenfield control plane for Telegram micro-channels backed by OpenClaw, a per-audience profile sidecar, curated affiliate products, and an operator dashboard.
 
 ## Commands
 
@@ -29,6 +29,13 @@ docker compose -f generated/docker-compose.yml up -d --build
 ```
 
 Set real Supabase and global LLM credentials in `.env`. Add Telegram channel IDs, Telegram bot token, OpenClaw admin URL, and optional per-audience LLM values in the Audiences screen when launching a deployment.
+
+Profile sidecars can now be configured independently from the OpenClaw image with:
+
+- `profile_engine_image`
+- `profile_engine_command`
+- `profile_engine_health_path`
+- `profile_storage_path`
 
 ## Files
 

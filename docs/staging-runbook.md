@@ -10,7 +10,7 @@ This repository currently provides:
 - a generated full-stack Docker Compose deployment with:
   - one `vivo-factory-dashboard` container
   - one OpenClaw container per audience
-  - one profile-engine sidecar per audience
+  - one profile sidecar per audience
 - operator dashboard for:
   - approval queue
   - story editor
@@ -37,7 +37,7 @@ Install on the staging host:
 - npm 10+
 - Docker and Docker Compose
 
-The generated deployment already places one profile engine next to each OpenClaw audience container. The operator dashboard is built from this repo and joins the same compose deployment.
+The generated deployment already places one profile sidecar next to each OpenClaw audience container. The operator dashboard is built from this repo and joins the same compose deployment.
 
 ## 3. Copy The Repo
 
@@ -82,6 +82,10 @@ Minimum required fields:
   "compose_file": "generated/docker-compose.yml",
   "plugin_base_url_default": "http://127.0.0.1:5400",
   "openclaw_image": "ghcr.io/openclaw/openclaw:latest",
+  "profile_engine_image": "ghcr.io/openclaw/marble-profile-service:latest",
+  "profile_engine_command": "node api/profile-server.js",
+  "profile_engine_health_path": "/healthz",
+  "profile_storage_path": "/data/user-profile",
   "profile_plugin_path": "/plugins/user-profile",
   "audiences": {
     "bald-high-man-early-40s-barcelona": {
@@ -111,6 +115,13 @@ Recommended per audience:
 - `openclaw_chat_path`
 - `openclaw_report_path`
 - `openclaw_health_path`
+
+Recommended global profile sidecar fields:
+
+- `profile_engine_image`
+- `profile_engine_command`
+- `profile_engine_health_path`
+- `profile_storage_path`
 
 If these fields are missing, stack generation and live instance management will fail.
 
@@ -152,7 +163,7 @@ SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
 SUPABASE_STORAGE_BUCKET=vivo-content
 ```
 
-Then bootstrap audience profiles into the per-audience profile engines and provision the Supabase control-plane rows used by the story pipeline.
+Then bootstrap audience profiles into the per-audience profile sidecars and provision the Supabase control-plane rows used by the story pipeline.
 
 Then run:
 
@@ -163,7 +174,7 @@ npm run bootstrap
 Expected result:
 
 - `generated/bootstrap-summary.json` is created
-- audience facts are written through `user-profile-plugin`
+- audience facts are written through the configured profile sidecar
 - audience bootstrap decisions are recorded
 - factory, audience, and instance rows are upserted in Supabase when credentials are configured
 
@@ -189,7 +200,7 @@ The generated compose file now models:
 
 - one `vivo-factory-dashboard` service built from this repo
 - one OpenClaw container per audience
-- one profile engine container per audience, sharing the OpenClaw network namespace
+- one profile sidecar container per audience, sharing the OpenClaw network namespace
 
 The generated OpenClaw service environment now includes:
 
@@ -302,7 +313,7 @@ The dashboard state file stores:
 - operator chat transcripts
 - deployment history
 
-Audience/profile memory itself is intended to live in `user-profile-plugin` storage, not in this repo.
+Audience/profile memory itself is intended to live in the profile sidecar storage volume, not in this repo.
 
 ## 14. Suggested Staging Order
 

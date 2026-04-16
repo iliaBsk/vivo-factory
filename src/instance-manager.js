@@ -10,7 +10,7 @@ export function createInstanceManager(runtimeConfig, options = {}) {
 
   return {
     listInstances() {
-      return Object.entries(config.audiences).map(([audienceId, audienceConfig]) => sanitizeInstanceConfig(audienceId, audienceConfig, config.compose_file));
+      return Object.entries(config.audiences).map(([audienceId, audienceConfig]) => sanitizeInstanceConfig(audienceId, audienceConfig, config));
     },
     getInstanceCommands(audienceId) {
       return buildInstanceCommands(config.compose_file, getInstanceConfig(config, audienceId));
@@ -76,6 +76,10 @@ function validateRuntimeConfig(runtimeConfig) {
   }
   return {
     compose_file: runtimeConfig.compose_file ?? "generated/docker-compose.yml",
+    profile_engine_image: runtimeConfig.profile_engine_image ?? runtimeConfig.openclaw_image ?? "",
+    profile_engine_command: runtimeConfig.profile_engine_command ?? "profile-engine",
+    profile_engine_health_path: runtimeConfig.profile_engine_health_path ?? "/healthz",
+    profile_storage_path: runtimeConfig.profile_storage_path ?? "/data/user-profile",
     audiences
   };
 }
@@ -87,6 +91,10 @@ function getInstanceConfig(runtimeConfig, audienceId) {
   }
   return {
     compose_file: runtimeConfig.compose_file,
+    profile_engine_image: runtimeConfig.profile_engine_image,
+    profile_engine_command: runtimeConfig.profile_engine_command,
+    profile_engine_health_path: runtimeConfig.profile_engine_health_path,
+    profile_storage_path: runtimeConfig.profile_storage_path,
     audience_id: audienceId,
     audience_key: audienceId,
     service_name: `${audienceId}-openclaw`,
@@ -102,9 +110,13 @@ function getInstanceConfig(runtimeConfig, audienceId) {
   };
 }
 
-function sanitizeInstanceConfig(audienceId, audienceConfig, composeFile) {
+function sanitizeInstanceConfig(audienceId, audienceConfig, runtimeConfig) {
   const instance = getInstanceConfig({
-    compose_file: composeFile,
+    compose_file: runtimeConfig.compose_file,
+    profile_engine_image: runtimeConfig.profile_engine_image,
+    profile_engine_command: runtimeConfig.profile_engine_command,
+    profile_engine_health_path: runtimeConfig.profile_engine_health_path,
+    profile_storage_path: runtimeConfig.profile_storage_path,
     audiences: { [audienceId]: audienceConfig }
   }, audienceId);
   return {
@@ -114,6 +126,10 @@ function sanitizeInstanceConfig(audienceId, audienceConfig, composeFile) {
     profile_service_name: instance.profile_service_name,
     plugin_base_url: instance.plugin_base_url,
     openclaw_admin_url: instance.openclaw_admin_url,
+    profile_engine_image: instance.profile_engine_image,
+    profile_engine_command: instance.profile_engine_command,
+    profile_engine_health_path: instance.profile_engine_health_path,
+    profile_storage_path: instance.profile_storage_path,
     telegram_chat_id: instance.telegram_chat_id,
     telegram_report_chat_id: instance.telegram_report_chat_id,
     telegram_bot_token_masked: maskToken(instance.telegram_bot_token),

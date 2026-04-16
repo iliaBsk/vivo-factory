@@ -19,6 +19,10 @@ export function generateStackManifests(audiences, options) {
           report_chat_id: runtimeConfig.telegram_report_chat_id ?? runtimeConfig.telegram_chat_id
         },
         profile: {
+          image: options.profileEngineImage ?? options.openClawImage,
+          command: options.profileEngineCommand ?? "profile-engine",
+          health_path: options.profileEngineHealthPath ?? "/healthz",
+          storage_path: options.profileStoragePath ?? "/data/user-profile",
           port: 7200 + index,
           data_volume: `${audience.audience_id}-profile-data`,
           secret_name: `${audience.audience_id}-profile-secret`
@@ -81,11 +85,11 @@ export function renderDockerCompose(manifests) {
     volumes:
       - ${manifest.runtime.profile.data_volume}:/data/user-profile
   ${profileService}:
-    image: ${manifest.runtime.openclaw.image}
-    command: ["profile-engine"]
+    image: ${manifest.runtime.profile.image}
+    command: ["sh", "-lc", "${escapeComposeCommand(manifest.runtime.profile.command)}"]
     network_mode: "service:${openClawService}"
     volumes:
-      - ${manifest.runtime.profile.data_volume}:/data/user-profile`;
+      - ${manifest.runtime.profile.data_volume}:${manifest.runtime.profile.storage_path}`;
     })
     .join("\n");
 
@@ -96,4 +100,8 @@ export function renderDockerCompose(manifests) {
   const audienceVolumes = volumes ? `\nvolumes:\n${volumes}\n` : "\n";
 
   return `services:\n${dashboardService}${audienceServices}${audienceVolumes}`;
+}
+
+function escapeComposeCommand(command) {
+  return String(command ?? "profile-engine").replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 }

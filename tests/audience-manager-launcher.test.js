@@ -21,6 +21,9 @@ test("createAudienceManagerLauncher writes per-audience env and compose files an
     runtimeConfig: {
       openclaw_image: "ghcr.io/openclaw/openclaw:latest",
       profile_plugin_path: "/plugins/user-profile",
+      profile_engine_image: "ghcr.io/openclaw/marble-profile-service:latest",
+      profile_engine_command: "node api/profile-server.js",
+      profile_storage_path: "/srv/marble-profile",
       audiences: {
         "barcelona-family": {
           plugin_base_url: "http://127.0.0.1:5401",
@@ -62,6 +65,9 @@ test("createAudienceManagerLauncher writes per-audience env and compose files an
   assert.match(fs.readFileSync(result.paths.env_file, "utf8"), /OPENAI_API_KEY=sk-test/);
   assert.match(fs.readFileSync(result.paths.env_file, "utf8"), /LLM_MODEL=gpt-4\.1/);
   assert.match(fs.readFileSync(result.paths.compose_file, "utf8"), /barcelona-family-openclaw:/);
+  assert.match(fs.readFileSync(result.paths.compose_file, "utf8"), /image: ghcr\.io\/openclaw\/marble-profile-service:latest/);
+  assert.match(fs.readFileSync(result.paths.compose_file, "utf8"), /command: \["sh", "-lc", "node api\/profile-server\.js"\]/);
+  assert.match(fs.readFileSync(result.paths.compose_file, "utf8"), /- \/srv\/marble-profile:\/data\/user-profile/);
   assert.deepEqual(execCalls[0], {
     command: "docker",
     args: [
@@ -162,4 +168,43 @@ test("createAudienceManagerLauncher writes launch-time telegram and LLM runtime 
   assert.equal(result.instance_update.profile_base_url, "http://127.0.0.1:5410");
   assert.equal(result.instance_update.runtime_config.telegram_chat_id, "-1003333333333");
   assert.match(result.instance_update.runtime_config.commands.openclaw_shell, /approved-audience-openclaw/);
+});
+
+test("createAudienceManagerLauncher carries profile engine runtime config into instance metadata", async () => {
+  const { createAudienceManagerLauncher } = await loadAudienceManagerLauncherModule();
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "vivo-audience-launcher-profile-engine-"));
+  const launcher = createAudienceManagerLauncher({
+    cwd: tmpDir,
+    runtimeConfig: {
+      openclaw_image: "ghcr.io/openclaw/openclaw:latest",
+      profile_engine_image: "ghcr.io/openclaw/marble-profile-service:latest",
+      profile_engine_command: "node api/profile-server.js",
+      profile_engine_health_path: "/healthz",
+      profile_storage_path: "/srv/marble-profile"
+    },
+    llmDefaults: {
+      provider: "openai",
+      model: "gpt-4.1-mini",
+      apiKey: "sk-test",
+      baseUrl: "https://api.openai.com/v1"
+    },
+    execImpl: async () => ({ exitCode: 0, stdout: "started", stderr: "" })
+  });
+
+  const result = await launcher.launchAudienceManager({
+    id: "aud-1",
+    audience_key: "approved-audience",
+    label: "Approved Audience"
+  }, {
+    id: "inst-1",
+    audience_id: "aud-1",
+    instance_key: "approved-audience-openclaw",
+    service_name: "approved-audience-openclaw",
+    runtime_config: {}
+  });
+
+  assert.equal(result.instance_update.runtime_config.profile_engine_image, "ghcr.io/openclaw/marble-profile-service:latest");
+  assert.equal(result.instance_update.runtime_config.profile_engine_command, "node api/profile-server.js");
+  assert.equal(result.instance_update.runtime_config.profile_engine_health_path, "/healthz");
+  assert.equal(result.instance_update.runtime_config.profile_storage_path, "/srv/marble-profile");
 });

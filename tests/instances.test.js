@@ -17,6 +17,10 @@ async function loadModules() {
 function createRuntimeConfig() {
   return {
     compose_file: "/srv/vivo-factory/generated/docker-compose.yml",
+    profile_engine_image: "ghcr.io/openclaw/marble-profile-service:latest",
+    profile_engine_command: "node api/profile-server.js",
+    profile_engine_health_path: "/healthz",
+    profile_storage_path: "/srv/marble-profile",
     audiences: {
       "bald-high-man-early-40s-barcelona": {
         plugin_base_url: "http://127.0.0.1:5401",
@@ -57,6 +61,10 @@ test("createInstanceManager exposes sanitized per-instance config and validates 
     profile_service_name: "bald-high-man-early-40s-barcelona-profile",
     plugin_base_url: "http://127.0.0.1:5401",
     openclaw_admin_url: "http://127.0.0.1:7601",
+    profile_engine_image: "ghcr.io/openclaw/marble-profile-service:latest",
+    profile_engine_command: "node api/profile-server.js",
+    profile_engine_health_path: "/healthz",
+    profile_storage_path: "/srv/marble-profile",
     telegram_chat_id: "-1001111111111",
     telegram_report_chat_id: "-1002222222222",
     telegram_bot_token_masked: "123456:SECR...OKEN",
