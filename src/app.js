@@ -1053,25 +1053,28 @@ function renderStoryDetailDrawer({ story, assetCards, publicationItems, reviewIt
 
 function renderAudiencesWorkspace({ model, deployments, selectedAudience, selectedAudienceInstance, selectedProfileState, selectedDeployment }) {
   return `<div class="audiences-shell">
-    <section class="panel audience-directory-panel">
-      <div class="panel-inner">
-        <div class="section-title">
-          <div><h2>Audience Directory</h2><p class="muted">Select one audience to inspect Marble state, enrich profile data, and manage runtime delivery.</p></div>
-          <span class="muted">${escapeHtml(String(model.audiences.length))} audiences</span>
-        </div>
-        ${renderAudienceDirectory(model.audiences ?? [], deployments, model.audienceProfiles ?? new Map(), selectedAudience?.id ?? "")}
+    <div class="mb-6">
+      <h1 class="text-lg font-semibold text-gray-900 dark:text-gray-100">Audiences</h1>
+      <p class="text-sm text-gray-500 dark:text-gray-400 mt-0.5">Marble profile state, enrichment, and runtime delivery.</p>
+    </div>
+    <div class="grid gap-6" style="grid-template-columns: 200px minmax(0,1fr) 280px; align-items: start;">
+    <div class="sticky top-0 space-y-0.5">
+      <div class="flex items-start justify-between gap-2 mb-3">
+        <h2 class="text-sm font-semibold text-gray-900 dark:text-gray-100">Audience Directory</h2>
+        <span class="text-xs text-gray-500 dark:text-gray-400">${escapeHtml(String(model.audiences.length))}</span>
       </div>
-    </section>
-    <section class="panel audience-workspace-panel">
-      <div class="panel-inner">
-        <div class="section-title">
-          <div><h2>Audience Workspace</h2><p class="muted">Profile state first, edit surfaces second, delivery runtime last.</p></div></div>
-        ${renderAudienceWorkspaceCanvas(selectedAudience, selectedAudienceInstance, selectedProfileState)}
+      ${renderAudienceDirectory(model.audiences ?? [], deployments, model.audienceProfiles ?? new Map(), selectedAudience?.id ?? "")}
+    </div>
+    <div>
+      <div class="flex items-start justify-between gap-3 mb-4">
+        <h2 class="text-sm font-semibold text-gray-900 dark:text-gray-100">Audience Workspace</h2>
       </div>
-    </section>
-    <section class="workspace-stack audience-inspector-rail">
+      ${renderAudienceWorkspaceCanvas(selectedAudience, selectedAudienceInstance, selectedProfileState)}
+    </div>
+    <div class="sticky top-0 space-y-5">
       ${renderAudienceInspector(selectedAudience, selectedDeployment, deployments)}
-    </section>
+    </div>
+  </div>
   </div>`;
 }
 
@@ -1140,26 +1143,22 @@ function deploymentMatchesAudience(deployment, audience) {
 
 function renderAudienceDirectory(audiences, deployments, audienceProfiles, selectedAudienceId) {
   if (!audiences.length) {
-    return `<div class="empty-card">No audiences are configured.</div>`;
+    return `<div class="rounded-lg border border-dashed border-gray-200 dark:border-gray-700 p-4 text-sm text-gray-500 dark:text-gray-400">No audiences are configured.</div>`;
   }
 
-  return `<div class="audience-directory-list">
+  return `<div class="divide-y divide-gray-100 dark:divide-gray-700">
     ${audiences.map((audience) => {
       const deployment = deployments.find((item) => deploymentMatchesAudience(item, audience)) ?? null;
       const summary = audienceProfiles.get(audience.id)?.summary?.profile ?? {};
       const href = buildAudienceWorkspaceHref(audience.id);
       const isActive = audience.id === selectedAudienceId;
-      return `<a class="audience-directory-row${isActive ? " active" : ""}" href="${escapeAttribute(href)}" data-audience-link="${escapeAttribute(audience.id)}">
-        <div class="audience-directory-head">
-          <strong>${escapeHtml(audience.label ?? audience.audience_key ?? audience.id)}</strong>
+      return `<a class="block py-3 px-2 rounded-md transition-colors ${isActive ? "bg-blue-50 dark:bg-blue-900/20 border-l-2 border-blue-500 pl-3" : "hover:bg-gray-50 dark:hover:bg-gray-800 border-l-2 border-transparent pl-3"}"
+           href="${escapeAttribute(href)}" data-audience-link="${escapeAttribute(audience.id)}">
+        <div class="flex items-start justify-between gap-1 mb-0.5">
+          <span class="text-xs font-semibold text-gray-900 dark:text-gray-100 leading-tight">${escapeHtml(audience.label ?? audience.audience_key ?? audience.id)}</span>
           ${renderTremorBadge(deployment?.status ?? audience.status ?? "draft", { tone: deployment?.status === "active" ? "success" : "neutral" })}
         </div>
-        <div class="muted">${escapeHtml(audience.audience_key ?? audience.id)}</div>
-        <div class="audience-directory-meta">
-          <span>${escapeHtml(formatStructuredText(audience.location, "Location unset"))}</span>
-          <span>${escapeHtml(deployment?.service_name ?? "Instance not launched")}</span>
-        </div>
-        <p class="muted">${escapeHtml(formatStructuredText(summary.reasoning_summary ?? audience.family_context, "No Marble summary stored."))}</p>
+        <p class="text-xs text-gray-500 dark:text-gray-400 leading-snug line-clamp-2">${escapeHtml(formatStructuredText(summary.reasoning_summary ?? audience.family_context, "No summary."))}</p>
       </a>`;
     }).join("")}
   </div>`;
@@ -1167,7 +1166,7 @@ function renderAudienceDirectory(audiences, deployments, audienceProfiles, selec
 
 function renderAudienceWorkspaceCanvas(audience, instance, profileState = {}) {
   if (!audience) {
-    return `<div class="empty-card">Create an audience to unlock Marble profile editing and runtime launch controls.</div>`;
+    return `<div class="rounded-lg border border-dashed border-gray-200 dark:border-gray-700 p-8 text-sm text-gray-500 dark:text-gray-400 text-center">Create an audience to unlock Marble profile editing and runtime launch controls.</div>`;
   }
 
   const summary = profileState.summary?.profile ?? {};
@@ -1190,222 +1189,210 @@ function renderAudienceWorkspaceCanvas(audience, instance, profileState = {}) {
   const interestCount = debug?.memory_nodes?.interests ?? merged.interests.length;
   const preferenceCount = debug?.memory_nodes?.preferences ?? debug?.memory_nodes?.preference_count ?? 0;
   const decisionCount = Array.isArray(debug?.decisions) ? debug.decisions.length : 0;
-  const debugJson = error
-    ? ""
-    : escapeHtml(JSON.stringify(debug ?? {
-        profile: summary,
-        metadata: merged.extra_metadata
-      }, null, 2));
+  const debugJson = error ? "" : escapeHtml(JSON.stringify(debug ?? { profile: summary, metadata: merged.extra_metadata }, null, 2));
 
-  return `<div class="audience-canvas">
-    <section class="audience-hero">
-      <div class="audience-hero-copy">
-        <div class="eyebrow">Selected Audience</div>
-        <h2>${escapeHtml(merged.label || audience.label || audience.audience_key || audience.id)}</h2>
-        <p class="audience-hero-summary">${escapeHtml(merged.family_context || "Family context is not set yet.")}</p>
+  const inputClass = "block w-full rounded-md border-0 py-1.5 px-3 text-sm text-gray-900 dark:text-gray-100 dark:bg-gray-700 ring-1 ring-inset ring-gray-300 dark:ring-gray-600 placeholder:text-gray-400 focus:ring-2 focus:ring-blue-500 focus:outline-none";
+  const labelClass = "block text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-1.5";
+
+  return `<div class="bg-white dark:bg-gray-800 ring-1 ring-gray-200 dark:ring-gray-700 rounded-lg shadow-sm overflow-hidden space-y-0">
+
+    <div class="grid gap-6 p-6" style="grid-template-columns: minmax(0,1fr) 200px;">
+      <div class="space-y-2">
+        <p class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Selected Audience</p>
+        <h2 class="text-2xl font-bold tracking-tight text-gray-900 dark:text-gray-100">${escapeHtml(merged.label || audience.label || audience.audience_key || audience.id)}</h2>
+        <p class="text-sm text-gray-500 dark:text-gray-400 leading-relaxed">${escapeHtml(merged.family_context || "Family context is not set yet.")}</p>
       </div>
-      <div class="audience-hero-meta">
+      <div class="space-y-3">
         ${renderAudienceHeroFact("Audience Key", audience.audience_key ?? audience.id)}
         ${renderAudienceHeroFact("Location", merged.location || "Location unset")}
         ${renderAudienceHeroFact("Language", formatStructuredText(audience.language, "Language unset"))}
         ${renderAudienceHeroFact("Runtime", instance?.status ?? "not launched")}
       </div>
-    </section>
+    </div>
 
-    <section class="audience-summary-strip">
-      ${renderTremorMetric({ value: merged.interests.length || 0, label: "Tracked Interests" })}
-      ${renderTremorMetric({ value: preferenceCount || 0, label: "Preferences" })}
-      ${renderTremorMetric({ value: decisionCount || 0, label: "Decision Events" })}
-      ${renderTremorMetric({ value: merged.updated_at ? formatShortDate(merged.updated_at) : "never", label: "Last Sync" })}
-    </section>
-
-    <section class="audience-module" data-tremor-component="Card">
-      <div class="section-title">
-        <div><h3>Profile Canvas</h3><p class="muted">Current Marble interpretation, summarized for operator review.</p></div>
-        <span class="badge ${error ? "warning" : "ready"}">${escapeHtml(error ? "Marble unavailable" : "Marble connected")}</span>
+    <dl class="grid grid-cols-4 divide-x divide-gray-200 dark:divide-gray-700 border-t border-gray-200 dark:border-gray-700">
+      <div class="px-5 py-4">
+        <dt class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Tracked Interests</dt>
+        <dd class="mt-1 text-2xl font-semibold tracking-tight text-gray-900 dark:text-gray-100">${escapeHtml(String(merged.interests.length || 0))}</dd>
       </div>
-      ${error ? `<div class="empty-card">${escapeHtml(error)}</div>` : ""}
-      <div class="audience-state-grid">
-        <div class="state-card">
-          <span class="state-label">Reasoning Summary</span>
-          <p>${escapeHtml(merged.reasoning_summary || "No Marble summary stored.")}</p>
+      <div class="px-5 py-4">
+        <dt class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Preferences</dt>
+        <dd class="mt-1 text-2xl font-semibold tracking-tight text-gray-900 dark:text-gray-100">${escapeHtml(String(preferenceCount || 0))}</dd>
+      </div>
+      <div class="px-5 py-4">
+        <dt class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Decision Events</dt>
+        <dd class="mt-1 text-2xl font-semibold tracking-tight text-gray-900 dark:text-gray-100">${escapeHtml(String(decisionCount || 0))}</dd>
+      </div>
+      <div class="px-5 py-4">
+        <dt class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Last Sync</dt>
+        <dd class="mt-1 text-2xl font-semibold tracking-tight text-gray-900 dark:text-gray-100 text-base">${escapeHtml(merged.updated_at ? formatShortDate(merged.updated_at) : "never")}</dd>
+      </div>
+    </dl>
+
+    <div class="border-t border-gray-200 dark:border-gray-700 p-6 space-y-4">
+      <div class="flex items-start justify-between gap-3">
+        <div>
+          <h3 class="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Profile Canvas</h3>
+          <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">Current Marble interpretation, summarized for operator review.</p>
         </div>
-        <div class="state-card">
-          <span class="state-label">Audience Shape</span>
-          <ul class="state-list">
-            <li><strong>Tone</strong><span>${escapeHtml(merged.tone || "unset")}</span></li>
-            <li><strong>Shopping Bias</strong><span>${escapeHtml(merged.shopping_bias || "unset")}</span></li>
-            <li><strong>Posting Schedule</strong><span>${escapeHtml(merged.posting_schedule || "unset")}</span></li>
-            <li><strong>Memory Nodes</strong><span>${escapeHtml(String(interestCount))} interests</span></li>
+        ${renderTremorBadge(error ? "Marble unavailable" : "Marble connected", { tone: error ? "warning" : "success" })}
+      </div>
+      ${error ? `<div class="rounded-lg border border-dashed border-yellow-200 dark:border-yellow-800 p-4 text-sm text-yellow-700 dark:text-yellow-400">${escapeHtml(error)}</div>` : ""}
+      <div class="grid grid-cols-2 gap-3">
+        <div class="rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/30 p-4 space-y-2">
+          <span class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Reasoning Summary</span>
+          <p class="text-sm text-gray-700 dark:text-gray-300 leading-relaxed">${escapeHtml(merged.reasoning_summary || "No Marble summary stored.")}</p>
+        </div>
+        <div class="rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/30 p-4 space-y-2">
+          <span class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Audience Shape</span>
+          <ul class="space-y-2 text-sm">
+            <li class="flex justify-between gap-2"><strong class="text-gray-900 dark:text-gray-100">Tone</strong><span class="text-gray-500 dark:text-gray-400">${escapeHtml(merged.tone || "unset")}</span></li>
+            <li class="flex justify-between gap-2"><strong class="text-gray-900 dark:text-gray-100">Shopping Bias</strong><span class="text-gray-500 dark:text-gray-400">${escapeHtml(merged.shopping_bias || "unset")}</span></li>
+            <li class="flex justify-between gap-2"><strong class="text-gray-900 dark:text-gray-100">Posting Schedule</strong><span class="text-gray-500 dark:text-gray-400">${escapeHtml(merged.posting_schedule || "unset")}</span></li>
+            <li class="flex justify-between gap-2"><strong class="text-gray-900 dark:text-gray-100">Memory Nodes</strong><span class="text-gray-500 dark:text-gray-400">${escapeHtml(String(interestCount))} interests</span></li>
           </ul>
         </div>
       </div>
-      <div class="audience-tag-grid">
+      <div class="grid grid-cols-3 gap-3">
         ${renderAudienceTagBlock("Interests", merged.interests)}
         ${renderAudienceTagBlock("Content Pillars", merged.content_pillars)}
         ${renderAudienceTagBlock("Excluded Topics", merged.excluded_topics)}
       </div>
-    </section>
+    </div>
 
-    <section class="audience-module" data-tremor-component="Card">
-      <div class="section-title">
-        <div><h3>Knowledge Inputs</h3><p class="muted">Edit the seeded facts that shape future Marble reads and delivery decisions.</p></div>
+    <div class="border-t border-gray-200 dark:border-gray-700 p-6 space-y-4">
+      <div>
+        <h3 class="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Knowledge Inputs</h3>
+        <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">Edit the seeded facts that shape future Marble reads and delivery decisions.</p>
       </div>
-      <form class="profile-form" data-profile-facts-audience-id="${escapeAttribute(audience.id)}">
-        <div class="launch-grid">
-          <label>Label
-            <input name="label" value="${escapeAttribute(merged.label)}" required />
-          </label>
-          <label>Location
-            <input name="location" value="${escapeAttribute(merged.location)}" required />
-          </label>
-          <label>Family Context
-            <textarea name="family_context" rows="4">${escapeHtml(merged.family_context)}</textarea>
-          </label>
-          <label>Posting Schedule
-            <input name="posting_schedule" value="${escapeAttribute(merged.posting_schedule)}" placeholder="weekday mornings" />
-          </label>
-          <label>Interests
-            <input name="interests" value="${escapeAttribute((merged.interests ?? []).join(", "))}" />
-          </label>
-          <label>Content Pillars
-            <input name="content_pillars" value="${escapeAttribute((merged.content_pillars ?? []).join(", "))}" />
-          </label>
-          <label>Excluded Topics
-            <input name="excluded_topics" value="${escapeAttribute((merged.excluded_topics ?? []).join(", "))}" />
-          </label>
-          <label>Tone
-            <input name="tone" value="${escapeAttribute(merged.tone)}" />
-          </label>
-          <label>Shopping Bias
-            <input name="shopping_bias" value="${escapeAttribute(merged.shopping_bias)}" placeholder="quality-first" />
-          </label>
-          <label>Operator
-            <input name="operator" value="operator@example.com" />
-          </label>
+      <form class="space-y-3" data-profile-facts-audience-id="${escapeAttribute(audience.id)}">
+        <div class="grid grid-cols-2 gap-3">
+          <label class="block"><span class="${labelClass}">Label</span><input name="label" value="${escapeAttribute(merged.label)}" required class="${inputClass}" /></label>
+          <label class="block"><span class="${labelClass}">Location</span><input name="location" value="${escapeAttribute(merged.location)}" required class="${inputClass}" /></label>
+          <label class="block col-span-2"><span class="${labelClass}">Family Context</span><textarea name="family_context" rows="3" class="${inputClass} resize-y">${escapeHtml(merged.family_context)}</textarea></label>
+          <label class="block"><span class="${labelClass}">Posting Schedule</span><input name="posting_schedule" value="${escapeAttribute(merged.posting_schedule)}" placeholder="weekday mornings" class="${inputClass}" /></label>
+          <label class="block"><span class="${labelClass}">Tone</span><input name="tone" value="${escapeAttribute(merged.tone)}" class="${inputClass}" /></label>
+          <label class="block"><span class="${labelClass}">Interests</span><input name="interests" value="${escapeAttribute((merged.interests ?? []).join(", "))}" class="${inputClass}" /></label>
+          <label class="block"><span class="${labelClass}">Content Pillars</span><input name="content_pillars" value="${escapeAttribute((merged.content_pillars ?? []).join(", "))}" class="${inputClass}" /></label>
+          <label class="block"><span class="${labelClass}">Excluded Topics</span><input name="excluded_topics" value="${escapeAttribute((merged.excluded_topics ?? []).join(", "))}" class="${inputClass}" /></label>
+          <label class="block"><span class="${labelClass}">Shopping Bias</span><input name="shopping_bias" value="${escapeAttribute(merged.shopping_bias)}" placeholder="quality-first" class="${inputClass}" /></label>
+          <label class="block"><span class="${labelClass}">Operator</span><input name="operator" value="operator@example.com" class="${inputClass}" /></label>
         </div>
-        <label>Extra Metadata
-          <textarea name="extra_metadata" rows="8" placeholder='{"shopping_data":["Maremagnum"],"event_websites":["https://example.com/events"],"location_notes":["Near Barceloneta"]}'>${escapeHtml(JSON.stringify(merged.extra_metadata ?? {}, null, 2))}</textarea>
-        </label>
-        <div class="button-row launch-actions">
-          <button type="submit">Sync Marble KG</button>
+        <label class="block"><span class="${labelClass}">Extra Metadata</span><textarea name="extra_metadata" rows="6" placeholder='{"shopping_data":["Maremagnum"]}' class="${inputClass} resize-y font-mono">${escapeHtml(JSON.stringify(merged.extra_metadata ?? {}, null, 2))}</textarea></label>
+        <div class="flex justify-end">
+          <button type="submit" class="rounded-md bg-gray-900 dark:bg-gray-100 px-3 py-1.5 text-sm font-medium text-white dark:text-gray-900 hover:bg-gray-700 transition-colors cursor-pointer">Sync Marble KG</button>
         </div>
       </form>
-    </section>
+    </div>
 
-    <section class="audience-module" data-tremor-component="Card">
-      <div class="section-title">
-        <div><h3>Enrichment Feed</h3><p class="muted">Append shopping data, venues, event sites, and operator judgments as structured Marble events.</p></div>
+    <div class="border-t border-gray-200 dark:border-gray-700 p-6 space-y-4">
+      <div>
+        <h3 class="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Enrichment Feed</h3>
+        <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">Append shopping data, venues, event sites, and operator judgments as structured Marble events.</p>
       </div>
-      <form class="profile-form" data-profile-decision-audience-id="${escapeAttribute(audience.id)}">
-        <div class="launch-grid">
-          <label>Decision Type
-            <input name="decision_type" value="operator_enrichment" />
-          </label>
-          <label>Source
-            <input name="source" value="dashboard" />
-          </label>
-          <label>Operator
-            <input name="operator" value="operator@example.com" />
-          </label>
+      <form class="space-y-3" data-profile-decision-audience-id="${escapeAttribute(audience.id)}">
+        <div class="grid grid-cols-2 gap-3">
+          <label class="block"><span class="${labelClass}">Decision Type</span><input name="decision_type" value="operator_enrichment" class="${inputClass}" /></label>
+          <label class="block"><span class="${labelClass}">Source</span><input name="source" value="dashboard" class="${inputClass}" /></label>
+          <label class="block"><span class="${labelClass}">Operator</span><input name="operator" value="operator@example.com" class="${inputClass}" /></label>
         </div>
-        <label>Content JSON
-          <textarea name="content" rows="8" placeholder='{"shopping_data":["Passeig de Gracia"],"event_websites":["https://event-site.example"],"locations":["Barcelona waterfront"]}'>{}</textarea>
-        </label>
-        <div class="button-row launch-actions">
-          <button type="submit" class="secondary">Store Enrichment Event</button>
+        <label class="block"><span class="${labelClass}">Content JSON</span><textarea name="content" rows="6" placeholder='{"shopping_data":["Passeig de Gracia"]}' class="${inputClass} resize-y font-mono">{}</textarea></label>
+        <div class="flex justify-end">
+          <button type="submit" class="rounded-md bg-white dark:bg-gray-700 px-3 py-1.5 text-sm font-medium text-gray-700 dark:text-gray-200 ring-1 ring-inset ring-gray-300 dark:ring-gray-600 hover:bg-gray-50 transition-colors cursor-pointer">Store Enrichment Event</button>
         </div>
       </form>
-      <details class="debug-panel">
-        <summary>Graph Debug</summary>
-        <pre>${debugJson || "No Marble debug payload available."}</pre>
+      <details class="group">
+        <summary class="cursor-pointer text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400 select-none">Graph Debug</summary>
+        <pre class="mt-2 rounded-md bg-gray-100 dark:bg-gray-900 p-3 text-xs font-mono overflow-x-auto leading-relaxed">${debugJson || "No Marble debug payload available."}</pre>
       </details>
-    </section>
+    </div>
 
-    <section class="audience-module" data-tremor-component="Card">
-      <div class="section-title">
-        <div><h3>Runtime Controls</h3><p class="muted">Telegram, sidecar, and runtime overrides written at launch time.</p></div>
+    <div class="border-t border-gray-200 dark:border-gray-700 p-6 space-y-4">
+      <div>
+        <h3 class="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Runtime Controls</h3>
+        <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">Telegram, sidecar, and runtime overrides written at launch time.</p>
       </div>
       ${renderLaunchConfigForm(audience, instance)}
-    </section>
+    </div>
+
   </div>`;
 }
 
 function renderAudienceTagBlock(label, values) {
   const items = normalizeAudienceList(values);
-  return `<div class="state-card">
-    <span class="state-label">${escapeHtml(label)}</span>
-    <div class="pill-line">${items.length ? items.map((value) => `<span class="pill">${escapeHtml(value)}</span>`).join("") : '<span class="pill">None</span>'}</div>
+  return `<div class="rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/30 p-4 space-y-2">
+    <span class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">${escapeHtml(label)}</span>
+    <div class="flex flex-wrap gap-1.5">${items.length
+      ? items.map((v) => `<span class="inline-flex items-center rounded-full border border-gray-200 dark:border-gray-700 px-2.5 py-0.5 text-xs text-gray-500 dark:text-gray-400">${escapeHtml(v)}</span>`).join("")
+      : `<span class="inline-flex items-center rounded-full border border-gray-200 dark:border-gray-700 px-2.5 py-0.5 text-xs text-gray-400 dark:text-gray-500">None</span>`
+    }</div>
   </div>`;
 }
 
 function renderAudienceHeroFact(label, value) {
-  return `<div class="audience-hero-fact">
-    <strong>${escapeHtml(label)}</strong>
-    <span>${escapeHtml(formatStructuredText(value, "unset"))}</span>
+  return `<div class="border-t border-gray-200 dark:border-gray-700 pt-2 first:border-0 first:pt-0">
+    <span class="block text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">${escapeHtml(label)}</span>
+    <span class="block text-sm text-gray-900 dark:text-gray-100 mt-0.5 break-all">${escapeHtml(formatStructuredText(value, "unset"))}</span>
   </div>`;
 }
 
 function renderAudienceInspector(audience, selectedDeployment, deployments) {
   return `
-    <section class="panel">
-      <div class="panel-inner">
-        <div class="section-title">
-          <div><h2>Runtime Snapshot</h2><p class="muted">Current deployment status, exact commands, and service endpoints for the selected audience.</p></div>
-        </div>
-        ${renderSelectedDeployment(selectedDeployment)}
+    <div class="bg-white dark:bg-gray-800 ring-1 ring-gray-200 dark:ring-gray-700 rounded-lg shadow-sm overflow-hidden">
+      <div class="px-4 py-4 border-b border-gray-200 dark:border-gray-700">
+        <h2 class="text-sm font-semibold text-gray-900 dark:text-gray-100">Runtime Snapshot</h2>
+        <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">Current deployment status and service endpoints.</p>
       </div>
-    </section>
-    <section class="panel">
-      <div class="panel-inner">
-        <div class="section-title">
-          <div><h2>Manager Console</h2><p class="muted">Send direct operator feedback to the selected OpenClaw audience manager.</p></div>
-        </div>
-        ${renderOperatorConsole(audience, selectedDeployment)}
+      <div class="px-4 py-4">${renderSelectedDeployment(selectedDeployment)}</div>
+    </div>
+    <div class="bg-white dark:bg-gray-800 ring-1 ring-gray-200 dark:ring-gray-700 rounded-lg shadow-sm overflow-hidden">
+      <div class="px-4 py-4 border-b border-gray-200 dark:border-gray-700">
+        <h2 class="text-sm font-semibold text-gray-900 dark:text-gray-100">Manager Console</h2>
+        <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">Send direct operator feedback to the selected OpenClaw audience manager.</p>
       </div>
-    </section>
-    <section class="panel">
-      <div class="panel-inner">
-        <div class="section-title">
-          <div><h2>Live Deployments</h2><p class="muted">Instance index across the factory, grouped for fast scanning.</p></div>
-        </div>
-        ${renderDeploymentIndex(deployments)}
+      <div class="px-4 py-4">${renderOperatorConsole(audience, selectedDeployment)}</div>
+    </div>
+    <div class="bg-white dark:bg-gray-800 ring-1 ring-gray-200 dark:ring-gray-700 rounded-lg shadow-sm overflow-hidden">
+      <div class="px-4 py-4 border-b border-gray-200 dark:border-gray-700">
+        <h2 class="text-sm font-semibold text-gray-900 dark:text-gray-100">Live Deployments</h2>
+        <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">Instance index across the factory.</p>
       </div>
-    </section>`;
+      <div class="px-4 py-4">${renderDeploymentIndex(deployments)}</div>
+    </div>`;
 }
 
 function renderSelectedDeployment(instance) {
   if (!instance) {
-    return `<div class="empty-card">No deployment selected.</div>`;
+    return `<div class="rounded-lg border border-dashed border-gray-200 dark:border-gray-700 p-4 text-sm text-gray-500 dark:text-gray-400">No deployment selected.</div>`;
   }
 
   const actions = instance.source === "static"
-    ? `<div class="instance-actions">
-          <button type="button" data-instance-action="deploy" data-audience-id="${escapeAttribute(instance.audience_id)}">Deploy</button>
-          <button type="button" data-instance-action="health" data-audience-id="${escapeAttribute(instance.audience_id)}">Health</button>
-          <button type="button" data-instance-action="report" data-audience-id="${escapeAttribute(instance.audience_id)}">Report</button>
-          <button type="button" data-instance-action="logs" data-audience-id="${escapeAttribute(instance.audience_id)}">Logs</button>
-        </div>`
+    ? `<div class="flex flex-wrap gap-2 mt-3">
+        <button type="button" data-instance-action="deploy" data-audience-id="${escapeAttribute(instance.audience_id)}" class="rounded-md bg-gray-900 dark:bg-gray-100 px-2.5 py-1 text-xs font-medium text-white dark:text-gray-900 hover:bg-gray-700 transition-colors cursor-pointer">Deploy</button>
+        <button type="button" data-instance-action="health" data-audience-id="${escapeAttribute(instance.audience_id)}" class="rounded-md bg-white dark:bg-gray-700 px-2.5 py-1 text-xs font-medium text-gray-700 dark:text-gray-200 ring-1 ring-inset ring-gray-300 dark:ring-gray-600 hover:bg-gray-50 transition-colors cursor-pointer">Health</button>
+        <button type="button" data-instance-action="report" data-audience-id="${escapeAttribute(instance.audience_id)}" class="rounded-md bg-white dark:bg-gray-700 px-2.5 py-1 text-xs font-medium text-gray-700 dark:text-gray-200 ring-1 ring-inset ring-gray-300 dark:ring-gray-600 hover:bg-gray-50 transition-colors cursor-pointer">Report</button>
+        <button type="button" data-instance-action="logs" data-audience-id="${escapeAttribute(instance.audience_id)}" class="rounded-md bg-white dark:bg-gray-700 px-2.5 py-1 text-xs font-medium text-gray-700 dark:text-gray-200 ring-1 ring-inset ring-gray-300 dark:ring-gray-600 hover:bg-gray-50 transition-colors cursor-pointer">Logs</button>
+      </div>`
     : "";
 
-  return `<div class="deployment-inspector">
-    <div class="instance-heading">
-      <strong>${escapeHtml(instance.service_name ?? instance.audience_id)}</strong>
+  return `<div class="space-y-3">
+    <div class="flex items-center justify-between gap-2">
+      <strong class="text-sm font-semibold text-gray-900 dark:text-gray-100">${escapeHtml(instance.service_name ?? instance.audience_id)}</strong>
       ${renderTremorBadge(instance.status ?? "configured", { tone: instance.status === "active" ? "success" : "neutral" })}
     </div>
-    <div class="instance-meta">
-      <span>Audience: ${escapeHtml(instance.audience_key ?? instance.audience_id)}</span>
-      <span>Chat: ${escapeHtml(instance.telegram_chat_id || "unset")}</span>
-      <span>Report: ${escapeHtml(instance.telegram_report_chat_id || "unset")}</span>
-      <span>Admin: ${escapeHtml(instance.openclaw_admin_url || "unset")}</span>
-      <span>Profile: ${escapeHtml(instance.profile_service_name || "unset")}</span>
-      <span>LLM: ${escapeHtml(instance.llm_model || "default")}</span>
-      ${instance.env_file ? `<span>Env: ${escapeHtml(instance.env_file)}</span>` : ""}
-    </div>
+    <dl class="space-y-1.5 text-xs text-gray-500 dark:text-gray-400">
+      <div class="flex justify-between gap-2"><dt>Audience</dt><dd class="text-gray-700 dark:text-gray-300 break-all">${escapeHtml(instance.audience_key ?? instance.audience_id)}</dd></div>
+      <div class="flex justify-between gap-2"><dt>Chat</dt><dd class="text-gray-700 dark:text-gray-300">${escapeHtml(instance.telegram_chat_id || "unset")}</dd></div>
+      <div class="flex justify-between gap-2"><dt>Report</dt><dd class="text-gray-700 dark:text-gray-300">${escapeHtml(instance.telegram_report_chat_id || "unset")}</dd></div>
+      <div class="flex justify-between gap-2"><dt>Admin</dt><dd class="text-gray-700 dark:text-gray-300 break-all">${escapeHtml(instance.openclaw_admin_url || "unset")}</dd></div>
+      <div class="flex justify-between gap-2"><dt>Profile</dt><dd class="text-gray-700 dark:text-gray-300">${escapeHtml(instance.profile_service_name || "unset")}</dd></div>
+      <div class="flex justify-between gap-2"><dt>LLM</dt><dd class="text-gray-700 dark:text-gray-300">${escapeHtml(instance.llm_model || "default")}</dd></div>
+      ${instance.env_file ? `<div class="flex justify-between gap-2"><dt>Env</dt><dd class="text-gray-700 dark:text-gray-300 break-all">${escapeHtml(instance.env_file)}</dd></div>` : ""}
+    </dl>
     ${actions}
-    <details class="debug-panel">
-      <summary>Runtime Commands</summary>
-      <div class="command-list">
+    <details class="group">
+      <summary class="cursor-pointer text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400 select-none">Runtime Commands</summary>
+      <div class="mt-2 space-y-2">
         ${renderCommandBlock("OpenClaw Shell", instance.commands?.openclaw_shell)}
         ${renderCommandBlock("Profile Shell", instance.commands?.profile_shell)}
         ${renderCommandBlock("OpenClaw Env", instance.commands?.openclaw_env)}
@@ -1420,36 +1407,31 @@ function renderOperatorConsole(audience, selectedDeployment) {
   const audienceId = audience?.id ?? selectedDeployment?.audience_id ?? "";
   const audienceKey = audience?.audience_key ?? selectedDeployment?.audience_key ?? audienceId;
   if (!audienceId) {
-    return `<div class="empty-card">Select an audience or launch a deployment to send operator feedback.</div>`;
+    return `<div class="rounded-lg border border-dashed border-gray-200 dark:border-gray-700 p-4 text-sm text-gray-500 dark:text-gray-400">Select an audience or launch a deployment to send operator feedback.</div>`;
   }
-  return `<form class="profile-form" data-instance-chat-form="${escapeAttribute(audienceId)}">
-    <label>Audience ID
-      <input name="audience_id" value="${escapeAttribute(audienceId)}" placeholder="barcelona-family" />
-    </label>
-    <label>Audience Key
-      <input value="${escapeAttribute(audienceKey)}" disabled />
-    </label>
-    <label>Message
-      <textarea name="message" rows="5" placeholder="Use the new Marble enrichment data when refining venue and product selections."></textarea>
-    </label>
-    <label>Operator
-      <input name="operator" value="operator@example.com" />
-    </label>
-    <div class="button-row">
-      <button type="submit">Send To Instance</button>
+  const inputClass = "block w-full rounded-md border-0 py-1.5 px-3 text-sm text-gray-900 dark:text-gray-100 dark:bg-gray-700 ring-1 ring-inset ring-gray-300 dark:ring-gray-600 placeholder:text-gray-400 focus:ring-2 focus:ring-blue-500 focus:outline-none";
+  const labelClass = "block text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-1.5";
+  return `<form class="space-y-3" data-instance-chat-form="${escapeAttribute(audienceId)}">
+    <label class="block"><span class="${labelClass}">Audience ID</span><input name="audience_id" value="${escapeAttribute(audienceId)}" class="${inputClass}" /></label>
+    <label class="block"><span class="${labelClass}">Audience Key</span><input value="${escapeAttribute(audienceKey)}" disabled class="${inputClass} opacity-60" /></label>
+    <label class="block"><span class="${labelClass}">Message</span><textarea name="message" rows="4" placeholder="Use the new Marble enrichment data when refining venue and product selections." class="${inputClass} resize-y"></textarea></label>
+    <label class="block"><span class="${labelClass}">Operator</span><input name="operator" value="operator@example.com" class="${inputClass}" /></label>
+    <div class="flex justify-end">
+      <button type="submit" class="rounded-md bg-gray-900 dark:bg-gray-100 px-3 py-1.5 text-sm font-medium text-white dark:text-gray-900 hover:bg-gray-700 transition-colors cursor-pointer">Send To Instance</button>
     </div>
   </form>`;
 }
 
 function renderDeploymentIndex(deployments) {
   if (!deployments.length) {
-    return `<div class="empty-card">No deployments</div>`;
+    return `<div class="rounded-lg border border-dashed border-gray-200 dark:border-gray-700 p-4 text-sm text-gray-500 dark:text-gray-400">No deployments</div>`;
   }
-
-  return `<div class="deployment-index">
-    ${deployments.map((instance) => `<div class="deployment-index-row">
-      <strong>${escapeHtml(instance.audience_key ?? instance.audience_id)}</strong>
-      <span>${escapeHtml(instance.service_name ?? "unset")}</span>
+  return `<div class="divide-y divide-gray-100 dark:divide-gray-700">
+    ${deployments.map((instance) => `<div class="flex items-center justify-between gap-2 py-2.5">
+      <div>
+        <strong class="block text-xs font-semibold text-gray-900 dark:text-gray-100">${escapeHtml(instance.audience_key ?? instance.audience_id)}</strong>
+        <span class="text-xs text-gray-500 dark:text-gray-400">${escapeHtml(instance.service_name ?? "unset")}</span>
+      </div>
       ${renderTremorBadge(instance.status ?? "configured", { tone: instance.status === "active" ? "success" : "neutral" })}
     </div>`).join("")}
   </div>`;
@@ -1891,38 +1873,25 @@ function renderCommandBlock(label, command) {
   if (!command) {
     return "";
   }
-  return `<div class="command-block"><strong>${escapeHtml(label)}</strong><code>${escapeHtml(command)}</code></div>`;
+  return `<div class="space-y-1">
+    <span class="block text-xs font-medium text-gray-500 dark:text-gray-400">${escapeHtml(label)}</span>
+    <code class="block rounded-md bg-gray-100 dark:bg-gray-900 px-3 py-2 text-xs font-mono text-gray-800 dark:text-gray-300 overflow-x-auto">${escapeHtml(command)}</code>
+  </div>`;
 }
 
 function renderAudienceFields(audience) {
+  const inputClass = "block w-full rounded-md border-0 py-1.5 px-3 text-sm text-gray-900 dark:text-gray-100 dark:bg-gray-700 ring-1 ring-inset ring-gray-300 dark:ring-gray-600 placeholder:text-gray-400 focus:ring-2 focus:ring-blue-500 focus:outline-none";
+  const labelClass = "block text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-1.5";
   return `
-    <label>Label
-      <input name="label" value="${escapeAttribute(audience.label ?? "")}" />
-    </label>
-    <label>Language
-      <input name="language" value="${escapeAttribute(audience.language ?? "")}" />
-    </label>
-    <label>Location
-      <input name="location" value="${escapeAttribute(audience.location ?? "")}" />
-    </label>
-    <label>Family Context
-      <textarea name="family_context">${escapeHtml(audience.family_context ?? "")}</textarea>
-    </label>
-    <label>Interests
-      <input name="interests" value="${escapeAttribute((audience.interests ?? []).join(", "))}" />
-    </label>
-    <label>Content Pillars
-      <input name="content_pillars" value="${escapeAttribute((audience.content_pillars ?? []).join(", "))}" />
-    </label>
-    <label>Excluded Topics
-      <input name="excluded_topics" value="${escapeAttribute((audience.excluded_topics ?? []).join(", "))}" />
-    </label>
-    <label>Tone
-      <input name="tone" value="${escapeAttribute(audience.tone ?? "")}" />
-    </label>
-    <label>Status
-      <input name="status" value="${escapeAttribute(audience.status ?? "")}" />
-    </label>
+    <label class="block"><span class="${labelClass}">Label</span><input name="label" value="${escapeAttribute(audience.label ?? "")}" class="${inputClass}" /></label>
+    <label class="block"><span class="${labelClass}">Language</span><input name="language" value="${escapeAttribute(audience.language ?? "")}" class="${inputClass}" /></label>
+    <label class="block"><span class="${labelClass}">Location</span><input name="location" value="${escapeAttribute(audience.location ?? "")}" class="${inputClass}" /></label>
+    <label class="block"><span class="${labelClass}">Family Context</span><textarea name="family_context" class="${inputClass} resize-y">${escapeHtml(audience.family_context ?? "")}</textarea></label>
+    <label class="block"><span class="${labelClass}">Interests</span><input name="interests" value="${escapeAttribute((audience.interests ?? []).join(", "))}" class="${inputClass}" /></label>
+    <label class="block"><span class="${labelClass}">Content Pillars</span><input name="content_pillars" value="${escapeAttribute((audience.content_pillars ?? []).join(", "))}" class="${inputClass}" /></label>
+    <label class="block"><span class="${labelClass}">Excluded Topics</span><input name="excluded_topics" value="${escapeAttribute((audience.excluded_topics ?? []).join(", "))}" class="${inputClass}" /></label>
+    <label class="block"><span class="${labelClass}">Tone</span><input name="tone" value="${escapeAttribute(audience.tone ?? "")}" class="${inputClass}" /></label>
+    <label class="block"><span class="${labelClass}">Status</span><input name="status" value="${escapeAttribute(audience.status ?? "")}" class="${inputClass}" /></label>
   `;
 }
 
