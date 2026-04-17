@@ -1095,3 +1095,150 @@ test("POST /api/instances/:audienceId/chat persists user and assistant messages 
   assert.equal(messages[1].role, "assistant");
   assert.equal(messages[1].content, "**Hello from AI**");
 });
+
+test("POST /api/audiences/:id/fetch-content creates a job and returns job_id", async () => {
+  const { createRepository, createApp } = await loadModules();
+  const repo = createRepository({ audiences: [createSeed().audiences[0]] });
+  const dispatchCalls = [];
+  const app = createApp({
+    repository: repo,
+    clock: () => "2026-04-17T09:00:00.000Z",
+    dispatchFetch: async (audience, instance, jobId, opts) => {
+      dispatchCalls.push({ audienceId: audience.id, jobId, opts });
+    }
+  });
+
+  const result = await app.handle({
+    method: "POST",
+    pathname: "/api/audiences/aud-1/fetch-content",
+    query: {},
+    body: JSON.stringify({ limit: 10 })
+  });
+
+  assert.equal(result.status, 200);
+  const body = JSON.parse(result.body);
+  assert.ok(body.job_id, "should return a job_id");
+  const job = repo.getJob(body.job_id);
+  assert.ok(job, "job should exist in repository");
+  assert.equal(job.audience_id, "aud-1");
+  assert.equal(job.status, "pending");
+});
+
+test("POST /api/audiences/:id/fetch-content returns 404 when dispatchFetch not configured", async () => {
+  const { createRepository, createApp } = await loadModules();
+  const repo = createRepository({ audiences: [createSeed().audiences[0]] });
+  const app = createApp({ repository: repo });
+
+  const result = await app.handle({
+    method: "POST",
+    pathname: "/api/audiences/aud-1/fetch-content",
+    query: {},
+    body: ""
+  });
+
+  assert.equal(result.status, 404);
+});
+
+test("GET /api/jobs/:jobId returns job status", async () => {
+  const { createRepository, createApp } = await loadModules();
+  const repo = createRepository({ audiences: [createSeed().audiences[0]] });
+  const job = repo.createJob({ audience_id: "aud-1" });
+  const app = createApp({ repository: repo });
+
+  const result = await app.handle({
+    method: "GET",
+    pathname: `/api/jobs/${job.id}`,
+    query: {},
+    body: ""
+  });
+
+  assert.equal(result.status, 200);
+  const body = JSON.parse(result.body);
+  assert.equal(body.id, job.id);
+  assert.equal(body.status, "pending");
+});
+
+test("GET /api/jobs/:jobId returns 404 for unknown job", async () => {
+  const { createRepository, createApp } = await loadModules();
+  const repo = createRepository({});
+  const app = createApp({ repository: repo });
+
+  const result = await app.handle({
+    method: "GET",
+    pathname: "/api/jobs/nonexistent-id",
+    query: {},
+    body: ""
+  });
+
+  assert.equal(result.status, 404);
+});
+
+test("POST /api/audiences/:id/sources adds custom source to instance runtime_config", async () => {
+  const { createRepository, createApp } = await loadModules();
+  const seed = createSeed();
+  const repo = createRepository({ audiences: seed.audiences, instances: seed.instances });
+  const app = createApp({ repository: repo, clock: () => "2026-04-17T10:00:00.000Z" });
+
+  const result = await app.handle({
+    method: "POST",
+    pathname: "/api/audiences/aud-1/sources",
+    query: {},
+    body: JSON.stringify({
+      source: { type: "rss", url: "https://myfeed.com/rss", category: "news", weight: 0.8 }
+    })
+  });
+
+  assert.equal(result.status, 200);
+  const body = JSON.parse(result.body);
+  assert.ok(body.source_id, "should return source_id");
+  const instance = repo.getInstance("inst-1");
+  const customSources = instance.runtime_config?.custom_sources ?? [];
+  assert.equal(customSources.length, 1);
+  assert.equal(customSources[0].url, "https://myfeed.com/rss");
+});
+
+test("POST /api/audiences/:id/publish-recap publishes ready_to_publish+approved stories", async () => {
+  const { createRepository, createApp } = await loadModules();
+  const seed = createSeed();
+  const repo = createRepository({
+    audiences: seed.audiences,
+    instances: [{ ...seed.instances[0], openclaw_admin_url: "http://127.0.0.1:18801" }]
+  });
+  const story = repo.createStory({
+    factory_id: "factory-1", audience_id: "aud-1", instance_id: "inst-1",
+    story_key: "recap-story-1", title: "Daily News",
+    story_text: "Today in Barcelona something great happened.",
+    summary: "Today in Barcelona", source_kind: "rss",
+    primary_source_url: "https://example.com/news/1"
+  });
+  repo.transitionStoryStatus(story.id, "ready_to_publish");
+  repo.submitStoryReview(story.id, {
+    review_status: "approved", review_notes: "", actor_id: "op-1", selected_asset_id: null, payload: {}
+  });
+
+  const openclawRequests = [];
+  const app = createApp({
+    repository: repo,
+    clock: () => "2026-04-17T10:00:00.000Z",
+    fetchImpl: async (url, opts) => {
+      openclawRequests.push({ url, body: JSON.parse(opts.body) });
+      return { ok: true, json: async () => ({ ok: true }) };
+    }
+  });
+
+  const result = await app.handle({
+    method: "POST",
+    pathname: "/api/audiences/aud-1/publish-recap",
+    query: {},
+    body: ""
+  });
+
+  assert.equal(result.status, 200);
+  const body = JSON.parse(result.body);
+  assert.equal(body.published, 1);
+  assert.equal(openclawRequests.length, 1);
+  assert.ok(openclawRequests[0].url.includes("/api/send"));
+  assert.ok(openclawRequests[0].body.message.includes("Daily News"));
+  const published = repo.getStory(story.id);
+  assert.equal(published.status, "published");
+});

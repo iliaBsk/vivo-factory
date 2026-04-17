@@ -16,6 +16,8 @@ export function createApp(options) {
   const audienceManagerLauncher = options.audienceManagerLauncher ?? null;
   const publicationTargetResolver = options.publicationTargetResolver ?? (() => null);
   const clock = options.clock ?? (() => new Date().toISOString());
+  const dispatchFetch = options.dispatchFetch ?? null;
+  const fetchImpl = options.fetchImpl ?? globalThis.fetch;
 
   return {
     async handle(request) {
@@ -28,6 +30,8 @@ export function createApp(options) {
           audienceImportService,
           audienceManagerLauncher,
           publicationTargetResolver,
+          dispatchFetch,
+          fetchImpl,
           clock,
           request
         });
@@ -47,6 +51,8 @@ async function handleRequest(context) {
     audienceImportService,
     audienceManagerLauncher,
     publicationTargetResolver,
+    dispatchFetch,
+    fetchImpl,
     clock,
     request
   } = context;
@@ -524,6 +530,111 @@ async function handleRequest(context) {
       instances,
       chatHistory
     }));
+  }
+
+  // POST /api/audiences/:id/fetch-content
+  if (request.method === "POST" && matchPath(request.pathname, /^\/api\/audiences\/([^/]+)\/fetch-content$/)) {
+    if (!dispatchFetch) {
+      return json(404, { error: "Content fetching is not configured." });
+    }
+    const audienceId = request.pathname.split("/")[3];
+    const audience = await repository.getAudience(audienceId);
+    if (!audience) {
+      return json(404, { error: "Audience not found" });
+    }
+    const body = readBody(request.body);
+    const instance = typeof repository.getInstanceByAudience === "function"
+      ? await safeLoad(() => repository.getInstanceByAudience(audienceId), null)
+      : null;
+    const job = await repository.createJob({ audience_id: audienceId }, { timestamp: clock() });
+    dispatchFetch(audience, instance, job.id, { limit: body.limit ?? 20 }).catch(() => {});
+    return json(200, { job_id: job.id });
+  }
+
+  // GET /api/jobs/:jobId
+  if (request.method === "GET" && matchPath(request.pathname, /^\/api\/jobs\/([^/]+)$/)) {
+    const jobId = request.pathname.split("/")[3];
+    const job = await repository.getJob(jobId);
+    return job ? json(200, job) : json(404, { error: "Job not found" });
+  }
+
+  // POST /api/audiences/:id/sources
+  if (request.method === "POST" && matchPath(request.pathname, /^\/api\/audiences\/([^/]+)\/sources$/)) {
+    const audienceId = request.pathname.split("/")[3];
+    const audience = await repository.getAudience(audienceId);
+    if (!audience) {
+      return json(404, { error: "Audience not found" });
+    }
+    const body = readBody(request.body);
+    const source = body.source ?? {};
+    if (!source.url && !source.merchant_id) {
+      return json(400, { error: "source must have url or merchant_id" });
+    }
+    const instance = typeof repository.getInstanceByAudience === "function"
+      ? await safeLoad(() => repository.getInstanceByAudience(audienceId), null)
+      : null;
+    if (!instance) {
+      return json(404, { error: "No instance configured for this audience." });
+    }
+    const { randomUUID } = await import("node:crypto");
+    const newSource = { id: randomUUID(), ...source };
+    const customSources = instance.runtime_config?.custom_sources ?? [];
+    await repository.updateInstance(instance.id, {
+      runtime_config: { ...instance.runtime_config, custom_sources: [...customSources, newSource] }
+    }, { actorId: "system", timestamp: clock() });
+    return json(200, { source_id: newSource.id });
+  }
+
+  // POST /api/audiences/:id/publish-recap
+  if (request.method === "POST" && matchPath(request.pathname, /^\/api\/audiences\/([^/]+)\/publish-recap$/)) {
+    const audienceId = request.pathname.split("/")[3];
+    const audience = await repository.getAudience(audienceId);
+    if (!audience) {
+      return json(404, { error: "Audience not found" });
+    }
+    const body = readBody(request.body);
+    const instance = typeof repository.getInstanceByAudience === "function"
+      ? await safeLoad(() => repository.getInstanceByAudience(audienceId), null)
+      : null;
+    const openclawUrl = instance?.openclaw_admin_url ?? "";
+    if (!openclawUrl) {
+      return json(409, { error: "No OpenClaw admin URL configured for this audience." });
+    }
+    const allReady = (await repository.listStories({ audience_id: audienceId }))
+      .filter((s) => s.status === "ready_to_publish" && s.operator_review_status === "approved");
+    const toPublish = body.story_ids?.length
+      ? allReady.filter((s) => body.story_ids.includes(s.id))
+      : allReady;
+
+    let published = 0;
+    for (const story of toPublish) {
+      try {
+        const message = [
+          `<b>${escapeHtml(story.title)}</b>`,
+          story.story_text,
+          story.primary_source_url ?? ""
+        ].filter(Boolean).join("\n\n");
+        await fetchImpl(`${openclawUrl}/api/send`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ channel: "telegram", message })
+        });
+        await repository.transitionStoryStatus(story.id, "published", {
+          actorId: "system",
+          timestamp: clock()
+        });
+        await repository.updateStory(story.id, {
+          metadata: { ...story.metadata, published_at: clock() }
+        }, { actorId: "system", timestamp: clock() });
+        published++;
+      } catch {
+        await repository.transitionStoryStatus(story.id, "failed", {
+          actorId: "system",
+          timestamp: clock()
+        }).catch(() => {});
+      }
+    }
+    return json(200, { published });
   }
 
   return json(404, { error: "Not found" });
