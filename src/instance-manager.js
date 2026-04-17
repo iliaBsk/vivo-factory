@@ -67,9 +67,6 @@ async function defaultExec(command, args) {
 function validateRuntimeConfig(runtimeConfig) {
   const audiences = runtimeConfig.audiences ?? {};
   for (const [audienceId, config] of Object.entries(audiences)) {
-    if (!config.telegram_bot_token || !config.telegram_chat_id) {
-      throw new Error(`Audience ${audienceId} must define telegram_bot_token and telegram_chat_id`);
-    }
     if (!config.openclaw_admin_url) {
       throw new Error(`Audience ${audienceId} must define openclaw_admin_url`);
     }
