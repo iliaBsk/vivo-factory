@@ -244,7 +244,7 @@ test("createAudienceManagerLauncher writes vivoFactoryUrl into openclaw.json ext
   const configFile = path.join(tmpDir, "generated/audience-managers/test-audience-openclaw-config/openclaw.json");
   assert.ok(fs.existsSync(configFile), "openclaw.json was not written");
   const written = JSON.parse(fs.readFileSync(configFile, "utf8"));
-  assert.equal(written.extensions?.["user-profile"]?.vivoFactoryUrl, "http://host.docker.internal:4310");
+  assert.equal(written.plugins?.entries?.["user-profile"]?.config?.vivoFactoryUrl, "http://host.docker.internal:4310");
 });
 
 test("createAudienceManagerLauncher merges vivoFactoryUrl into existing openclaw.json without overwriting other keys", async () => {
@@ -255,7 +255,7 @@ test("createAudienceManagerLauncher merges vivoFactoryUrl into existing openclaw
   fs.mkdirSync(configDir, { recursive: true });
   fs.writeFileSync(path.join(configDir, "openclaw.json"), JSON.stringify({
     gateway: { auth: { mode: "token", token: "existing-token" } },
-    extensions: { "user-profile": { baseUrl: "http://127.0.0.1:5400" } }
+    plugins: { entries: { "user-profile": { config: { baseUrl: "http://127.0.0.1:5400" } } } }
   }));
 
   const launcher = createAudienceManagerLauncher({
@@ -290,6 +290,6 @@ test("createAudienceManagerLauncher merges vivoFactoryUrl into existing openclaw
   const configFile = path.join(configDir, "openclaw.json");
   const written = JSON.parse(fs.readFileSync(configFile, "utf8"));
   assert.equal(written.gateway?.auth?.token, "existing-token", "existing gateway token was overwritten");
-  assert.equal(written.extensions?.["user-profile"]?.baseUrl, "http://127.0.0.1:5400", "existing baseUrl was dropped");
-  assert.equal(written.extensions?.["user-profile"]?.vivoFactoryUrl, "http://host.docker.internal:4310", "vivoFactoryUrl not written");
+  assert.equal(written.plugins?.entries?.["user-profile"]?.config?.baseUrl, "http://127.0.0.1:5400", "existing baseUrl was dropped");
+  assert.equal(written.plugins?.entries?.["user-profile"]?.config?.vivoFactoryUrl, "http://host.docker.internal:4310", "vivoFactoryUrl not written");
 });

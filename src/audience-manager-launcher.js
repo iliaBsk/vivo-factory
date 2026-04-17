@@ -149,13 +149,21 @@ function writePluginConfig(configDir, vivoFactoryUrl) {
   } catch {
     // file doesn't exist or is invalid — start from empty
   }
+  const existingEntries = existing.plugins?.entries ?? {};
+  const existingPluginEntry = existingEntries["user-profile"] ?? {};
   writeJsonFile(configFile, {
     ...existing,
-    extensions: {
-      ...(existing.extensions ?? {}),
-      "user-profile": {
-        ...(existing.extensions?.["user-profile"] ?? {}),
-        vivoFactoryUrl
+    plugins: {
+      ...(existing.plugins ?? {}),
+      entries: {
+        ...existingEntries,
+        "user-profile": {
+          ...existingPluginEntry,
+          config: {
+            ...(existingPluginEntry.config ?? {}),
+            vivoFactoryUrl
+          }
+        }
       }
     }
   });
