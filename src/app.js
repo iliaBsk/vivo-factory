@@ -1755,22 +1755,105 @@ function renderDashboardScript() {
         });
       });
 
-      document.getElementById("chat-form")?.addEventListener("submit", async (event) => {
-        event.preventDefault();
-        const form = event.currentTarget;
-        await postInstance("/api/instances/" + form.audience_id.value + "/chat", {
-          operator: form.operator.value || "operator@example.com",
-          message: form.message.value || ""
-        });
-      });
+      function escapeHtmlClient(str) {
+        return String(str)
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;");
+      }
+
+      function appendUserBubble(threadEl, text) {
+        const div = document.createElement("div");
+        div.className = "flex justify-end";
+        div.innerHTML =
+          '<div class="max-w-[80%] rounded-2xl rounded-br-sm px-3 py-2 bg-blue-600 text-white text-sm leading-relaxed whitespace-pre-wrap">' +
+          escapeHtmlClient(text) +
+          "</div>";
+        threadEl.appendChild(div);
+        threadEl.scrollTop = threadEl.scrollHeight;
+      }
+
+      function appendAssistantBubble(threadEl) {
+        const wrapper = document.createElement("div");
+        wrapper.className = "flex items-start gap-2";
+        const avatar = document.createElement("div");
+        avatar.className = "flex-shrink-0 w-5 h-5 rounded-full bg-gray-600 dark:bg-gray-500 flex items-center justify-center";
+        avatar.style.cssText = "font-size:9px;color:#d1d5db;font-weight:600";
+        avatar.textContent = "AI";
+        const bubble = document.createElement("div");
+        bubble.className = "max-w-[82%] rounded-2xl rounded-tl-sm px-3 py-2 bg-gray-100 dark:bg-gray-700 text-gray-900 dark:text-gray-100 text-sm leading-relaxed prose prose-sm dark:prose-invert";
+        const cursor = document.createElement("span");
+        cursor.className = "inline-block w-2 h-3 bg-blue-500 rounded-sm align-middle";
+        cursor.style.animation = "pulse 1s step-end infinite";
+        bubble.appendChild(cursor);
+        wrapper.appendChild(avatar);
+        wrapper.appendChild(bubble);
+        threadEl.appendChild(wrapper);
+        threadEl.scrollTop = threadEl.scrollHeight;
+        return bubble;
+      }
+
+      function startTypewriter(bubble, fullText, threadEl) {
+        let i = 0;
+        let current = "";
+        bubble.textContent = "";
+        const cursor = document.createElement("span");
+        cursor.className = "inline-block w-2 h-3 bg-blue-500 rounded-sm ml-0.5 align-middle";
+        cursor.style.animation = "pulse 1s step-end infinite";
+        bubble.appendChild(cursor);
+
+        const timer = setInterval(() => {
+          if (i >= fullText.length) {
+            clearInterval(timer);
+            if (window.marked) {
+              bubble.innerHTML = window.marked.parse(fullText);
+            } else {
+              bubble.textContent = fullText;
+            }
+            threadEl.scrollTop = threadEl.scrollHeight;
+            return;
+          }
+          current += fullText[i++];
+          bubble.textContent = current;
+          bubble.appendChild(cursor);
+          threadEl.scrollTop = threadEl.scrollHeight;
+        }, 20);
+      }
 
       document.querySelectorAll("form[data-instance-chat-form]").forEach((form) => {
+        const audienceId = form.dataset.instanceChatForm;
+        const threadEl = document.getElementById("chat-thread-" + audienceId);
+        if (!threadEl) return;
+
+        threadEl.scrollTop = threadEl.scrollHeight;
+
         form.addEventListener("submit", async (event) => {
           event.preventDefault();
-          await postInstance("/api/instances/" + form.dataset.instanceChatForm + "/chat", {
-            operator: form.operator.value || "operator@example.com",
-            message: form.message.value || ""
-          });
+          const message = form.message.value.trim();
+          const operator = form.operator?.value || "operator@example.com";
+          if (!message) return;
+
+          form.message.value = "";
+          const submitBtn = form.querySelector("button[type=submit]");
+          submitBtn.disabled = true;
+
+          appendUserBubble(threadEl, message);
+          const bubble = appendAssistantBubble(threadEl);
+
+          try {
+            const result = await sendJson(
+              "/api/instances/" + audienceId + "/chat",
+              "POST",
+              { message, operator }
+            );
+            startTypewriter(bubble, result.reply ?? "", threadEl);
+          } catch (err) {
+            bubble.className = bubble.className + " text-red-500";
+            bubble.textContent = "Error: " + err.message;
+          } finally {
+            submitBtn.disabled = false;
+          }
         });
       });
     </script>`;
