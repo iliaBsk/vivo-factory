@@ -208,3 +208,88 @@ test("createAudienceManagerLauncher carries profile engine runtime config into i
   assert.equal(result.instance_update.runtime_config.profile_engine_health_path, "/healthz");
   assert.equal(result.instance_update.runtime_config.profile_storage_path, "/srv/marble-profile");
 });
+
+test("createAudienceManagerLauncher writes vivoFactoryUrl into openclaw.json extensions when configDir is set", async () => {
+  const { createAudienceManagerLauncher } = await loadAudienceManagerLauncherModule();
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "vivo-audience-launcher-plugin-cfg-"));
+  const launcher = createAudienceManagerLauncher({
+    cwd: tmpDir,
+    vivoFactoryUrl: "http://host.docker.internal:4310",
+    runtimeConfig: {
+      openclaw_image: "ghcr.io/openclaw/openclaw:latest",
+      openclaw_config_dir: "generated/audience-managers",
+      audiences: {
+        "test-audience": {
+          plugin_base_url: "http://127.0.0.1:5401",
+          openclaw_admin_url: "http://127.0.0.1:18801",
+          telegram_bot_token: "tok",
+          telegram_chat_id: "-1001"
+        }
+      }
+    },
+    llmDefaults: {
+      provider: "openai",
+      model: "gpt-4.1-mini",
+      apiKey: "sk-test",
+      baseUrl: "https://api.openai.com/v1"
+    },
+    execImpl: async () => ({ exitCode: 0, stdout: "started", stderr: "" })
+  });
+
+  await launcher.launchAudienceManager(
+    { id: "aud-1", audience_key: "test-audience", label: "Test" },
+    { id: "inst-1", audience_id: "aud-1", service_name: "test-audience-openclaw", runtime_config: {} }
+  );
+
+  const configFile = path.join(tmpDir, "generated/audience-managers/test-audience-openclaw-config/openclaw.json");
+  assert.ok(fs.existsSync(configFile), "openclaw.json was not written");
+  const written = JSON.parse(fs.readFileSync(configFile, "utf8"));
+  assert.equal(written.extensions?.["user-profile"]?.vivoFactoryUrl, "http://host.docker.internal:4310");
+});
+
+test("createAudienceManagerLauncher merges vivoFactoryUrl into existing openclaw.json without overwriting other keys", async () => {
+  const { createAudienceManagerLauncher } = await loadAudienceManagerLauncherModule();
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "vivo-audience-launcher-plugin-merge-"));
+
+  const configDir = path.join(tmpDir, "generated/audience-managers/merge-audience-openclaw-config");
+  fs.mkdirSync(configDir, { recursive: true });
+  fs.writeFileSync(path.join(configDir, "openclaw.json"), JSON.stringify({
+    gateway: { auth: { mode: "token", token: "existing-token" } },
+    extensions: { "user-profile": { baseUrl: "http://127.0.0.1:5400" } }
+  }));
+
+  const launcher = createAudienceManagerLauncher({
+    cwd: tmpDir,
+    vivoFactoryUrl: "http://host.docker.internal:4310",
+    runtimeConfig: {
+      openclaw_image: "ghcr.io/openclaw/openclaw:latest",
+      openclaw_config_dir: "generated/audience-managers",
+      audiences: {
+        "merge-audience": {
+          plugin_base_url: "http://127.0.0.1:5401",
+          openclaw_admin_url: "http://127.0.0.1:18801",
+          telegram_bot_token: "tok",
+          telegram_chat_id: "-1001"
+        }
+      }
+    },
+    llmDefaults: {
+      provider: "openai",
+      model: "gpt-4.1-mini",
+      apiKey: "sk-test",
+      baseUrl: "https://api.openai.com/v1"
+    },
+    execImpl: async () => ({ exitCode: 0, stdout: "started", stderr: "" })
+  });
+
+  await launcher.launchAudienceManager(
+    { id: "aud-1", audience_key: "merge-audience", label: "Merge" },
+    { id: "inst-1", audience_id: "aud-1", service_name: "merge-audience-openclaw", runtime_config: {} }
+  );
+
+  const configFile = path.join(configDir, "openclaw.json");
+  const written = JSON.parse(fs.readFileSync(configFile, "utf8"));
+  assert.equal(written.gateway?.auth?.token, "existing-token", "existing gateway token was overwritten");
+  assert.equal(written.extensions?.["user-profile"]?.baseUrl, "http://127.0.0.1:5400", "existing baseUrl was dropped");
+  assert.equal(written.extensions?.["user-profile"]?.vivoFactoryUrl, "http://host.docker.internal:4310", "vivoFactoryUrl not written");
+});

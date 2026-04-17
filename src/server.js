@@ -19,6 +19,7 @@ import { createContentFetcher } from "./content-fetcher.js";
 const execFileAsync = promisify(execFile);
 
 const runtimeConfig = loadJsonConfig("config/runtime.json", {});
+const serverPort = Number(process.env.PORT ?? runtimeConfig.server_port ?? 4310);
 const sourcesConfig = loadJsonConfig("config/sources.json", { sources: [] });
 const merchantRegistryConfig = loadJsonConfig("config/merchant-registry.json", { merchants: [], audienceOverrides: [] });
 const envConfig = {
@@ -56,10 +57,12 @@ const audienceImportService = createAudienceImportService({
   audienceRuntimeConfig: runtimeConfig.audiences ?? {}
 });
 const llmDefaults = resolveLlmDefaults(envConfig);
+const vivoFactoryUrl = runtimeConfig.vivo_factory_base_url ?? `http://host.docker.internal:${serverPort}`;
 const audienceManagerLauncher = createAudienceManagerLauncher({
   cwd: process.cwd(),
   runtimeConfig,
   llmDefaults,
+  vivoFactoryUrl,
   execImpl: defaultExec
 });
 const profileClientFactory = createDashboardProfileClientFactory(runtimeConfig);
@@ -137,7 +140,7 @@ const server = http.createServer(async (request, response) => {
   response.end(result.body);
 });
 
-const port = Number(envConfig.PORT ?? runtimeConfig.server_port ?? 4310);
+const port = serverPort;
 const host = envConfig.HOST ?? runtimeConfig.server_host ?? "0.0.0.0";
 server.listen(port, host, () => {
   console.log(`Vivo Factory dashboard listening on http://${host}:${port}`);

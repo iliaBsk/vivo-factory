@@ -1,12 +1,14 @@
+import fs from "node:fs";
 import path from "node:path";
 
-import { writeTextFile } from "./runtime-config.js";
+import { writeTextFile, writeJsonFile } from "./runtime-config.js";
 
 export function createAudienceManagerLauncher(options = {}) {
   const cwd = options.cwd ?? process.cwd();
   const runtimeConfig = options.runtimeConfig ?? {};
   const llmDefaults = options.llmDefaults ?? {};
   const execImpl = options.execImpl ?? defaultExec;
+  const vivoFactoryUrl = (options.vivoFactoryUrl ?? "").replace(/\/$/, "");
 
   return {
     async launchAudienceManager(audience, instance, launchOptions = {}) {
@@ -56,6 +58,10 @@ export function createAudienceManagerLauncher(options = {}) {
         configDir,
         pluginSourcePath
       }));
+
+      if (configDir && vivoFactoryUrl) {
+        writePluginConfig(configDir, vivoFactoryUrl);
+      }
 
       const commands = buildCommands(composeFile, serviceNames);
       const result = await execImpl("docker", [
@@ -135,6 +141,26 @@ function renderEnvFile({ audienceKey, runtime, effectiveLlm, pluginPath }) {
   ].join("\n");
 }
 
+function writePluginConfig(configDir, vivoFactoryUrl) {
+  const configFile = path.join(configDir, "openclaw.json");
+  let existing = {};
+  try {
+    existing = JSON.parse(fs.readFileSync(configFile, "utf8"));
+  } catch {
+    // file doesn't exist or is invalid — start from empty
+  }
+  writeJsonFile(configFile, {
+    ...existing,
+    extensions: {
+      ...(existing.extensions ?? {}),
+      "user-profile": {
+        ...(existing.extensions?.["user-profile"] ?? {}),
+        vivoFactoryUrl
+      }
+    }
+  });
+}
+
 function renderComposeFile({ openClawImage, profileEngine, envFile, serviceNames, ports, configDir, pluginSourcePath }) {
   const profileDataVolume = `${serviceNames.openclaw}-profile-data`;
   const portLines = (ports ?? []).map((p) => `      - "${p}"`).join("\n");
@@ -147,7 +173,9 @@ function renderComposeFile({ openClawImage, profileEngine, envFile, serviceNames
     image: ${openClawImage}
     env_file:
       - ${envFile}
-${portSection}    volumes:
+${portSection}    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
 ${configMount}${pluginMount}  ${serviceNames.profile}:
     image: ${profileEngine.image}
     command: ["sh", "-lc", "${escapeComposeCommand(profileEngine.command)}"]
