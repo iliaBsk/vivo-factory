@@ -644,6 +644,47 @@ async function handleRequest(context) {
     return json(200, { published });
   }
 
+  if (request.method === "GET" && matchPath(request.pathname, /^\/api\/merchants$/)) {
+    const items = await safeLoad(() => repository.listMerchants(), []);
+    return json(200, { items });
+  }
+
+  if (request.method === "GET" && matchPath(request.pathname, /^\/api\/merchants\/([^/]+)\/overrides$/)) {
+    const merchantId = request.pathname.split("/")[3];
+    const items = await safeLoad(() => repository.listMerchantOverrides(merchantId), []);
+    return json(200, { items });
+  }
+
+  if (request.method === "PUT" && matchPath(request.pathname, /^\/api\/merchants\/([^/]+)\/overrides\/([^/]+)$/)) {
+    const parts = request.pathname.split("/");
+    const merchantId = parts[3];
+    const audienceId = parts[5];
+    const body = readBody(request.body);
+    const override = await repository.upsertMerchantOverride(merchantId, audienceId, {
+      enabled: body.enabled,
+      boost_tags: body.boost_tags
+    });
+    return json(200, override);
+  }
+
+  if (request.method === "GET" && matchPath(request.pathname, /^\/api\/merchants\/([^/]+)$/)) {
+    const merchantId = request.pathname.split("/")[3];
+    const merchant = await safeLoad(() => repository.getMerchant(merchantId), null);
+    return merchant ? json(200, merchant) : json(404, { error: "Merchant not found" });
+  }
+
+  if (request.method === "PUT" && matchPath(request.pathname, /^\/api\/merchants\/([^/]+)$/)) {
+    const merchantId = request.pathname.split("/")[3];
+    const body = readBody(request.body);
+    const merchant = await repository.updateMerchant(merchantId, {
+      publisher_id: body.publisher_id,
+      enabled: body.enabled,
+      disclosure_text: body.disclosure_text,
+      categories: body.categories
+    });
+    return json(200, merchant);
+  }
+
   return json(404, { error: "Not found" });
 }
 

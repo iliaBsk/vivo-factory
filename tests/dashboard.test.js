@@ -1280,3 +1280,107 @@ test("POST /api/audiences/:id/publish-recap transitions story to failed when Ope
   const failed = repo.getStory(story.id);
   assert.equal(failed.status, "failed");
 });
+
+// ─── Merchant API tests ───────────────────────────────────────────────────
+
+async function makeMerchantTestRepo() {
+  const { createRepository } = await import(`../src/repository.js?bust=${Date.now()}`);
+  return createRepository({
+    merchants: [{
+      merchant_id: "zara-es",
+      name: "Zara Spain",
+      domain: "zara.com",
+      country: "ES",
+      currency: "EUR",
+      network: "awin",
+      network_merchant_code: "13623",
+      affiliate_url_template: "https://www.awin1.com/cread.php?awinmid=13623&awinaffid={{publisher_id}}&ued={{url}}",
+      publisher_id: null,
+      needs_setup: true,
+      enabled: true,
+      categories: ["fashion"],
+      disclosure_text: "Affiliate links included.",
+      created_at: "2026-04-17T00:00:00.000Z",
+      updated_at: "2026-04-17T00:00:00.000Z"
+    }],
+    merchantOverrides: [{
+      merchant_id: "zara-es",
+      audience_id: "bald-bcn",
+      enabled: true,
+      boost_tags: []
+    }]
+  });
+}
+
+test("GET /api/merchants returns list of merchants", async () => {
+  const { createApp } = await import(`../src/app.js?bust=${Date.now()}`);
+  const repo = await makeMerchantTestRepo();
+  const app = createApp({ repository: repo });
+  const response = await app.handle({ method: "GET", pathname: "/api/merchants", query: {}, body: null, headers: {} });
+  assert.equal(response.status, 200);
+  const body = JSON.parse(response.body);
+  assert.equal(body.items.length, 1);
+  assert.equal(body.items[0].merchant_id, "zara-es");
+});
+
+test("GET /api/merchants/:id returns single merchant", async () => {
+  const { createApp } = await import(`../src/app.js?bust=${Date.now()}`);
+  const repo = await makeMerchantTestRepo();
+  const app = createApp({ repository: repo });
+  const response = await app.handle({ method: "GET", pathname: "/api/merchants/zara-es", query: {}, body: null, headers: {} });
+  assert.equal(response.status, 200);
+  const body = JSON.parse(response.body);
+  assert.equal(body.merchant_id, "zara-es");
+});
+
+test("GET /api/merchants/:id returns 404 for unknown merchant", async () => {
+  const { createApp } = await import(`../src/app.js?bust=${Date.now()}`);
+  const repo = await makeMerchantTestRepo();
+  const app = createApp({ repository: repo });
+  const response = await app.handle({ method: "GET", pathname: "/api/merchants/no-such", query: {}, body: null, headers: {} });
+  assert.equal(response.status, 404);
+});
+
+test("PUT /api/merchants/:id updates merchant and clears needs_setup", async () => {
+  const { createApp } = await import(`../src/app.js?bust=${Date.now()}`);
+  const repo = await makeMerchantTestRepo();
+  const app = createApp({ repository: repo });
+  const response = await app.handle({
+    method: "PUT",
+    pathname: "/api/merchants/zara-es",
+    query: {},
+    body: JSON.stringify({ publisher_id: "654321" }),
+    headers: {}
+  });
+  assert.equal(response.status, 200);
+  const body = JSON.parse(response.body);
+  assert.equal(body.publisher_id, "654321");
+  assert.equal(body.needs_setup, false);
+});
+
+test("GET /api/merchants/:id/overrides returns overrides", async () => {
+  const { createApp } = await import(`../src/app.js?bust=${Date.now()}`);
+  const repo = await makeMerchantTestRepo();
+  const app = createApp({ repository: repo });
+  const response = await app.handle({ method: "GET", pathname: "/api/merchants/zara-es/overrides", query: {}, body: null, headers: {} });
+  assert.equal(response.status, 200);
+  const body = JSON.parse(response.body);
+  assert.equal(body.items.length, 1);
+  assert.equal(body.items[0].audience_id, "bald-bcn");
+});
+
+test("PUT /api/merchants/:id/overrides/:audienceId upserts override", async () => {
+  const { createApp } = await import(`../src/app.js?bust=${Date.now()}`);
+  const repo = await makeMerchantTestRepo();
+  const app = createApp({ repository: repo });
+  const response = await app.handle({
+    method: "PUT",
+    pathname: "/api/merchants/zara-es/overrides/bald-bcn",
+    query: {},
+    body: JSON.stringify({ enabled: false }),
+    headers: {}
+  });
+  assert.equal(response.status, 200);
+  const body = JSON.parse(response.body);
+  assert.equal(body.enabled, false);
+});
