@@ -665,6 +665,47 @@ test("app blocks approval when no asset is selected", async () => {
   assert.match(response.body, /selected asset/i);
 });
 
+test("POST /api/stories/:id/reviews — approves a story with no assets without requiring a selected_asset_id", async () => {
+  const { createRepository, createApp } = await loadModules();
+  const repo = createRepository({
+    audiences: [{
+      id: "aud-1", audience_key: "bcn", label: "Barcelona", language: "en",
+      location: "Barcelona", family_context: "", interests: [], content_pillars: [],
+      excluded_topics: [], tone: "helpful", profile_snapshot: {}, status: "active",
+      created_at: "2026-04-17T00:00:00.000Z", updated_at: "2026-04-17T00:00:00.000Z"
+    }],
+    instances: [],
+    stories: [],
+    storyAssets: [],
+    storageObjects: [],
+    storyReviews: [],
+    storyPublications: [],
+    auditEvents: [],
+    feedbackEvents: [],
+    instanceReports: [],
+    operatorChats: [],
+    deployments: []
+  });
+  const story = repo.createStory({
+    factory_id: "factory-1", audience_id: "aud-1", story_key: "review-test-1",
+    title: "Daily News", story_text: "Today in Barcelona...", summary: "Today in Barcelona...",
+    source_kind: "rss", primary_source_url: "https://example.com/news"
+  });
+  const app = createApp({ repository: repo, clock: () => "2026-04-17T10:00:00.000Z" });
+
+  const result = await app.handle({
+    method: "POST",
+    pathname: `/api/stories/${story.id}/reviews`,
+    query: {},
+    body: JSON.stringify({ review_status: "approved", review_notes: "good", actor_id: "op-1" })
+  });
+
+  assert.equal(result.status, 200);
+  const updated = repo.getStory(story.id);
+  assert.equal(updated.operator_review_status, "approved");
+  assert.equal(updated.status, "ready_to_publish");
+});
+
 test("stories workspace renders a Tremor-style table without opening details by default", async () => {
   const { createRepository, createApp } = await loadModules();
   const repository = createRepository(createSeed());

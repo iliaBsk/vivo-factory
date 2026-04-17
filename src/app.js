@@ -148,9 +148,10 @@ async function handleRequest(context) {
     if (!story) {
       return json(404, { error: "Story not found" });
     }
+    const hasAssets = (story.assets?.length ?? 0) > 0;
     const selectedAssetId = body.selected_asset_id ?? story.selected_asset_id ?? null;
-    if (body.review_status === "approved" && !selectedAssetId) {
-      return json(409, { error: "An approved review requires a selected asset." });
+    if (body.review_status === "approved" && hasAssets && !selectedAssetId) {
+      return json(409, { error: "An approved review requires a selected asset when the story has assets." });
     }
     const review = await repository.submitStoryReview(storyId, {
       review_status: body.review_status ?? "pending",
