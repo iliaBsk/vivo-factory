@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import Database from "better-sqlite3";
 
 const DEFAULT_STORAGE_BUCKET = "vivo-content";
 
@@ -342,6 +343,49 @@ export function createRepository(seed = {}) {
     listDeployments() {
       return [...state.deployments].sort(compareByTimestampDesc);
     },
+    async getOrCreateConversation(audienceId, channel) {
+      const key = `${audienceId}::${channel}`;
+      if (!state.conversations[key]) {
+        state.conversations[key] = {
+          id: crypto.randomUUID(),
+          audienceId,
+          channel,
+          externalId: null,
+          title: null,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          _messages: []
+        };
+      }
+      const { _messages, ...conv } = state.conversations[key];
+      return { ...conv };
+    },
+
+    async appendChatMessage(conversationId, message) {
+      const entry = Object.values(state.conversations).find(c => c.id === conversationId);
+      if (!entry) throw new Error(`Conversation ${conversationId} not found`);
+      const msg = {
+        id: crypto.randomUUID(),
+        conversationId,
+        audienceId: message.audienceId,
+        role: message.role,
+        content: message.content,
+        senderId: message.senderId ?? null,
+        senderName: message.senderName ?? null,
+        metadata: message.metadata ?? {},
+        createdAt: new Date().toISOString()
+      };
+      entry._messages.push(msg);
+      entry.updatedAt = new Date().toISOString();
+      return { ...msg };
+    },
+
+    async getConversationMessages(conversationId) {
+      const entry = Object.values(state.conversations).find(c => c.id === conversationId);
+      if (!entry) return [];
+      return entry._messages.map(m => ({ ...m }));
+    },
+
     exportState() {
       return exportState(state);
     }
@@ -355,6 +399,102 @@ export function createFileRepository(fileUrlOrPath, seed = {}) {
   const repository = createRepository(fs.existsSync(pathname) ? readState(pathname) : seed);
 
   return withPersistence(repository, pathname);
+}
+
+export function createSQLiteRepository(dbPath, stateFilePath = "data/dashboard-state.json") {
+  const db = new Database(dbPath);
+  db.pragma("journal_mode = WAL");
+  db.pragma("foreign_keys = ON");
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS vivo_conversations (
+      id TEXT PRIMARY KEY,
+      audience_id TEXT NOT NULL,
+      channel TEXT NOT NULL,
+      external_id TEXT,
+      title TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_conv_no_ext
+      ON vivo_conversations(audience_id, channel)
+      WHERE external_id IS NULL;
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_conv_with_ext
+      ON vivo_conversations(audience_id, channel, external_id)
+      WHERE external_id IS NOT NULL;
+    CREATE TABLE IF NOT EXISTS vivo_messages (
+      id TEXT PRIMARY KEY,
+      conversation_id TEXT NOT NULL REFERENCES vivo_conversations(id) ON DELETE CASCADE,
+      audience_id TEXT NOT NULL,
+      role TEXT NOT NULL CHECK(role IN ('user', 'assistant', 'system')),
+      content TEXT NOT NULL,
+      sender_id TEXT,
+      sender_name TEXT,
+      metadata TEXT,
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_msgs_conv ON vivo_messages(conversation_id, created_at);
+  `);
+
+  const fileRepo = createFileRepository(path.resolve(stateFilePath));
+
+  return {
+    ...fileRepo,
+
+    async getOrCreateConversation(audienceId, channel) {
+      const existing = db.prepare(
+        `SELECT * FROM vivo_conversations
+         WHERE audience_id = ? AND channel = ? AND external_id IS NULL LIMIT 1`
+      ).get(audienceId, channel);
+      if (existing) {
+        return {
+          id: existing.id, audienceId: existing.audience_id, channel: existing.channel,
+          externalId: existing.external_id, title: existing.title,
+          createdAt: existing.created_at, updatedAt: existing.updated_at
+        };
+      }
+      const id = crypto.randomUUID();
+      const now = new Date().toISOString();
+      db.prepare(
+        `INSERT INTO vivo_conversations (id, audience_id, channel, external_id, title, created_at, updated_at)
+         VALUES (?, ?, ?, NULL, NULL, ?, ?)`
+      ).run(id, audienceId, channel, now, now);
+      return { id, audienceId, channel, externalId: null, title: null, createdAt: now, updatedAt: now };
+    },
+
+    async appendChatMessage(conversationId, message) {
+      const id = crypto.randomUUID();
+      const now = new Date().toISOString();
+      db.prepare(
+        `INSERT INTO vivo_messages
+           (id, conversation_id, audience_id, role, content, sender_id, sender_name, metadata, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).run(
+        id, conversationId, message.audienceId, message.role, message.content,
+        message.senderId ?? null, message.senderName ?? null,
+        JSON.stringify(message.metadata ?? {}), now
+      );
+      db.prepare(`UPDATE vivo_conversations SET updated_at = ? WHERE id = ?`).run(now, conversationId);
+      return {
+        id, conversationId, audienceId: message.audienceId, role: message.role,
+        content: message.content, senderId: message.senderId ?? null,
+        senderName: message.senderName ?? null, metadata: message.metadata ?? {},
+        createdAt: now
+      };
+    },
+
+    async getConversationMessages(conversationId) {
+      const rows = db.prepare(
+        `SELECT * FROM vivo_messages WHERE conversation_id = ? ORDER BY created_at ASC`
+      ).all(conversationId);
+      return rows.map(r => ({
+        id: r.id, conversationId: r.conversation_id, audienceId: r.audience_id,
+        role: r.role, content: r.content, senderId: r.sender_id,
+        senderName: r.sender_name, metadata: r.metadata ? JSON.parse(r.metadata) : {},
+        createdAt: r.created_at
+      }));
+    }
+  };
 }
 
 export function createSupabaseRepository(options) {
@@ -649,7 +789,10 @@ function normalizeState(seed) {
     feedbackEvents: [...(seed.feedbackEvents ?? [])],
     instanceReports: [...(seed.instanceReports ?? [])],
     operatorChats: [...(seed.operatorChats ?? [])],
-    deployments: [...(seed.deployments ?? [])]
+    deployments: [...(seed.deployments ?? [])],
+    conversations: Object.fromEntries(
+      Object.entries(seed.conversations ?? {}).map(([k, v]) => [k, { ...v, _messages: [] }])
+    )
   };
 }
 
@@ -666,7 +809,10 @@ function exportState(state) {
     feedbackEvents: [...state.feedbackEvents],
     instanceReports: [...state.instanceReports],
     operatorChats: [...state.operatorChats],
-    deployments: [...state.deployments]
+    deployments: [...state.deployments],
+    conversations: Object.fromEntries(
+      Object.entries(state.conversations).map(([k, { _messages, ...rest }]) => [k, rest])
+    )
   };
 }
 
