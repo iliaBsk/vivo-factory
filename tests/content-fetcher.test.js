@@ -150,6 +150,42 @@ test("fetchForAudience uses marble scoring when profileClient is available", asy
   assert.equal(stories[0].metadata.marble_score, 0.9);
 });
 
+test("fetchForAudience drops items with marble score below 0.3", async () => {
+  const { createContentFetcher } = await import("../src/content-fetcher.js");
+  const repo = await makeRepo();
+  const fakeProfileClient = {
+    selectItems: async (items) => ({
+      ok: true,
+      data: {
+        selected: [
+          { id: items[0].id, score: 0.9, rank: 1 },
+          { id: items[1].id, score: 0.2, rank: 2 }
+        ]
+      },
+      errors: []
+    })
+  };
+  const fetcher = createContentFetcher({
+    sourcesConfig: SOURCES_CONFIG,
+    merchantRegistry: MERCHANT_REGISTRY,
+    profileClientFactory: () => fakeProfileClient,
+    repository: repo,
+    fetchImpl: async () => ({ ok: true, text: async () => FAKE_RSS }),
+    factoryId: "f-1",
+    clock: () => "2026-04-17T09:00:00.000Z"
+  });
+
+  const result = await fetcher.fetchForAudience(
+    { id: "aud-1", location: "Barcelona" },
+    { id: "inst-1", runtime_config: {} },
+    { limit: 5 }
+  );
+
+  assert.equal(result.stories_created, 1, "item with score 0.2 should be dropped");
+  const stories = repo.listStories({ audience_id: "aud-1" });
+  assert.equal(stories[0].metadata.marble_score, 0.9);
+});
+
 test("fetchForAudience includes merchant items", async () => {
   const { createContentFetcher } = await import("../src/content-fetcher.js");
   const repo = await makeRepo();

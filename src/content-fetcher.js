@@ -29,7 +29,7 @@ export function createContentFetcher(options = {}) {
 
       // Deduplicate vs stories created in the last 7 days
       const existing = await repository.listStories({ audience_id: audience.id });
-      const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+      const sevenDaysAgo = new Date(new Date(clock()).getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
       const recentUrls = new Set(
         existing
           .filter((s) => (s.created_at ?? "") >= sevenDaysAgo)
@@ -181,6 +181,7 @@ async function scoreWithMarble(profileClient, items, limit) {
       score: scoreMap.get(item.id).score,
       rank: scoreMap.get(item.id).rank
     }))
+    .filter((item) => item.score >= 0.3)
     .sort((a, b) => a.rank - b.rank)
     .slice(0, limit);
 }
