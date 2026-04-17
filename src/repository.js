@@ -120,6 +120,9 @@ export function createRepository(seed = {}) {
     },
     createStory(story, options = {}) {
       const now = options.timestamp ?? nowIso();
+      if (!story.story_key) throw new Error("story_key is required");
+      if (!story.audience_id) throw new Error("audience_id is required");
+      if (!story.title) throw new Error("title is required");
       // Enforce story_key uniqueness
       const exists = [...state.stories.values()].some(s => s.story_key === story.story_key);
       if (exists) {
@@ -159,6 +162,13 @@ export function createRepository(seed = {}) {
       return hydrateStory(state, created);
     },
     transitionStoryStatus(storyId, status, options = {}) {
+      const VALID_STATUSES = new Set([
+        "new", "classifying", "classified", "media_decided",
+        "asset_generating", "ready_to_publish", "published", "failed", "archived"
+      ]);
+      if (!VALID_STATUSES.has(status)) {
+        throw new Error(`Invalid story status: ${status}`);
+      }
       const story = requireStory(state, storyId);
       const now = options.timestamp ?? nowIso();
       const updated = { ...story, status, updated_at: now };
@@ -694,16 +704,19 @@ export function createSupabaseRepository(options) {
         actor_id: options.actorId ?? "system",
         payload: { audience_id: story.audience_id, source_kind: story.source_kind }
       });
-      return rows[0];
+      const hydrated = await hydrateSupabaseStories(client, rows);
+      return hydrated[0] ?? null;
     },
     async transitionStoryStatus(storyId, status, options = {}) {
+      const currentRows = await client.select("vivo_stories", { id: `eq.${storyId}`, limit: "1" });
+      const fromStatus = currentRows[0]?.status ?? null;
       const rows = await client.update("vivo_stories", { id: `eq.${storyId}` }, { status });
       await insertAuditEvent(client, {
         entity_type: "story",
         entity_id: storyId,
         event_type: "story_status_changed",
         actor_id: options.actorId ?? "system",
-        payload: { to: status }
+        payload: { from: fromStatus, to: status }
       });
       const hydrated = await hydrateSupabaseStories(client, rows);
       return hydrated[0] ?? null;
@@ -1149,6 +1162,12 @@ function withPersistence(repository, pathname) {
     const method = repository[methodName].bind(repository);
     wrapped[methodName] = (...args) => {
       const result = method(...args);
+      if (result && typeof result.then === "function") {
+        return result.then((resolved) => {
+          write();
+          return resolved;
+        });
+      }
       write();
       return result;
     };
