@@ -153,3 +153,35 @@ test("submitStoryReview auto-transitions to archived on rejected", async () => {
   assert.equal(updated.operator_review_status, "rejected");
   assert.equal(updated.status, "archived");
 });
+
+test("createJob creates a pending job", async () => {
+  const repo = await loadRepo();
+
+  const job = repo.createJob({
+    factory_id: "factory-1",
+    audience_id: "aud-1"
+  }, { timestamp: "2026-04-17T09:00:00.000Z" });
+
+  assert.ok(job.id, "should have an id");
+  assert.equal(job.audience_id, "aud-1");
+  assert.equal(job.status, "pending");
+  assert.equal(job.stories_created, null);
+  assert.equal(job.error, null);
+  assert.equal(job.created_at, "2026-04-17T09:00:00.000Z");
+});
+
+test("getJob returns null for unknown id", async () => {
+  const repo = await loadRepo();
+  assert.equal(repo.getJob("nonexistent-id"), null);
+});
+
+test("updateJob changes status and stores stories_created", async () => {
+  const repo = await loadRepo();
+  const job = repo.createJob({ audience_id: "aud-1" });
+
+  const updated = repo.updateJob(job.id, { status: "done", stories_created: 5 });
+
+  assert.equal(updated.status, "done");
+  assert.equal(updated.stories_created, 5);
+  assert.equal(repo.getJob(job.id).status, "done");
+});

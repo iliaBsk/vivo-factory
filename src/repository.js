@@ -183,6 +183,32 @@ export function createRepository(seed = {}) {
       });
       return hydrateStory(state, updated);
     },
+    createJob(job, options = {}) {
+      const now = options.timestamp ?? nowIso();
+      const created = {
+        id: job.id ?? crypto.randomUUID(),
+        factory_id: job.factory_id ?? null,
+        audience_id: job.audience_id,
+        status: "pending",
+        stories_created: null,
+        error: null,
+        created_at: now,
+        updated_at: now
+      };
+      state.contentFetchJobs.set(created.id, created);
+      return { ...created };
+    },
+    getJob(jobId) {
+      const job = state.contentFetchJobs.get(jobId);
+      return job ? { ...job } : null;
+    },
+    updateJob(jobId, changes = {}, options = {}) {
+      const job = state.contentFetchJobs.get(jobId);
+      if (!job) throw new Error(`Unknown job id: ${jobId}`);
+      const updated = { ...job, ...changes, updated_at: options.timestamp ?? nowIso() };
+      state.contentFetchJobs.set(jobId, updated);
+      return { ...updated };
+    },
     selectStoryAsset(storyId, assetId, options = {}) {
       const assets = getStoryAssets(state, storyId);
       if (!assets.some((asset) => asset.id === assetId)) {
@@ -724,6 +750,25 @@ export function createSupabaseRepository(options) {
       const hydrated = await hydrateSupabaseStories(client, rows);
       return hydrated[0] ?? null;
     },
+    async createJob(job, options = {}) {
+      const rows = await client.insert("vivo_content_fetch_jobs", {
+        factory_id: job.factory_id ?? null,
+        audience_id: job.audience_id,
+        status: "pending"
+      });
+      return rows[0];
+    },
+    async getJob(jobId) {
+      const rows = await client.select("vivo_content_fetch_jobs", {
+        id: `eq.${jobId}`,
+        limit: "1"
+      });
+      return rows[0] ?? null;
+    },
+    async updateJob(jobId, changes = {}) {
+      const rows = await client.update("vivo_content_fetch_jobs", { id: `eq.${jobId}` }, changes);
+      return rows[0] ?? null;
+    },
     async selectStoryAsset(storyId, assetId, options = {}) {
       await client.update("vivo_story_assets", { story_id: `eq.${storyId}` }, { is_selected: false });
       const rows = await client.update("vivo_story_assets", {
@@ -966,6 +1011,7 @@ function normalizeState(seed) {
     stories: new Map((seed.stories ?? []).map((item) => [item.id, { ...item }])),
     storyAssets: new Map((seed.storyAssets ?? []).map((item) => [item.id, { ...item }])),
     storageObjects: new Map((seed.storageObjects ?? []).map((item) => [item.id, { ...item }])),
+    contentFetchJobs: new Map((seed.contentFetchJobs ?? []).map((item) => [item.id, { ...item }])),
     storyReviews: [...(seed.storyReviews ?? [])],
     storyPublications: [...(seed.storyPublications ?? [])],
     auditEvents: [...(seed.auditEvents ?? seed.auditLog ?? [])].map(normalizeAuditEvent),
@@ -986,6 +1032,7 @@ function exportState(state) {
     stories: [...state.stories.values()],
     storyAssets: [...state.storyAssets.values()],
     storageObjects: [...state.storageObjects.values()],
+    contentFetchJobs: [...state.contentFetchJobs.values()],
     storyReviews: [...state.storyReviews],
     storyPublications: [...state.storyPublications],
     auditEvents: [...state.auditEvents],
@@ -1149,6 +1196,8 @@ function withPersistence(repository, pathname) {
   for (const methodName of [
     "createStory",
     "transitionStoryStatus",
+    "createJob",
+    "updateJob",
     "updateStory",
     "updateAudience",
     "createInstanceForAudience",
