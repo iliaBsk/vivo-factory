@@ -753,6 +753,7 @@ function renderDashboard(model) {
     <title>Vivo Factory</title>
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <link rel="stylesheet" href="/styles.css" />
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <script>
       (() => {
         try {
