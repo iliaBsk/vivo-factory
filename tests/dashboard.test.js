@@ -1242,3 +1242,41 @@ test("POST /api/audiences/:id/publish-recap publishes ready_to_publish+approved 
   const published = repo.getStory(story.id);
   assert.equal(published.status, "published");
 });
+
+test("POST /api/audiences/:id/publish-recap transitions story to failed when OpenClaw returns non-2xx", async () => {
+  const { createRepository, createApp } = await loadModules();
+  const seed = createSeed();
+  const repo = createRepository({
+    audiences: seed.audiences,
+    instances: [{ ...seed.instances[0], openclaw_admin_url: "http://127.0.0.1:18801" }]
+  });
+  const story = repo.createStory({
+    factory_id: "factory-1", audience_id: "aud-1", instance_id: "inst-1",
+    story_key: "recap-fail-1", title: "Failing Story",
+    story_text: "This send will fail.", summary: "Fail",
+    source_kind: "rss", primary_source_url: "https://example.com/fail"
+  });
+  repo.transitionStoryStatus(story.id, "ready_to_publish");
+  repo.submitStoryReview(story.id, {
+    review_status: "approved", review_notes: "", actor_id: "op-1", selected_asset_id: null, payload: {}
+  });
+
+  const app = createApp({
+    repository: repo,
+    clock: () => "2026-04-17T10:00:00.000Z",
+    fetchImpl: async () => ({ ok: false, status: 500 })
+  });
+
+  const result = await app.handle({
+    method: "POST",
+    pathname: "/api/audiences/aud-1/publish-recap",
+    query: {},
+    body: ""
+  });
+
+  assert.equal(result.status, 200);
+  const body = JSON.parse(result.body);
+  assert.equal(body.published, 0);
+  const failed = repo.getStory(story.id);
+  assert.equal(failed.status, "failed");
+});

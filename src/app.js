@@ -547,7 +547,9 @@ async function handleRequest(context) {
       ? await safeLoad(() => repository.getInstanceByAudience(audienceId), null)
       : null;
     const job = await repository.createJob({ audience_id: audienceId }, { timestamp: clock() });
-    dispatchFetch(audience, instance, job.id, { limit: body.limit ?? 20 }).catch(() => {});
+    dispatchFetch(audience, instance, job.id, { limit: body.limit ?? 20 }).catch((err) => {
+      repository.updateJob(job.id, { status: "failed", error: String(err.message ?? err).slice(0, 500) }).catch(() => {});
+    });
     return json(200, { job_id: job.id });
   }
 
@@ -614,11 +616,14 @@ async function handleRequest(context) {
           story.story_text,
           story.primary_source_url ?? ""
         ].filter(Boolean).join("\n\n");
-        await fetchImpl(`${openclawUrl}/api/send`, {
+        const sendRes = await fetchImpl(`${openclawUrl}/api/send`, {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ channel: "telegram", message })
         });
+        if (!sendRes.ok) {
+          throw new Error(`OpenClaw send failed: ${sendRes.status}`);
+        }
         await repository.transitionStoryStatus(story.id, "published", {
           actorId: "system",
           timestamp: clock()
@@ -628,10 +633,12 @@ async function handleRequest(context) {
         }, { actorId: "system", timestamp: clock() });
         published++;
       } catch {
-        await repository.transitionStoryStatus(story.id, "failed", {
-          actorId: "system",
-          timestamp: clock()
-        }).catch(() => {});
+        try {
+          await repository.transitionStoryStatus(story.id, "failed", {
+            actorId: "system",
+            timestamp: clock()
+          });
+        } catch {}
       }
     }
     return json(200, { published });
