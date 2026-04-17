@@ -484,6 +484,45 @@ export function createRepository(seed = {}) {
       return entry._messages.map(m => ({ ...m }));
     },
 
+    listMerchants() {
+      return [...state.merchants.values()].sort((a, b) => (a.name ?? "").localeCompare(b.name ?? ""));
+    },
+    getMerchant(merchantId) {
+      return state.merchants.get(merchantId) ?? null;
+    },
+    updateMerchant(merchantId, patch) {
+      const merchant = state.merchants.get(merchantId);
+      if (!merchant) {
+        throw new Error(`Merchant not found: ${merchantId}`);
+      }
+      const publisherId = patch.publisher_id !== undefined ? patch.publisher_id : merchant.publisher_id;
+      const updated = {
+        ...merchant,
+        ...(patch.publisher_id !== undefined && { publisher_id: patch.publisher_id }),
+        ...(patch.enabled !== undefined && { enabled: patch.enabled }),
+        ...(patch.disclosure_text !== undefined && { disclosure_text: patch.disclosure_text }),
+        ...(patch.categories !== undefined && { categories: patch.categories }),
+        needs_setup: !publisherId,
+        updated_at: nowIso()
+      };
+      state.merchants.set(merchantId, updated);
+      return updated;
+    },
+    listMerchantOverrides(merchantId) {
+      return [...state.merchantOverrides.values()].filter((o) => o.merchant_id === merchantId);
+    },
+    upsertMerchantOverride(merchantId, audienceId, patch) {
+      const key = `${merchantId}:${audienceId}`;
+      const existing = state.merchantOverrides.get(key) ?? { merchant_id: merchantId, audience_id: audienceId, enabled: true, boost_tags: [] };
+      const updated = {
+        ...existing,
+        ...(patch.enabled !== undefined && { enabled: patch.enabled }),
+        ...(patch.boost_tags !== undefined && { boost_tags: patch.boost_tags })
+      };
+      state.merchantOverrides.set(key, updated);
+      return updated;
+    },
+
     exportState() {
       return exportState(state);
     }
@@ -1023,7 +1062,9 @@ function normalizeState(seed) {
     deployments: [...(seed.deployments ?? [])],
     conversations: Object.fromEntries(
       Object.entries(seed.conversations ?? {}).map(([k, v]) => [k, { ...v, _messages: [] }])
-    )
+    ),
+    merchants: new Map((seed.merchants ?? []).map((item) => [item.merchant_id, { ...item }])),
+    merchantOverrides: new Map((seed.merchantOverrides ?? []).map((item) => [`${item.merchant_id}:${item.audience_id}`, { ...item }]))
   };
 }
 
@@ -1044,7 +1085,9 @@ function exportState(state) {
     deployments: [...state.deployments],
     conversations: Object.fromEntries(
       Object.entries(state.conversations).map(([k, { _messages, ...rest }]) => [k, rest])
-    )
+    ),
+    merchants: [...state.merchants.values()],
+    merchantOverrides: [...state.merchantOverrides.values()]
   };
 }
 
@@ -1211,7 +1254,9 @@ function withPersistence(repository, pathname) {
     "saveFeedbackEvent",
     "saveInstanceReport",
     "saveOperatorChat",
-    "saveDeploymentResult"
+    "saveDeploymentResult",
+    "updateMerchant",
+    "upsertMerchantOverride"
   ]) {
     const method = repository[methodName].bind(repository);
     wrapped[methodName] = (...args) => {
