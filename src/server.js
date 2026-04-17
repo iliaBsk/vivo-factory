@@ -14,10 +14,13 @@ import { createProfileClient } from "./profile-client.js";
 import { createFileRepository, createSupabaseRepository, createSQLiteRepository } from "./repository.js";
 import { createSetupService, resolveLlmDefaults } from "./setup-service.js";
 import { loadEnvConfig, loadJsonConfig } from "./runtime-config.js";
+import { createContentFetcher } from "./content-fetcher.js";
 
 const execFileAsync = promisify(execFile);
 
 const runtimeConfig = loadJsonConfig("config/runtime.json", {});
+const sourcesConfig = loadJsonConfig("config/sources.json", { sources: [] });
+const merchantRegistryConfig = loadJsonConfig("config/merchant-registry.json", { merchants: [], audienceOverrides: [] });
 const envConfig = {
   ...loadEnvConfig(".env"),
   ...process.env
@@ -60,6 +63,25 @@ const audienceManagerLauncher = createAudienceManagerLauncher({
   execImpl: defaultExec
 });
 const profileClientFactory = createDashboardProfileClientFactory(runtimeConfig);
+const contentFetcher = createContentFetcher({
+  sourcesConfig,
+  merchantRegistry: merchantRegistryConfig,
+  profileClientFactory,
+  repository,
+  fetchImpl: globalThis.fetch,
+  factoryId: runtimeConfig.factory_id ?? null,
+  clock: () => new Date().toISOString()
+});
+
+async function dispatchFetch(audience, instance, jobId, fetchOptions = {}) {
+  await repository.updateJob(jobId, { status: "running" });
+  try {
+    const result = await contentFetcher.fetchForAudience(audience, instance, fetchOptions);
+    await repository.updateJob(jobId, { status: "done", stories_created: result.stories_created });
+  } catch (err) {
+    await repository.updateJob(jobId, { status: "failed", error: String(err.message ?? err).slice(0, 500) });
+  }
+}
 
 const app = createApp({
   repository,
@@ -68,6 +90,8 @@ const app = createApp({
   setupService,
   audienceImportService,
   audienceManagerLauncher,
+  dispatchFetch,
+  fetchImpl: globalThis.fetch,
   publicationTargetResolver(audience, story) {
     if (!audience?.audience_key) {
       return null;
@@ -118,6 +142,30 @@ const host = envConfig.HOST ?? runtimeConfig.server_host ?? "0.0.0.0";
 server.listen(port, host, () => {
   console.log(`Vivo Factory dashboard listening on http://${host}:${port}`);
 });
+
+const RECAP_HOUR_UTC = parseInt(runtimeConfig.recap_hour_utc ?? "8", 10);
+let lastCronDay = "";
+
+setInterval(async () => {
+  const now = new Date();
+  const todayKey = now.toISOString().slice(0, 10);
+  if (now.getUTCHours() === RECAP_HOUR_UTC && now.getUTCMinutes() < 2 && todayKey !== lastCronDay) {
+    lastCronDay = todayKey;
+    console.log(`[cron] Starting daily recap fetch for all audiences (${todayKey})`);
+    try {
+      const audiences = await repository.listAudiences();
+      for (const audience of audiences) {
+        const instance = typeof repository.getInstanceByAudience === "function"
+          ? await repository.getInstanceByAudience(audience.id).catch(() => null)
+          : null;
+        const job = await repository.createJob({ audience_id: audience.id });
+        dispatchFetch(audience, instance, job.id, { limit: 20 }).catch(console.error);
+      }
+    } catch (err) {
+      console.error("[cron] Daily recap failed:", err.message);
+    }
+  }
+}, 60 * 1000);
 
 async function readRequestBody(request) {
   const chunks = [];
