@@ -224,3 +224,58 @@ test("fetchForAudience includes merchant items", async () => {
   assert.equal(stories[0].source_kind, "merchant");
   assert.equal(stories[0].is_deal, true);
 });
+
+test("fetchForAudience calls repository.listMerchants() when available", async () => {
+  const { createContentFetcher } = await import(`../src/content-fetcher.js?bust=${Date.now()}`);
+  const { createRepository } = await import(`../src/repository.js?bust=${Date.now()}`);
+
+  const repo = createRepository({
+    audiences: [{
+      id: "aud-1", audience_key: "bcn", label: "Barcelona", language: "en",
+      location: "Barcelona", family_context: "", interests: [], content_pillars: [],
+      excluded_topics: [], tone: "helpful", profile_snapshot: {}, status: "active",
+      created_at: "2026-04-17T00:00:00.000Z", updated_at: "2026-04-17T00:00:00.000Z"
+    }],
+    instances: [{
+      id: "inst-1", factory_id: "f-1", audience_id: "aud-1",
+      instance_key: "bcn-oc", service_name: "bcn-oc",
+      openclaw_admin_url: "http://127.0.0.1:18801",
+      profile_base_url: "http://127.0.0.1:5401",
+      runtime_config: {}, status: "active",
+      created_at: "2026-04-17T00:00:00.000Z", updated_at: "2026-04-17T00:00:00.000Z"
+    }],
+    merchants: [{
+      merchant_id: "zara-es",
+      name: "Zara Spain",
+      domain: "zara.com",
+      country: "ES",
+      currency: "EUR",
+      network: "awin",
+      network_merchant_code: "13623",
+      affiliate_url_template: "https://awin1.com/cread.php?awinaffid={{publisher_id}}&ued={{url}}",
+      publisher_id: "999111",
+      needs_setup: false,
+      enabled: true,
+      categories: ["fashion"],
+      disclosure_text: "Affiliate links included.",
+      created_at: "2026-04-17T00:00:00.000Z",
+      updated_at: "2026-04-17T00:00:00.000Z"
+    }]
+  });
+
+  let listMerchantsCalled = false;
+  const origListMerchants = repo.listMerchants.bind(repo);
+  repo.listMerchants = () => { listMerchantsCalled = true; return origListMerchants(); };
+
+  const fetcher = createContentFetcher({
+    sourcesConfig: { sources: [] },
+    repository: repo,
+    fetchImpl: async () => ({ ok: true, text: async () => "<rss><channel></channel></rss>" }),
+    factoryId: "f-1",
+    clock: () => "2026-04-17T09:00:00.000Z"
+  });
+
+  const audience = repo.getAudience("aud-1");
+  await fetcher.fetchForAudience(audience, null, {});
+  assert.equal(listMerchantsCalled, true, "should call repository.listMerchants()");
+});

@@ -12,6 +12,12 @@ export function createContentFetcher(options = {}) {
   return {
     async fetchForAudience(audience, instance, fetchOptions = {}) {
       const limit = fetchOptions.limit ?? 20;
+      const repoMerchants = typeof repository?.listMerchants === "function"
+        ? (await Promise.resolve(repository.listMerchants())).filter((m) => m.enabled && m.publisher_id)
+        : null;
+      const activeMerchantRegistry = (repoMerchants !== null && repoMerchants.length > 0)
+        ? { merchants: repoMerchants, overrides: [] }
+        : merchantRegistry;
       const audienceLocation = normalizeLocation(audience.location ?? "");
 
       const customSources = instance?.runtime_config?.custom_sources ?? [];
@@ -22,8 +28,8 @@ export function createContentFetcher(options = {}) {
       const globalSources = allSources.filter((s) => s.location === "global");
 
       const [localCandidates, globalCandidates] = await Promise.all([
-        fetchSources(localSources, fetchImpl, merchantRegistry, 40),
-        fetchSources(globalSources, fetchImpl, merchantRegistry, 10)
+        fetchSources(localSources, fetchImpl, activeMerchantRegistry, 40),
+        fetchSources(globalSources, fetchImpl, activeMerchantRegistry, 10)
       ]);
       const allCandidates = [...localCandidates, ...globalCandidates];
 
