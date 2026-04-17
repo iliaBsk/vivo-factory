@@ -11,7 +11,7 @@ import { createSupabaseProvisioningClient } from "./bootstrap-provisioning.js";
 import { createInstanceManager } from "./instance-manager.js";
 import { createOpenAiAudienceClient } from "./openai-audience-client.js";
 import { createProfileClient } from "./profile-client.js";
-import { createFileRepository, createSupabaseRepository } from "./repository.js";
+import { createFileRepository, createSupabaseRepository, createSQLiteRepository } from "./repository.js";
 import { createSetupService, resolveLlmDefaults } from "./setup-service.js";
 import { loadEnvConfig, loadJsonConfig } from "./runtime-config.js";
 
@@ -132,6 +132,7 @@ function createDashboardRepository(runtimeConfig, envConfig) {
   const supabaseUrl = envConfig.SUPABASE_URL ?? "";
   const serviceRoleKey = envConfig.SUPABASE_SERVICE_ROLE_KEY ?? "";
   const storageBucket = envConfig.SUPABASE_STORAGE_BUCKET ?? "vivo-content";
+  const sqliteDbPath = envConfig.SQLITE_DB_PATH ?? "";
 
   if (isConfiguredValue(supabaseUrl) && isConfiguredValue(serviceRoleKey)) {
     return createSupabaseRepository({
@@ -140,6 +141,11 @@ function createDashboardRepository(runtimeConfig, envConfig) {
       storageBucket,
       fetchImpl: globalThis.fetch
     });
+  }
+
+  if (isConfiguredValue(sqliteDbPath)) {
+    const stateFilePath = runtimeConfig.dashboard_state_file ?? "data/dashboard-state.json";
+    return createSQLiteRepository(sqliteDbPath, stateFilePath);
   }
 
   return createFileRepository(path.resolve(runtimeConfig.dashboard_state_file ?? "data/dashboard-state.json"));
