@@ -48,6 +48,43 @@ test("createStory creates a story with status=new and operator_review_status=pen
   assert.equal(story.metadata.marble_score, 0.87);
 });
 
+test("createStory throws when story_key is missing", async () => {
+  const repo = await loadRepo();
+  assert.throws(
+    () => repo.createStory({ audience_id: "aud-1", title: "T" }),
+    /story_key is required/
+  );
+});
+
+test("createStory throws when audience_id is missing", async () => {
+  const repo = await loadRepo();
+  assert.throws(
+    () => repo.createStory({ story_key: "key-x", title: "T" }),
+    /audience_id is required/
+  );
+});
+
+test("createStory throws when title is missing", async () => {
+  const repo = await loadRepo();
+  assert.throws(
+    () => repo.createStory({ story_key: "key-y", audience_id: "aud-1" }),
+    /title is required/
+  );
+});
+
+test("transitionStoryStatus throws on invalid status string", async () => {
+  const repo = await loadRepo();
+  const story = repo.createStory({
+    factory_id: "factory-1", audience_id: "aud-1", story_key: "key-invalid-status",
+    title: "T", story_text: "S", summary: "U", source_kind: "rss",
+    primary_source_url: "https://example.com/invalid"
+  });
+  assert.throws(
+    () => repo.transitionStoryStatus(story.id, "not_a_real_status"),
+    /Invalid story status/
+  );
+});
+
 test("createStory throws on duplicate story_key", async () => {
   const repo = await loadRepo();
   const base = {

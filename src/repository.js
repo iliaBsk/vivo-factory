@@ -682,6 +682,9 @@ export function createSupabaseRepository(options) {
       return rows[0] ?? null;
     },
     async createStory(story, options = {}) {
+      if (!story.story_key) throw new Error("story_key is required");
+      if (!story.audience_id) throw new Error("audience_id is required");
+      if (!story.title) throw new Error("title is required");
       const rows = await client.insert("vivo_stories", {
         factory_id: story.factory_id ?? null,
         audience_id: story.audience_id,
