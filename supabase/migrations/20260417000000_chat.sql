@@ -8,6 +8,10 @@ create table if not exists vivo_conversations (
   updated_at timestamptz not null default now()
 );
 
+create unique index if not exists vivo_conversations_unique_no_ext
+  on vivo_conversations(audience_id, channel)
+  where external_id is null;
+
 create index if not exists vivo_conversations_audience_channel
   on vivo_conversations(audience_id, channel);
 

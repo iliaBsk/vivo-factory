@@ -764,6 +764,7 @@ function renderDashboard(model) {
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <link rel="stylesheet" href="/styles.css" />
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/dompurify/dist/purify.min.js"></script>
     <script>
       (() => {
         try {
@@ -1807,7 +1808,8 @@ function renderDashboardScript() {
           if (i >= fullText.length) {
             clearInterval(timer);
             if (window.marked) {
-              bubble.innerHTML = window.marked.parse(fullText);
+              const html = window.marked.parse(fullText);
+              bubble.innerHTML = window.DOMPurify ? window.DOMPurify.sanitize(html) : html;
             } else {
               bubble.textContent = fullText;
             }
