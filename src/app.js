@@ -499,9 +499,17 @@ async function handleRequest(context) {
     const auditItems = shouldSkipStoryData || activeTab !== "stories" ? [] : (await safeLoad(() => repository.listAuditLog(), [])).slice(0, 10);
     const analyticsItems = shouldSkipStoryData || activeTab !== "stories" ? [] : (await safeLoad(() => repository.listFeedbackEvents(), [])).slice(0, 10);
     const instances = instanceManager && activeTab === "audiences" ? instanceManager.listInstances() : [];
+    const selectedAudienceId = request.query?.audience_id ?? "";
+    const selectedAudience = selectAudience(audiences, selectedAudienceId);
+    const chatHistory = selectedAudience && activeTab === "audiences"
+      ? await (async () => {
+          const conv = await repository.getOrCreateConversation(selectedAudience.id, "operator_console");
+          return repository.getConversationMessages(conv.id);
+        })()
+      : [];
     return html(200, renderDashboard({
       activeTab,
-      selectedAudienceId: request.query?.audience_id ?? "",
+      selectedAudienceId,
       filters,
       setupStatus,
       audienceImportPreview,
@@ -512,7 +520,8 @@ async function handleRequest(context) {
       activeStory,
       auditItems,
       analyticsItems,
-      instances
+      instances,
+      chatHistory
     }));
   }
 
@@ -737,7 +746,8 @@ function renderDashboard(model) {
           selectedAudience,
           selectedAudienceInstance,
           selectedProfileState,
-          selectedDeployment
+          selectedDeployment,
+          chatHistory: model.chatHistory ?? []
         })
       : renderSetupWorkspace({
           model,
@@ -1076,7 +1086,7 @@ function renderStoryDetailDrawer({ story, assetCards, publicationItems, reviewIt
 </div>`;
 }
 
-function renderAudiencesWorkspace({ model, deployments, selectedAudience, selectedAudienceInstance, selectedProfileState, selectedDeployment }) {
+function renderAudiencesWorkspace({ model, deployments, selectedAudience, selectedAudienceInstance, selectedProfileState, selectedDeployment, chatHistory = [] }) {
   return `<div>
     <div class="mb-6">
       <h1 class="text-lg font-semibold text-gray-900 dark:text-gray-100">Audiences</h1>
@@ -1097,7 +1107,7 @@ function renderAudiencesWorkspace({ model, deployments, selectedAudience, select
       ${renderAudienceWorkspaceCanvas(selectedAudience, selectedAudienceInstance, selectedProfileState)}
     </div>
     <div class="sticky top-0 space-y-5">
-      ${renderAudienceInspector(selectedAudience, selectedDeployment, deployments)}
+      ${renderAudienceInspector(selectedAudience, selectedDeployment, deployments, chatHistory)}
     </div>
   </div>
   </div>`;
@@ -1361,7 +1371,7 @@ function renderAudienceHeroFact(label, value) {
   </div>`;
 }
 
-function renderAudienceInspector(audience, selectedDeployment, deployments) {
+function renderAudienceInspector(audience, selectedDeployment, deployments, chatHistory = []) {
   return `
     <div class="bg-white dark:bg-gray-800 ring-1 ring-gray-200 dark:ring-gray-700 rounded-lg shadow-sm overflow-hidden">
       <div class="px-4 py-4 border-b border-gray-200 dark:border-gray-700">
@@ -1375,7 +1385,7 @@ function renderAudienceInspector(audience, selectedDeployment, deployments) {
         <h2 class="text-sm font-semibold text-gray-900 dark:text-gray-100">Manager Console</h2>
         <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">Send direct operator feedback to the selected OpenClaw audience manager.</p>
       </div>
-      <div class="px-4 py-4">${renderOperatorConsole(audience, selectedDeployment)}</div>
+      <div class="px-4 py-4">${renderOperatorConsole(audience, selectedDeployment, chatHistory)}</div>
     </div>
     <div class="bg-white dark:bg-gray-800 ring-1 ring-gray-200 dark:ring-gray-700 rounded-lg shadow-sm overflow-hidden">
       <div class="px-4 py-4 border-b border-gray-200 dark:border-gray-700">
@@ -1428,23 +1438,38 @@ function renderSelectedDeployment(instance) {
   </div>`;
 }
 
-function renderOperatorConsole(audience, selectedDeployment) {
+function renderChatBubble(msg) {
+  if (msg.role === "user") {
+    return `<div class="flex justify-end">
+      <div class="max-w-[80%] rounded-2xl rounded-br-sm px-3 py-2 bg-blue-600 text-white text-sm leading-relaxed whitespace-pre-wrap">${escapeHtml(msg.content)}</div>
+    </div>`;
+  }
+  return `<div class="flex items-start gap-2">
+    <div class="flex-shrink-0 w-5 h-5 rounded-full bg-gray-600 dark:bg-gray-500 flex items-center justify-center" style="font-size:9px;color:#d1d5db;font-weight:600">AI</div>
+    <div class="max-w-[82%] rounded-2xl rounded-tl-sm px-3 py-2 bg-gray-100 dark:bg-gray-700 text-gray-900 dark:text-gray-100 text-sm leading-relaxed prose prose-sm dark:prose-invert">${escapeHtml(msg.content)}</div>
+  </div>`;
+}
+
+function renderOperatorConsole(audience, selectedDeployment, chatHistory = []) {
   const audienceId = audience?.id ?? selectedDeployment?.audience_id ?? "";
-  const audienceKey = audience?.audience_key ?? selectedDeployment?.audience_key ?? audienceId;
   if (!audienceId) {
     return `<div class="rounded-lg border border-dashed border-gray-200 dark:border-gray-700 p-4 text-sm text-gray-500 dark:text-gray-400">Select an audience or launch a deployment to send operator feedback.</div>`;
   }
-  const inputClass = "block w-full rounded-md border-0 py-1.5 px-3 text-sm text-gray-900 dark:text-gray-100 dark:bg-gray-700 ring-1 ring-inset ring-gray-300 dark:ring-gray-600 placeholder:text-gray-400 focus:ring-2 focus:ring-blue-500 focus:outline-none";
-  const labelClass = "block text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-1.5";
-  return `<form class="space-y-3" data-instance-chat-form="${escapeAttribute(audienceId)}">
-    <label class="block"><span class="${labelClass}">Audience ID</span><input name="audience_id" value="${escapeAttribute(audienceId)}" class="${inputClass}" /></label>
-    <label class="block"><span class="${labelClass}">Audience Key</span><input value="${escapeAttribute(audienceKey)}" disabled class="${inputClass} opacity-60" /></label>
-    <label class="block"><span class="${labelClass}">Message</span><textarea name="message" rows="4" placeholder="Use the new Marble enrichment data when refining venue and product selections." class="${inputClass} resize-y"></textarea></label>
-    <label class="block"><span class="${labelClass}">Operator</span><input name="operator" value="operator@example.com" class="${inputClass}" /></label>
-    <div class="flex justify-end">
-      <button type="submit" class="rounded-md bg-gray-900 dark:bg-gray-100 px-3 py-1.5 text-sm font-medium text-white dark:text-gray-900 hover:bg-gray-700 transition-colors cursor-pointer">Send To Instance</button>
+
+  const bubbles = chatHistory.map(renderChatBubble).join("\n");
+  const inputClass = "flex-1 block rounded-md border-0 py-1.5 px-3 text-sm text-gray-900 dark:text-gray-100 dark:bg-gray-700 ring-1 ring-inset ring-gray-300 dark:ring-gray-600 placeholder:text-gray-400 focus:ring-2 focus:ring-blue-500 focus:outline-none resize-none";
+
+  return `<div class="flex flex-col rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden" style="height:460px">
+    <div id="chat-thread-${escapeAttribute(audienceId)}" class="flex-1 overflow-y-auto p-3 space-y-3">${bubbles || '<div class="text-xs text-gray-400 dark:text-gray-500 text-center pt-4">No messages yet</div>'}</div>
+    <div class="border-t border-gray-200 dark:border-gray-700 p-3 bg-white dark:bg-gray-800">
+      <form class="flex gap-2 items-end" data-instance-chat-form="${escapeAttribute(audienceId)}">
+        <input type="hidden" name="audience_id" value="${escapeAttribute(audienceId)}" />
+        <input type="hidden" name="operator" value="operator@example.com" />
+        <textarea name="message" rows="2" placeholder="Ask the audience manager…" class="${inputClass}"></textarea>
+        <button type="submit" class="rounded-md bg-gray-900 dark:bg-gray-100 px-3 py-2 text-sm font-medium text-white dark:text-gray-900 hover:bg-gray-700 dark:hover:bg-gray-300 transition-colors cursor-pointer flex-shrink-0">↑</button>
+      </form>
     </div>
-  </form>`;
+  </div>`;
 }
 
 function renderDeploymentIndex(deployments) {
