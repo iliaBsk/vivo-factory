@@ -42,11 +42,19 @@ export function createAudienceManagerLauncher(options = {}) {
         effectiveLlm,
         pluginPath: runtimeConfig.profile_plugin_path ?? "/plugins/user-profile"
       }));
+      const pluginSourcePath = runtimeConfig.profile_plugin_source_path ?? path.resolve(cwd, "src/plugins/user-profile");
+      const configDir = runtimeConfig.openclaw_config_dir
+        ? path.resolve(cwd, runtimeConfig.openclaw_config_dir, `${audienceKey}-openclaw-config`)
+        : null;
+
       writeTextFile(composeFile, renderComposeFile({
         openClawImage: runtimeConfig.openclaw_image ?? "ghcr.io/openclaw/openclaw:latest",
         profileEngine,
         envFile,
-        serviceNames
+        serviceNames,
+        ports: runtimeConfig.audience_ports?.[audienceKey] ?? [],
+        configDir,
+        pluginSourcePath
       }));
 
       const commands = buildCommands(composeFile, serviceNames);
@@ -127,20 +135,32 @@ function renderEnvFile({ audienceKey, runtime, effectiveLlm, pluginPath }) {
   ].join("\n");
 }
 
-function renderComposeFile({ openClawImage, profileEngine, envFile, serviceNames }) {
+function renderComposeFile({ openClawImage, profileEngine, envFile, serviceNames, ports, configDir, pluginSourcePath }) {
+  const profileDataVolume = `${serviceNames.openclaw}-profile-data`;
+  const portLines = (ports ?? []).map((p) => `      - "${p}"`).join("\n");
+  const portSection = portLines ? `    ports:\n${portLines}\n` : "";
+  const configMount = configDir ? `      - ${configDir}:/home/node/.openclaw\n` : "";
+  const pluginMount = pluginSourcePath ? `      - ${pluginSourcePath}:/home/node/.openclaw/extensions/user-profile:ro\n` : "";
+
   return `services:
   ${serviceNames.openclaw}:
     image: ${openClawImage}
     env_file:
       - ${envFile}
-  ${serviceNames.profile}:
+${portSection}    volumes:
+${configMount}${pluginMount}  ${serviceNames.profile}:
     image: ${profileEngine.image}
     command: ["sh", "-lc", "${escapeComposeCommand(profileEngine.command)}"]
     env_file:
       - ${envFile}
     network_mode: "service:${serviceNames.openclaw}"
+    healthcheck:
+      disable: true
     volumes:
-      - ${profileEngine.storagePath}:/data/user-profile
+      - ${profileDataVolume}:${profileEngine.storagePath}
+
+volumes:
+  ${profileDataVolume}:
 `;
 }
 

@@ -1,0 +1,17 @@
+{
+  "id": "user-profile",
+  "enabledByDefault": true,
+  "name": "User Profile",
+  "description": "Marble-powered user profile sidecar: injects user interests into prompts and provides tools to record reactions and update profile facts.",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "baseUrl": {
+        "type": "string",
+        "minLength": 1,
+        "description": "Marble profile service base URL (default: http://127.0.0.1:5400)"
+      }
+    }
+  }
+}
