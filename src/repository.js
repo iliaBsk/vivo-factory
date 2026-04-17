@@ -1040,6 +1040,43 @@ export function createSupabaseRepository(options) {
         senderName: r.sender_name, metadata: r.metadata, createdAt: r.created_at
       }));
     },
+    async listMerchants() {
+      return client.select("vivo_merchants", { select: "*", order: "name.asc" });
+    },
+    async getMerchant(merchantId) {
+      const rows = await client.select("vivo_merchants", { select: "*", merchant_id: `eq.${merchantId}` });
+      return rows[0] ?? null;
+    },
+    async updateMerchant(merchantId, patch) {
+      const existing = await this.getMerchant(merchantId);
+      if (!existing) {
+        throw new Error(`Merchant not found: ${merchantId}`);
+      }
+      const publisherId = patch.publisher_id !== undefined ? patch.publisher_id : existing.publisher_id;
+      const body = {
+        ...(patch.publisher_id !== undefined && { publisher_id: patch.publisher_id || null }),
+        ...(patch.enabled !== undefined && { enabled: patch.enabled }),
+        ...(patch.disclosure_text !== undefined && { disclosure_text: patch.disclosure_text }),
+        ...(patch.categories !== undefined && { categories: patch.categories }),
+        needs_setup: !publisherId,
+        updated_at: new Date().toISOString()
+      };
+      const rows = await client.update("vivo_merchants", { merchant_id: `eq.${merchantId}` }, body);
+      return rows[0];
+    },
+    async listMerchantOverrides(merchantId) {
+      return client.select("vivo_merchant_audience_overrides", { select: "*", merchant_id: `eq.${merchantId}` });
+    },
+    async upsertMerchantOverride(merchantId, audienceId, patch) {
+      const body = {
+        merchant_id: merchantId,
+        audience_id: audienceId,
+        ...(patch.enabled !== undefined && { enabled: patch.enabled }),
+        ...(patch.boost_tags !== undefined && { boost_tags: JSON.stringify(patch.boost_tags) })
+      };
+      const rows = await client.upsert("vivo_merchant_audience_overrides", body);
+      return rows[0];
+    },
     exportState() {
       return exportState(localState);
     }
@@ -1359,6 +1396,18 @@ function createSupabaseClient(options) {
           ...createSupabaseHeaders(serviceRoleKey),
           "content-type": "application/json",
           prefer: "return=representation"
+        },
+        body: JSON.stringify(body)
+      });
+      return parseSupabaseResponse(response);
+    },
+    async upsert(table, body) {
+      const response = await fetchImpl(`${baseUrl}/rest/v1/${table}`, {
+        method: "POST",
+        headers: {
+          ...createSupabaseHeaders(serviceRoleKey),
+          "content-type": "application/json",
+          prefer: "return=representation,resolution=merge-duplicates"
         },
         body: JSON.stringify(body)
       });
