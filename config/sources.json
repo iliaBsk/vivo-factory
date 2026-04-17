@@ -1,0 +1,85 @@
+{
+  "version": 1,
+  "sources": [
+    {
+      "id": "bcn-news-lavanguardia",
+      "location": "barcelona",
+      "category": "news",
+      "type": "rss",
+      "url": "https://www.lavanguardia.com/rss/home.xml",
+      "weight": 1.0,
+      "lang": "es"
+    },
+    {
+      "id": "bcn-news-elpais-bcn",
+      "location": "barcelona",
+      "category": "news",
+      "type": "rss",
+      "url": "https://feeds.elpais.com/mrss-s/pages/ep/site/elpais.com/portada",
+      "weight": 0.9,
+      "lang": "es"
+    },
+    {
+      "id": "bcn-events-timeout",
+      "location": "barcelona",
+      "category": "entertainment",
+      "type": "rss",
+      "url": "https://www.timeout.com/barcelona/rss/all",
+      "weight": 0.85,
+      "lang": "en"
+    },
+    {
+      "id": "bcn-events-barcelona-metropolitan",
+      "location": "barcelona",
+      "category": "entertainment",
+      "type": "rss",
+      "url": "https://www.barcelona-metropolitan.com/feed",
+      "weight": 0.8,
+      "lang": "en"
+    },
+    {
+      "id": "bcn-travel-tripadvisor",
+      "location": "barcelona",
+      "category": "travel",
+      "type": "rss",
+      "url": "https://www.tripadvisor.com/Tourism-g187497-Barcelona_Catalonia-Vacations.html",
+      "weight": 0.7,
+      "lang": "en"
+    },
+    {
+      "id": "bcn-deals-zara",
+      "location": "barcelona",
+      "category": "deals",
+      "type": "merchant",
+      "merchant_id": "zara-es",
+      "weight": 0.75
+    },
+    {
+      "id": "global-tech-hackernews",
+      "location": "global",
+      "category": "tech",
+      "type": "rss",
+      "url": "https://news.ycombinator.com/rss",
+      "weight": 0.6,
+      "lang": "en"
+    },
+    {
+      "id": "global-news-bbc",
+      "location": "global",
+      "category": "news",
+      "type": "rss",
+      "url": "https://feeds.bbci.co.uk/news/world/rss.xml",
+      "weight": 0.65,
+      "lang": "en"
+    },
+    {
+      "id": "global-tech-verge",
+      "location": "global",
+      "category": "tech",
+      "type": "rss",
+      "url": "https://www.theverge.com/rss/index.xml",
+      "weight": 0.55,
+      "lang": "en"
+    }
+  ]
+}
