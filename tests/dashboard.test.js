@@ -976,3 +976,53 @@ test("dashboard HTML still renders setup checklist when Supabase schema is incom
   assert.match(response.body, /Setup Checklist/);
   assert.match(response.body, /Missing table public\.vivo_story_reviews/);
 });
+
+test("POST /api/instances/:audienceId/chat persists user and assistant messages and returns conversationId", async () => {
+  const { createApp } = await loadModules();
+
+  const messages = [];
+  const conversations = {};
+
+  const repo = {
+    getOrCreateConversation: async (audienceId, channel) => {
+      const key = `${audienceId}::${channel}`;
+      if (!conversations[key]) conversations[key] = { id: `conv-${audienceId}`, audienceId, channel, createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z" };
+      return conversations[key];
+    },
+    appendChatMessage: async (conversationId, message) => {
+      const msg = { id: `msg-${messages.length}`, conversationId, ...message, createdAt: "2026-01-01T00:00:00Z" };
+      messages.push(msg);
+      return msg;
+    },
+    getConversationMessages: async (conversationId) => messages.filter(m => m.conversationId === conversationId),
+    saveOperatorChat: () => {},
+    getInstance: async () => null,
+    getInstanceByAudience: async () => null,
+    listAudiences: async () => [],
+    listInstances: async () => [],
+    listStories: async () => [],
+    listAuditLog: async () => [],
+    listDeployments: async () => []
+  };
+
+  const instanceManager = {
+    chatWithInstance: async (audienceId, payload) => ({ reply: "**Hello from AI**" })
+  };
+
+  const app = createApp({ repository: repo, instanceManager });
+  const response = await app.handle({
+    method: "POST",
+    pathname: "/api/instances/fitness-fans/chat",
+    body: JSON.stringify({ message: "Hi there", operator: "op@example.com" })
+  });
+
+  assert.equal(response.status, 200);
+  const body = JSON.parse(response.body);
+  assert.equal(body.reply, "**Hello from AI**");
+  assert.ok(body.conversationId, "should return conversationId");
+  assert.equal(messages.length, 2);
+  assert.equal(messages[0].role, "user");
+  assert.equal(messages[0].content, "Hi there");
+  assert.equal(messages[1].role, "assistant");
+  assert.equal(messages[1].content, "**Hello from AI**");
+});

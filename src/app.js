@@ -416,18 +416,41 @@ async function handleRequest(context) {
     ensureInstanceManager(instanceManager);
     const audienceId = request.pathname.split("/")[3];
     const body = readBody(request.body);
-    const reply = await instanceManager.chatWithInstance(audienceId, {
-      operator: body.operator ?? body.actor_id ?? "unknown",
-      message: body.message ?? ""
+    const message = body.message ?? "";
+    const operator = body.operator ?? body.actor_id ?? "unknown";
+
+    const conv = await repository.getOrCreateConversation(audienceId, "operator_console");
+
+    await repository.appendChatMessage(conv.id, {
+      audienceId,
+      role: "user",
+      content: message,
+      senderId: operator,
+      senderName: operator,
+      metadata: {}
     });
+
+    const result = await instanceManager.chatWithInstance(audienceId, { operator, message });
+    const reply = result.reply ?? result.stdout ?? "";
+
+    await repository.appendChatMessage(conv.id, {
+      audienceId,
+      role: "assistant",
+      content: reply,
+      senderId: "assistant",
+      senderName: "AI",
+      metadata: {}
+    });
+
     repository.saveOperatorChat({
       audience_id: audienceId,
-      operator: body.operator ?? body.actor_id ?? "unknown",
-      message: body.message ?? "",
-      response: reply,
+      operator,
+      message,
+      response: result,
       timestamp: clock()
     });
-    return json(200, reply);
+
+    return json(200, { reply, conversationId: conv.id });
   }
 
   if (request.method === "GET" && request.pathname === "/") {
