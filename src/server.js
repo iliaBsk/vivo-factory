@@ -21,7 +21,6 @@ const execFileAsync = promisify(execFile);
 const runtimeConfig = loadJsonConfig("config/runtime.json", {});
 const serverPort = Number(process.env.PORT ?? runtimeConfig.server_port ?? 4310);
 const sourcesConfig = loadJsonConfig("config/sources.json", { sources: [] });
-const merchantRegistryConfig = loadJsonConfig("config/merchant-registry.json", { merchants: [], audienceOverrides: [] });
 const envConfig = {
   ...loadEnvConfig(".env"),
   ...process.env
@@ -68,7 +67,6 @@ const audienceManagerLauncher = createAudienceManagerLauncher({
 const profileClientFactory = createDashboardProfileClientFactory(runtimeConfig);
 const contentFetcher = createContentFetcher({
   sourcesConfig,
-  merchantRegistry: merchantRegistryConfig,
   profileClientFactory,
   repository,
   fetchImpl: globalThis.fetch,
