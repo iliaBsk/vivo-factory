@@ -770,6 +770,69 @@ export function createSupabaseRepository(options) {
     listDeployments() {
       return [...localState.deployments].sort(compareByTimestampDesc);
     },
+    async getOrCreateConversation(audienceId, channel) {
+      const { data: existing, error: selectErr } = await client
+        .from("vivo_conversations")
+        .select("*")
+        .eq("audience_id", audienceId)
+        .eq("channel", channel)
+        .is("external_id", null)
+        .limit(1)
+        .maybeSingle();
+      if (selectErr) throw new Error(selectErr.message);
+      if (existing) {
+        return {
+          id: existing.id, audienceId: existing.audience_id, channel: existing.channel,
+          externalId: existing.external_id, title: existing.title,
+          createdAt: existing.created_at, updatedAt: existing.updated_at
+        };
+      }
+      const { data: created, error: insertErr } = await client
+        .from("vivo_conversations")
+        .insert({ audience_id: audienceId, channel })
+        .select()
+        .single();
+      if (insertErr) throw new Error(insertErr.message);
+      return {
+        id: created.id, audienceId: created.audience_id, channel: created.channel,
+        externalId: created.external_id, title: created.title,
+        createdAt: created.created_at, updatedAt: created.updated_at
+      };
+    },
+    async appendChatMessage(conversationId, message) {
+      const { data, error } = await client
+        .from("vivo_messages")
+        .insert({
+          conversation_id: conversationId,
+          audience_id: message.audienceId,
+          role: message.role,
+          content: message.content,
+          sender_id: message.senderId ?? null,
+          sender_name: message.senderName ?? null,
+          metadata: message.metadata ?? {}
+        })
+        .select()
+        .single();
+      if (error) throw new Error(error.message);
+      return {
+        id: data.id, conversationId: data.conversation_id, audienceId: data.audience_id,
+        role: data.role, content: data.content, senderId: data.sender_id,
+        senderName: data.sender_name, metadata: data.metadata, createdAt: data.created_at
+      };
+    },
+    async getConversationMessages(conversationId) {
+      const { data, error } = await client
+        .from("vivo_messages")
+        .select("*")
+        .eq("conversation_id", conversationId)
+        .order("created_at", { ascending: true });
+      if (error) throw new Error(error.message);
+      return (data ?? []).map(r => ({
+        id: r.id, conversationId: r.conversation_id, audienceId: r.audience_id,
+        role: r.role, content: r.content, senderId: r.sender_id,
+        senderName: r.sender_name, metadata: r.metadata, createdAt: r.created_at
+      }));
+    },
     exportState() {
       return exportState(localState);
     }
