@@ -977,6 +977,34 @@ test("dashboard HTML still renders setup checklist when Supabase schema is incom
   assert.match(response.body, /Missing table public\.vivo_story_reviews/);
 });
 
+test("GET /api/instances/:audienceId/chat/history returns persisted messages", async () => {
+  const { createApp } = await loadModules();
+
+  const storedMessages = [
+    { id: "m1", conversationId: "c1", audienceId: "fitness-fans", role: "user", content: "Hi", senderId: "op@example.com", senderName: "Op", metadata: {}, createdAt: "2026-01-01T00:00:00Z" },
+    { id: "m2", conversationId: "c1", audienceId: "fitness-fans", role: "assistant", content: "Hello!", senderId: "assistant", senderName: "AI", metadata: {}, createdAt: "2026-01-01T00:00:01Z" }
+  ];
+
+  const repo = {
+    getOrCreateConversation: async () => ({ id: "c1", audienceId: "fitness-fans", channel: "operator_console", createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:01Z" }),
+    getConversationMessages: async () => storedMessages,
+    listAudiences: async () => [],
+    listInstances: async () => [],
+    listStories: async () => [],
+    listAuditLog: async () => [],
+    listDeployments: async () => []
+  };
+
+  const app = createApp({ repository: repo });
+  const response = await app.handle({ method: "GET", pathname: "/api/instances/fitness-fans/chat/history", query: {}, body: null });
+
+  assert.equal(response.status, 200);
+  const body = JSON.parse(response.body);
+  assert.equal(body.messages.length, 2);
+  assert.equal(body.messages[0].role, "user");
+  assert.equal(body.messages[1].role, "assistant");
+});
+
 test("POST /api/instances/:audienceId/chat persists user and assistant messages and returns conversationId", async () => {
   const { createApp } = await loadModules();
 

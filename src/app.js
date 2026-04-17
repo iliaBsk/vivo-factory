@@ -412,6 +412,13 @@ async function handleRequest(context) {
     return json(200, deployment);
   }
 
+  if (request.method === "GET" && /^\/api\/instances\/[^/]+\/chat\/history$/.test(request.pathname)) {
+    const audienceId = decodeURIComponent(request.pathname.split("/")[3]);
+    const conv = await repository.getOrCreateConversation(audienceId, "operator_console");
+    const messages = await repository.getConversationMessages(conv.id);
+    return json(200, { messages });
+  }
+
   if (request.method === "POST" && matchPath(request.pathname, /^\/api\/instances\/([^/]+)\/chat$/)) {
     ensureInstanceManager(instanceManager);
     const audienceId = request.pathname.split("/")[3];
