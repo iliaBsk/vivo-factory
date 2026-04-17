@@ -5,6 +5,12 @@ export function loadMerchantRegistry(config) {
 }
 
 export function normalizeProduct(merchant, rawProduct) {
+  const template = merchant.affiliate_url_template;
+  const affiliateUrl = template
+    ? template
+        .replace("{{publisher_id}}", merchant.publisher_id ?? "")
+        .replace("{{url}}", encodeURIComponent(rawProduct.canonical_url))
+    : rawProduct.canonical_url;
   return {
     product_id: rawProduct.product_id,
     merchant_id: merchant.merchant_id,
@@ -15,7 +21,7 @@ export function normalizeProduct(merchant, rawProduct) {
     currency: rawProduct.currency,
     availability: rawProduct.availability,
     canonical_url: rawProduct.canonical_url,
-    affiliate_url: merchant.affiliate_url_template.replace("{{url}}", encodeURIComponent(rawProduct.canonical_url)),
+    affiliate_url: affiliateUrl,
     image_urls: rawProduct.image_urls ?? [],
     style_tags: rawProduct.style_tags ?? [],
     gender_fit: rawProduct.gender_fit ?? "unisex",

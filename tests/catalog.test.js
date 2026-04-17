@@ -161,3 +161,56 @@ test("buildContentBrief and validateCandidate enforce approval data", async () =
     /stale offer/
   );
 });
+
+test("normalizeProduct substitutes {{publisher_id}} in affiliate URL template", async () => {
+  const { normalizeProduct } = await loadCatalogModule();
+  const merchant = {
+    merchant_id: "zara-es",
+    publisher_id: "123456",
+    affiliate_url_template: "https://www.awin1.com/cread.php?awinmid=13623&awinaffid={{publisher_id}}&ued={{url}}"
+  };
+  const product = normalizeProduct(merchant, {
+    product_id: "p1",
+    title: "Linen Shirt",
+    brand: "Zara",
+    category: "fashion",
+    price: 29.99,
+    currency: "EUR",
+    availability: "in_stock",
+    canonical_url: "https://www.zara.com/es/linen-shirt",
+    image_urls: [],
+    style_tags: [],
+    gender_fit: "unisex",
+    occasion_tags: [],
+    season_tags: [],
+    locale_tags: []
+  });
+  assert.match(product.affiliate_url, /awinaffid=123456/);
+  assert.match(product.affiliate_url, /ued=https%3A%2F%2Fwww\.zara\.com/);
+});
+
+test("normalizeProduct falls back to canonical_url when affiliate_url_template is null", async () => {
+  const { normalizeProduct } = await loadCatalogModule();
+  const merchant = {
+    merchant_id: "fever-es",
+    publisher_id: null,
+    affiliate_url_template: null
+  };
+  const product = normalizeProduct(merchant, {
+    product_id: "p2",
+    title: "Concert ticket",
+    brand: "Fever",
+    category: "entertainment",
+    price: 45.0,
+    currency: "EUR",
+    availability: "in_stock",
+    canonical_url: "https://fever.com/event/123",
+    image_urls: [],
+    style_tags: [],
+    gender_fit: "unisex",
+    occasion_tags: [],
+    season_tags: [],
+    locale_tags: []
+  });
+  assert.equal(product.affiliate_url, "https://fever.com/event/123");
+});
