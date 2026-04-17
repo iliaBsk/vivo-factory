@@ -223,7 +223,17 @@ export default definePluginEntry({
               })
             }
           );
-          const data = await response.json();
+          let data;
+          try {
+            data = await response.json();
+          } catch {
+            return jsonResult({
+              ok: false,
+              data: null,
+              errors: ["Failed to parse response from pipeline"],
+              warnings: []
+            });
+          }
           return jsonResult({
             ok: response.ok,
             data: response.ok ? { source_id: data.source_id } : null,
