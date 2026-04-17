@@ -14,5 +14,8 @@
   },
   "devDependencies": {
     "tailwindcss": "^3.4.19"
+  },
+  "dependencies": {
+    "better-sqlite3": "^9.4.3"
   }
 }
