@@ -154,6 +154,14 @@ test("submitStoryReview auto-transitions to archived on rejected", async () => {
   assert.equal(updated.status, "archived");
 });
 
+test("createJob throws when audience_id is missing", async () => {
+  const repo = await loadRepo();
+  assert.throws(
+    () => repo.createJob({ factory_id: "factory-1" }),
+    /audience_id is required/
+  );
+});
+
 test("createJob creates a pending job", async () => {
   const repo = await loadRepo();
 

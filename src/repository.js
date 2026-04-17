@@ -184,6 +184,7 @@ export function createRepository(seed = {}) {
       return hydrateStory(state, updated);
     },
     createJob(job, options = {}) {
+      if (!job.audience_id) throw new Error("audience_id is required");
       const now = options.timestamp ?? nowIso();
       const created = {
         id: job.id ?? crypto.randomUUID(),
@@ -765,8 +766,9 @@ export function createSupabaseRepository(options) {
       });
       return rows[0] ?? null;
     },
-    async updateJob(jobId, changes = {}) {
-      const rows = await client.update("vivo_content_fetch_jobs", { id: `eq.${jobId}` }, changes);
+    async updateJob(jobId, changes = {}, options = {}) {
+      const patch = { ...changes, updated_at: options.timestamp ?? new Date().toISOString() };
+      const rows = await client.update("vivo_content_fetch_jobs", { id: `eq.${jobId}` }, patch);
       return rows[0] ?? null;
     },
     async selectStoryAsset(storyId, assetId, options = {}) {
