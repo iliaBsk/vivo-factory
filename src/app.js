@@ -483,6 +483,16 @@ async function handleRequest(context) {
       }
     }
     const audiences = await safeLoad(() => repository.listAudiences(), []);
+    const merchants = activeTab === "merchants"
+      ? await safeLoad(() => repository.listMerchants(), [])
+      : [];
+    const activeMerchantId = request.query?.merchant_id ?? "";
+    const activeMerchant = activeMerchantId && activeTab === "merchants"
+      ? await safeLoad(() => repository.getMerchant(activeMerchantId), null)
+      : null;
+    const activeMerchantOverrides = activeMerchant
+      ? await safeLoad(() => repository.listMerchantOverrides(activeMerchantId), [])
+      : [];
     const audienceInstances = repository.listInstances && activeTab === "audiences" ? await safeLoad(() => repository.listInstances(), []) : [];
     const audienceProfiles = activeTab === "audiences"
       ? await loadAudienceProfiles(audiences, audienceInstances, profileClientFactory)
@@ -528,7 +538,10 @@ async function handleRequest(context) {
       auditItems,
       analyticsItems,
       instances,
-      chatHistory
+      chatHistory,
+      merchants,
+      activeMerchant,
+      activeMerchantOverrides
     }));
   }
 
@@ -891,6 +904,9 @@ function renderDashboard(model) {
         closeHref: buildDashboardHref(model.filters, "")
       })
     : "";
+  const merchantDrawerPortal = activeTab === "merchants" && model.activeMerchant
+    ? renderMerchantDrawer({ merchant: model.activeMerchant, overrides: model.activeMerchantOverrides ?? [], audiences: model.audiences ?? [] })
+    : "";
   const workspace = activeTab === "stories"
     ? renderStoriesWorkspace({
         model,
@@ -909,11 +925,13 @@ function renderDashboard(model) {
           selectedDeployment,
           chatHistory: model.chatHistory ?? []
         })
-      : renderSetupWorkspace({
-          model,
-          setupChecklist,
-          audienceImportPanel
-        });
+      : activeTab === "merchants"
+        ? renderMerchantsWorkspace({ merchants: model.merchants ?? [], activeMerchant: model.activeMerchant ?? null, overrides: model.activeMerchantOverrides ?? [], audiences: model.audiences ?? [] })
+        : renderSetupWorkspace({
+            model,
+            setupChecklist,
+            audienceImportPanel
+          });
 
   return `<!doctype html>
 <html lang="en" data-theme="light">
@@ -952,6 +970,7 @@ function renderDashboard(model) {
     </div>
 
     ${drawerPortal}
+    ${merchantDrawerPortal}
     ${renderDashboardScript()}
   </body>
 </html>`;
@@ -1013,6 +1032,192 @@ function renderSetupWorkspace({ model, setupChecklist, audienceImportPanel }) {
       </div>
     </div>
   </div>
+  </div>`;
+}
+
+function renderMerchantsWorkspace({ merchants, activeMerchant, overrides, audiences }) {
+  const rows = merchants.map((m) => {
+    const statusBadge = !m.network
+      ? `<span class="text-xs text-gray-400 dark:text-gray-500">No program</span>`
+      : m.needs_setup
+        ? `<span class="inline-flex items-center rounded-full bg-yellow-50 dark:bg-yellow-900/20 px-2 py-0.5 text-xs font-medium text-yellow-800 dark:text-yellow-300 ring-1 ring-inset ring-yellow-600/20">⚠ Needs Setup</span>`
+        : m.enabled
+          ? `<span class="inline-flex items-center rounded-full bg-green-50 dark:bg-green-900/20 px-2 py-0.5 text-xs font-medium text-green-700 dark:text-green-400 ring-1 ring-inset ring-green-600/20">✓ Active</span>`
+          : `<span class="inline-flex items-center rounded-full bg-gray-100 dark:bg-gray-700 px-2 py-0.5 text-xs font-medium text-gray-600 dark:text-gray-400">Disabled</span>`;
+    const isActive = activeMerchant?.merchant_id === m.merchant_id;
+    const href = escapeAttribute(`/?tab=merchants&merchant_id=${encodeURIComponent(m.merchant_id)}`);
+    return `<tr class="cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors${isActive ? " bg-indigo-50 dark:bg-indigo-900/20" : ""}" onclick="window.location.href='${href}'">
+      <td class="whitespace-nowrap px-4 py-3 text-sm font-medium text-gray-900 dark:text-gray-100">${escapeHtml(m.name)}</td>
+      <td class="whitespace-nowrap px-4 py-3 text-sm text-gray-500 dark:text-gray-400">${escapeHtml(m.domain)}</td>
+      <td class="whitespace-nowrap px-4 py-3 text-sm text-gray-500 dark:text-gray-400">${escapeHtml(m.network ?? "—")}</td>
+      <td class="px-4 py-3 text-xs">${(m.categories ?? []).map((c) => `<span class="mr-1 inline-block rounded bg-indigo-50 dark:bg-indigo-900/30 px-1.5 py-0.5 text-indigo-700 dark:text-indigo-300">${escapeHtml(c)}</span>`).join("")}</td>
+      <td class="whitespace-nowrap px-4 py-3">${statusBadge}</td>
+    </tr>`;
+  }).join("");
+
+  return `<div class="space-y-4">
+    <div class="flex items-center justify-between">
+      <h2 class="text-lg font-semibold text-gray-900 dark:text-gray-100">Merchants</h2>
+      <span class="text-sm text-gray-500 dark:text-gray-400">${merchants.length} merchant${merchants.length !== 1 ? "s" : ""}</span>
+    </div>
+    <div class="overflow-hidden rounded-lg ring-1 ring-gray-200 dark:ring-gray-700 bg-white dark:bg-gray-800">
+      <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+        <thead class="bg-gray-50 dark:bg-gray-700/50">
+          <tr>
+            <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Merchant</th>
+            <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Domain</th>
+            <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Network</th>
+            <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Categories</th>
+            <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Status</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-gray-100 dark:divide-gray-700">
+          ${rows || `<tr><td colspan="5" class="px-4 py-8 text-center text-sm text-gray-500 dark:text-gray-400">No merchants configured.</td></tr>`}
+        </tbody>
+      </table>
+    </div>
+  </div>`;
+}
+
+function renderMerchantDrawer({ merchant, overrides, audiences }) {
+  const closeHref = "/?tab=merchants";
+  const networkLabel = merchant.network ? merchant.network.toUpperCase() : null;
+
+  const statusBadge = !merchant.network
+    ? `<span class="rounded bg-gray-100 dark:bg-gray-700 px-2 py-0.5 text-xs font-medium text-gray-600 dark:text-gray-400">No program</span>`
+    : merchant.needs_setup
+      ? `<span class="rounded bg-yellow-50 dark:bg-yellow-900/20 px-2 py-0.5 text-xs font-semibold text-yellow-800 dark:text-yellow-300">⚠ Needs Setup</span>`
+      : merchant.enabled
+        ? `<span class="rounded bg-green-50 dark:bg-green-900/20 px-2 py-0.5 text-xs font-semibold text-green-700 dark:text-green-400">✓ Active</span>`
+        : `<span class="rounded bg-gray-100 dark:bg-gray-700 px-2 py-0.5 text-xs font-medium text-gray-600 dark:text-gray-400">Disabled</span>`;
+
+  const affiliateSetupSection = merchant.network
+    ? `<div class="${merchant.needs_setup ? "rounded-lg border border-yellow-300 dark:border-yellow-700 bg-yellow-50 dark:bg-yellow-900/10 p-4 mb-4" : "mb-4"}">
+        <div class="text-xs font-bold ${merchant.needs_setup ? "text-yellow-900 dark:text-yellow-300" : "text-gray-900 dark:text-gray-100"} mb-1">Affiliate Setup · ${escapeHtml(networkLabel)}</div>
+        ${merchant.needs_setup ? `<div class="text-xs text-yellow-800 dark:text-yellow-400 mb-3 leading-relaxed">Join the ${escapeHtml(merchant.name)} program on ${escapeHtml(networkLabel)}, then paste your publisher ID below.</div>` : ""}
+        <label class="block text-xs font-semibold text-gray-900 dark:text-gray-100 mb-1">Your ${escapeHtml(networkLabel)} Publisher ID</label>
+        <input id="drawer-publisher-id"
+               class="w-full rounded border ${merchant.needs_setup ? "border-yellow-400 dark:border-yellow-600" : "border-gray-300 dark:border-gray-600"} bg-white dark:bg-gray-700 px-2.5 py-1.5 text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-400"
+               placeholder="e.g. 123456" value="${escapeAttribute(merchant.publisher_id ?? "")}"/>
+        ${merchant.network_merchant_code ? `<div class="mt-2 text-xs text-gray-500 dark:text-gray-400">Merchant code: <code class="rounded bg-gray-100 dark:bg-gray-700 px-1 py-0.5 text-gray-800 dark:text-gray-200">${escapeHtml(merchant.network_merchant_code)}</code></div>` : ""}
+      </div>`
+    : "";
+
+  const categoriesSection = `<div class="mb-4">
+    <div class="text-xs font-semibold text-gray-900 dark:text-gray-100 mb-1.5">Categories</div>
+    <div class="flex flex-wrap gap-1.5">
+      ${(merchant.categories ?? []).map((c) => `<span class="rounded bg-indigo-50 dark:bg-indigo-900/30 px-2 py-0.5 text-xs text-indigo-700 dark:text-indigo-300">${escapeHtml(c)}</span>`).join("") || `<span class="text-xs text-gray-400">None</span>`}
+    </div>
+  </div>`;
+
+  const overrideRows = audiences.map((aud) => {
+    const override = overrides.find((o) => o.audience_id === aud.id);
+    const isEnabled = override ? override.enabled : true;
+    const boostHint = override?.boost_tags?.length
+      ? override.boost_tags.map((b) => `${b.tag} ×${b.weight}`).join(", ")
+      : "—";
+    return `<div class="grid grid-cols-[1fr_auto_auto] gap-2 items-center px-3 py-2 border-b border-gray-100 dark:border-gray-700 last:border-0">
+      <span class="text-xs font-medium text-gray-900 dark:text-gray-100">${escapeHtml(aud.audience_key ?? aud.id)}</span>
+      <span class="text-xs text-gray-500 dark:text-gray-400">${escapeHtml(boostHint)}</span>
+      <label class="flex items-center gap-1 text-xs text-gray-700 dark:text-gray-300 cursor-pointer whitespace-nowrap">
+        <input type="checkbox" class="override-toggle" data-audience-id="${escapeAttribute(aud.id)}"${isEnabled ? " checked" : ""}/>
+        on
+      </label>
+    </div>`;
+  }).join("");
+
+  const merchantIdJs = JSON.stringify(merchant.merchant_id);
+
+  return `<div class="fixed inset-0 z-40" data-tremor-component="DrawerPortal">
+    <a class="fixed inset-0 bg-gray-900/50 backdrop-blur-sm z-40"
+       href="${escapeAttribute(closeHref)}" aria-label="Close merchant details"></a>
+    <aside class="fixed inset-y-0 right-0 flex w-2/5 flex-col bg-white dark:bg-gray-800 shadow-xl z-50 overflow-hidden"
+           data-tremor-component="Drawer" aria-label="Merchant details">
+
+      <div class="sticky top-0 z-10 flex items-center justify-between border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-5 py-4">
+        <div>
+          <div class="text-sm font-bold text-gray-900 dark:text-gray-100">${escapeHtml(merchant.name)}</div>
+          <div class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">${escapeHtml(merchant.domain)} · ${escapeHtml(merchant.country)} · ${escapeHtml(merchant.currency)}</div>
+        </div>
+        <div class="flex items-center gap-2">
+          ${statusBadge}
+          <label class="flex items-center gap-1.5 text-xs text-gray-700 dark:text-gray-300 cursor-pointer whitespace-nowrap">
+            <input type="checkbox" id="drawer-enabled" ${merchant.enabled ? "checked" : ""}/>
+            Enabled
+          </label>
+          <a href="${escapeAttribute(closeHref)}"
+             class="rounded p-1 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-600 dark:hover:text-gray-200"
+             aria-label="Close">✕</a>
+        </div>
+      </div>
+
+      <div class="flex-1 overflow-y-auto px-5 py-4">
+        ${affiliateSetupSection}
+        ${categoriesSection}
+        ${audiences.length > 0 ? `<div class="mb-4">
+          <div class="text-xs font-semibold text-gray-900 dark:text-gray-100 mb-2">Audience Overrides</div>
+          <div class="rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden bg-white dark:bg-gray-800">
+            ${overrideRows || `<div class="px-3 py-3 text-xs text-gray-400">No audiences configured.</div>`}
+          </div>
+        </div>` : ""}
+        <div class="mb-5">
+          <label class="block text-xs font-semibold text-gray-900 dark:text-gray-100 mb-1">Disclosure text</label>
+          <input id="drawer-disclosure"
+                 class="w-full rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 px-2.5 py-1.5 text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                 value="${escapeAttribute(merchant.disclosure_text ?? "")}"/>
+        </div>
+        <button id="drawer-save-btn"
+                class="w-full rounded-md bg-indigo-600 py-2 text-sm font-semibold text-white hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-50 transition-colors"
+                data-merchant-id="${escapeAttribute(merchant.merchant_id)}">
+          Save Changes
+        </button>
+        <div id="drawer-save-msg" class="mt-2 text-center text-xs hidden"></div>
+      </div>
+
+    </aside>
+    <script>
+    (function() {
+      var btn = document.getElementById('drawer-save-btn');
+      var merchantId = ${merchantIdJs};
+      btn.addEventListener('click', async function() {
+        btn.disabled = true;
+        var msg = document.getElementById('drawer-save-msg');
+        msg.className = 'mt-2 text-center text-xs hidden';
+        try {
+          var publisherInput = document.getElementById('drawer-publisher-id');
+          var enabledInput = document.getElementById('drawer-enabled');
+          var disclosureInput = document.getElementById('drawer-disclosure');
+          var body = {};
+          if (publisherInput) body.publisher_id = publisherInput.value.trim();
+          if (enabledInput) body.enabled = enabledInput.checked;
+          if (disclosureInput) body.disclosure_text = disclosureInput.value;
+          var res = await fetch('/api/merchants/' + encodeURIComponent(merchantId), {
+            method: 'PUT',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(body)
+          });
+          if (!res.ok) throw new Error(await res.text());
+
+          var toggles = document.querySelectorAll('.override-toggle');
+          await Promise.all(Array.from(toggles).map(function(t) {
+            return fetch('/api/merchants/' + encodeURIComponent(merchantId) + '/overrides/' + encodeURIComponent(t.dataset.audienceId), {
+              method: 'PUT',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({ enabled: t.checked })
+            });
+          }));
+
+          msg.textContent = 'Saved!';
+          msg.className = 'mt-2 text-center text-xs text-green-600 dark:text-green-400';
+          setTimeout(function() { window.location.reload(); }, 800);
+        } catch(e) {
+          msg.textContent = 'Error: ' + e.message;
+          msg.className = 'mt-2 text-center text-xs text-red-600 dark:text-red-400';
+          btn.disabled = false;
+        }
+      });
+    })();
+    </script>
   </div>`;
 }
 
@@ -2267,7 +2472,7 @@ function buildDashboardHref(filters, storyId) {
 
 function normalizeDashboardTab(query = {}) {
   const value = query.tab ?? "setup";
-  return ["setup", "stories", "audiences"].includes(value) ? value : "setup";
+  return ["setup", "stories", "audiences", "merchants"].includes(value) ? value : "setup";
 }
 
 function normalizeStoryFilters(query = {}) {

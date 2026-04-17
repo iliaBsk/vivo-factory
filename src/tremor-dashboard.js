@@ -8,7 +8,8 @@ export function renderSidebarNav(activeTab) {
   const tabs = [
     { id: "setup", label: "Setup", href: "/" },
     { id: "stories", label: "Stories", href: "/?tab=stories" },
-    { id: "audiences", label: "Audiences", href: "/?tab=audiences" }
+    { id: "audiences", label: "Audiences", href: "/?tab=audiences" },
+    { id: "merchants", label: "Merchants", href: "/?tab=merchants" }
   ];
 
   const navItems = tabs.map((tab) => {
