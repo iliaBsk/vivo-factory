@@ -20,7 +20,7 @@
       "lang": "es"
     },
     {
-      "id": "bcn-events-timeout",
+      "id": "bcn-entertainment-timeout",
       "location": "barcelona",
       "category": "entertainment",
       "type": "rss",
@@ -29,7 +29,7 @@
       "lang": "en"
     },
     {
-      "id": "bcn-events-barcelona-metropolitan",
+      "id": "bcn-entertainment-barcelona-metropolitan",
       "location": "barcelona",
       "category": "entertainment",
       "type": "rss",
@@ -38,11 +38,11 @@
       "lang": "en"
     },
     {
-      "id": "bcn-travel-tripadvisor",
+      "id": "bcn-travel-spottedbylocals",
       "location": "barcelona",
       "category": "travel",
       "type": "rss",
-      "url": "https://www.tripadvisor.com/Tourism-g187497-Barcelona_Catalonia-Vacations.html",
+      "url": "https://www.spottedbylocals.com/barcelona/feed/",
       "weight": 0.7,
       "lang": "en"
     },
@@ -52,7 +52,8 @@
       "category": "deals",
       "type": "merchant",
       "merchant_id": "zara-es",
-      "weight": 0.75
+      "weight": 0.75,
+      "lang": "es"
     },
     {
       "id": "global-tech-hackernews",
