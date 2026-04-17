@@ -166,5 +166,71 @@ export default definePluginEntry({
         return jsonResult(await res.json());
       }
     });
+
+      const vivoFactoryUrl = (api.pluginConfig?.vivoFactoryUrl ?? "").replace(/\/$/, "");
+      const audienceId = process.env.AUDIENCE_ID ?? "";
+
+      api.registerTool({
+        name: "audience_add_source",
+        description:
+          "Add a news source, RSS feed, or website to this audience's daily recap pipeline. " +
+          "Use this when the user mentions a publication, website, or topic they want to follow regularly.",
+        parameters: {
+          type: "object",
+          required: ["url", "category"],
+          properties: {
+            url: {
+              type: "string",
+              description: "RSS feed URL or main website URL of the source"
+            },
+            category: {
+              type: "string",
+              description: "Content category: news, entertainment, deals, travel, tech, sports, lifestyle"
+            },
+            type: {
+              type: "string",
+              enum: ["rss", "merchant"],
+              description: "Source type — use rss for feeds and websites (default: rss)"
+            },
+            weight: {
+              type: "number",
+              description: "Relevance weight from 0.1 (low) to 1.0 (high). Default: 0.7"
+            }
+          }
+        },
+        execute: async (_id, params) => {
+          if (!vivoFactoryUrl || !audienceId) {
+            return jsonResult({
+              ok: false,
+              errors: ["audience_add_source: vivoFactoryUrl or AUDIENCE_ID not configured"],
+              warnings: [],
+              data: null
+            });
+          }
+          const response = await fetch(
+            `${vivoFactoryUrl}/api/audiences/${audienceId}/sources`,
+            {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({
+                source: {
+                  type: params.type ?? "rss",
+                  url: params.url,
+                  category: params.category,
+                  weight: params.weight ?? 0.7,
+                  location: "custom"
+                }
+              })
+            }
+          );
+          const data = await response.json();
+          return jsonResult({
+            ok: response.ok,
+            data: response.ok ? { source_id: data.source_id } : null,
+            errors: response.ok ? [] : ["Failed to add source to pipeline"],
+            warnings: []
+          });
+        }
+      });
   }
 });

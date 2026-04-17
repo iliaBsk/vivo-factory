@@ -11,6 +11,11 @@
         "type": "string",
         "minLength": 1,
         "description": "Marble profile service base URL (default: http://127.0.0.1:5400)"
+      },
+      "vivoFactoryUrl": {
+        "type": "string",
+        "minLength": 1,
+        "description": "Vivo Factory admin URL for source registration"
       }
     }
   }
