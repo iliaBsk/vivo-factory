@@ -118,6 +118,61 @@ export function createRepository(seed = {}) {
       });
       return updated;
     },
+    createStory(story, options = {}) {
+      const now = options.timestamp ?? nowIso();
+      // Enforce story_key uniqueness
+      const exists = [...state.stories.values()].some(s => s.story_key === story.story_key);
+      if (exists) {
+        throw new Error(`Duplicate story_key: ${story.story_key}`);
+      }
+      const created = {
+        id: story.id ?? crypto.randomUUID(),
+        factory_id: story.factory_id ?? null,
+        audience_id: story.audience_id,
+        instance_id: story.instance_id ?? null,
+        story_key: story.story_key,
+        title: story.title,
+        story_text: story.story_text ?? "",
+        summary: story.summary ?? story.story_text?.slice(0, 200) ?? "",
+        source_kind: story.source_kind ?? "rss",
+        primary_source_url: story.primary_source_url ?? null,
+        status: "new",
+        is_deal: story.is_deal ?? false,
+        is_local: story.is_local ?? false,
+        operator_review_status: "pending",
+        operator_reviewed_at: null,
+        operator_reviewed_by: null,
+        operator_review_note: "",
+        metadata: story.metadata ?? {},
+        created_at: story.created_at ?? now,
+        updated_at: story.updated_at ?? now
+      };
+      state.stories.set(created.id, created);
+      appendAudit(state, {
+        type: "story_created",
+        entity_type: "story",
+        entity_id: created.id,
+        actor_id: options.actorId ?? "system",
+        timestamp: now,
+        payload: { audience_id: created.audience_id, source_kind: created.source_kind }
+      });
+      return hydrateStory(state, created);
+    },
+    transitionStoryStatus(storyId, status, options = {}) {
+      const story = requireStory(state, storyId);
+      const now = options.timestamp ?? nowIso();
+      const updated = { ...story, status, updated_at: now };
+      state.stories.set(storyId, updated);
+      appendAudit(state, {
+        type: "story_status_changed",
+        entity_type: "story",
+        entity_id: storyId,
+        actor_id: options.actorId ?? "system",
+        timestamp: now,
+        payload: { from: story.status, to: status }
+      });
+      return hydrateStory(state, updated);
+    },
     selectStoryAsset(storyId, assetId, options = {}) {
       const assets = getStoryAssets(state, storyId);
       if (!assets.some((asset) => asset.id === assetId)) {
@@ -224,8 +279,14 @@ export function createRepository(seed = {}) {
       state.storyReviews.push(reviewRow);
 
       const story = requireStory(state, storyId);
+      const statusFromReview = reviewRow.review_status === "approved"
+        ? "ready_to_publish"
+        : reviewRow.review_status === "rejected"
+          ? "archived"
+          : story.status;
       state.stories.set(storyId, {
         ...story,
+        status: statusFromReview,
         operator_review_status: reviewRow.review_status,
         operator_reviewed_at: timestamp,
         operator_reviewed_by: reviewRow.actor_id,
@@ -610,6 +671,43 @@ export function createSupabaseRepository(options) {
       });
       return rows[0] ?? null;
     },
+    async createStory(story, options = {}) {
+      const rows = await client.insert("vivo_stories", {
+        factory_id: story.factory_id ?? null,
+        audience_id: story.audience_id,
+        instance_id: story.instance_id ?? null,
+        story_key: story.story_key,
+        title: story.title,
+        story_text: story.story_text ?? "",
+        summary: story.summary ?? story.story_text?.slice(0, 200) ?? "",
+        source_kind: story.source_kind ?? "rss",
+        primary_source_url: story.primary_source_url ?? null,
+        status: "new",
+        is_deal: story.is_deal ?? false,
+        is_local: story.is_local ?? false,
+        metadata: story.metadata ?? {}
+      });
+      await insertAuditEvent(client, {
+        entity_type: "story",
+        entity_id: rows[0].id,
+        event_type: "story_created",
+        actor_id: options.actorId ?? "system",
+        payload: { audience_id: story.audience_id, source_kind: story.source_kind }
+      });
+      return rows[0];
+    },
+    async transitionStoryStatus(storyId, status, options = {}) {
+      const rows = await client.update("vivo_stories", { id: `eq.${storyId}` }, { status });
+      await insertAuditEvent(client, {
+        entity_type: "story",
+        entity_id: storyId,
+        event_type: "story_status_changed",
+        actor_id: options.actorId ?? "system",
+        payload: { to: status }
+      });
+      const hydrated = await hydrateSupabaseStories(client, rows);
+      return hydrated[0] ?? null;
+    },
     async selectStoryAsset(storyId, assetId, options = {}) {
       await client.update("vivo_story_assets", { story_id: `eq.${storyId}` }, { is_selected: false });
       const rows = await client.update("vivo_story_assets", {
@@ -693,7 +791,13 @@ export function createSupabaseRepository(options) {
         actor_id: review.actor_id ?? "unknown",
         payload: review.payload ?? {}
       });
+      const statusFromReview = rows[0].review_status === "approved"
+        ? "ready_to_publish"
+        : rows[0].review_status === "rejected"
+          ? "archived"
+          : undefined;
       await client.update("vivo_stories", { id: `eq.${storyId}` }, {
+        ...(statusFromReview ? { status: statusFromReview } : {}),
         operator_review_status: rows[0].review_status,
         operator_reviewed_at: rows[0].created_at,
         operator_reviewed_by: rows[0].actor_id,
@@ -1027,6 +1131,8 @@ function withPersistence(repository, pathname) {
   const write = () => writeState(pathname, repository.exportState());
   const wrapped = { ...repository };
   for (const methodName of [
+    "createStory",
+    "transitionStoryStatus",
     "updateStory",
     "updateAudience",
     "createInstanceForAudience",
