@@ -14,6 +14,9 @@ export function createProfileClient(options) {
     },
     getDebug() {
       return getJson(fetchImpl, `${baseUrl}/user-profile/graph/debug`);
+    },
+    selectItems(items, context = {}) {
+      return postJson(fetchImpl, `${baseUrl}/user-profile/select`, { items, context });
     }
   };
 }

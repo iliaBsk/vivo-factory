@@ -73,3 +73,35 @@ test("createProfileClient rejects non-loopback plugin endpoints", async () => {
 
   assert.throws(() => createProfileClient({ baseUrl: "http://plugin:5400" }), /loopback/);
 });
+
+test("createProfileClient.selectItems posts items to /user-profile/select and returns scored list", async () => {
+  const { createProfileClient } = await loadProfileClientModule();
+  const requests = [];
+  const client = createProfileClient({
+    baseUrl: "http://127.0.0.1:5400",
+    fetchImpl: async (url, options) => {
+      requests.push({ url, options });
+      return {
+        ok: true,
+        async json() {
+          return {
+            ok: true,
+            data: { selected: [{ id: "item-1", score: 0.9, rank: 1 }] },
+            warnings: [],
+            errors: []
+          };
+        }
+      };
+    }
+  });
+
+  const items = [{ id: "item-1", title: "Test", summary: "desc", category: "news", url: "http://example.com" }];
+  const result = await client.selectItems(items, { task: "daily_recap", limit: 10 });
+
+  assert.equal(requests[0].url, "http://127.0.0.1:5400/user-profile/select");
+  assert.equal(requests[0].options.method, "POST");
+  const body = JSON.parse(requests[0].options.body);
+  assert.deepEqual(body.items, items);
+  assert.deepEqual(body.context, { task: "daily_recap", limit: 10 });
+  assert.deepEqual(result.data.selected[0], { id: "item-1", score: 0.9, rank: 1 });
+});
