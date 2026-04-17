@@ -23,6 +23,7 @@ create table if not exists public.vivo_merchant_audience_overrides (
   audience_id text not null,
   enabled     boolean not null default true,
   boost_tags  jsonb not null default '[]',
+  updated_at  timestamptz not null default timezone('utc', now()),
   unique(merchant_id, audience_id)
 );
 

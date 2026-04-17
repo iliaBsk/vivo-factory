@@ -83,7 +83,7 @@ test("updateMerchant patches fields and sets needs_setup=false when publisher_id
 test("updateMerchant sets needs_setup=true when publisher_id cleared", () => {
   const repo = makeRepo();
   const updated = repo.updateMerchant("decathlon-es", { publisher_id: "" });
-  assert.equal(updated.publisher_id, "");
+  assert.equal(updated.publisher_id, null);
   assert.equal(updated.needs_setup, true);
 });
 

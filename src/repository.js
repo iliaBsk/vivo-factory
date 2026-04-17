@@ -495,10 +495,10 @@ export function createRepository(seed = {}) {
       if (!merchant) {
         throw new Error(`Merchant not found: ${merchantId}`);
       }
-      const publisherId = patch.publisher_id !== undefined ? patch.publisher_id : merchant.publisher_id;
+      const publisherId = patch.publisher_id !== undefined ? (patch.publisher_id || null) : merchant.publisher_id;
       const updated = {
         ...merchant,
-        ...(patch.publisher_id !== undefined && { publisher_id: patch.publisher_id }),
+        ...(patch.publisher_id !== undefined && { publisher_id: patch.publisher_id || null }),
         ...(patch.enabled !== undefined && { enabled: patch.enabled }),
         ...(patch.disclosure_text !== undefined && { disclosure_text: patch.disclosure_text }),
         ...(patch.categories !== undefined && { categories: patch.categories }),
@@ -1072,7 +1072,8 @@ export function createSupabaseRepository(options) {
         merchant_id: merchantId,
         audience_id: audienceId,
         ...(patch.enabled !== undefined && { enabled: patch.enabled }),
-        ...(patch.boost_tags !== undefined && { boost_tags: JSON.stringify(patch.boost_tags) })
+        ...(patch.boost_tags !== undefined && { boost_tags: JSON.stringify(patch.boost_tags) }),
+        updated_at: new Date().toISOString()
       };
       const rows = await client.upsert("vivo_merchant_audience_overrides", body);
       return rows[0];
