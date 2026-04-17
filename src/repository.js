@@ -517,7 +517,8 @@ export function createRepository(seed = {}) {
       const updated = {
         ...existing,
         ...(patch.enabled !== undefined && { enabled: patch.enabled }),
-        ...(patch.boost_tags !== undefined && { boost_tags: patch.boost_tags })
+        ...(patch.boost_tags !== undefined && { boost_tags: patch.boost_tags }),
+        updated_at: nowIso()
       };
       state.merchantOverrides.set(key, updated);
       return updated;

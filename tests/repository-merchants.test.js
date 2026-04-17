@@ -129,6 +129,15 @@ test("upsertMerchantOverride updates existing override", () => {
   assert.deepEqual(overrides[0].boost_tags, [{ tag: "beachwear", weight: 3 }]);
 });
 
+test("upsertMerchantOverride preserves existing boost_tags when only enabled is patched", () => {
+  const repo = makeRepo();
+  // zara-es/bald-barcelona already has boost_tags in seed
+  repo.upsertMerchantOverride("zara-es", "bald-barcelona", { enabled: false });
+  const overrides = repo.listMerchantOverrides("zara-es");
+  assert.equal(overrides[0].enabled, false);
+  assert.deepEqual(overrides[0].boost_tags, [{ tag: "beachwear", weight: 3 }]);
+});
+
 test("FileRepository persists merchant updates across instances", async () => {
   const filePath = `/tmp/test-merchants-${Date.now()}.json`;
   const repo1 = createFileRepository(filePath, { merchants: SEED_MERCHANTS, merchantOverrides: SEED_OVERRIDES });
