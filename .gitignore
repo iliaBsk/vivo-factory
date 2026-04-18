@@ -2,5 +2,6 @@ data/
 generated/
 node_modules/
 .env
+config/runtime.json
 .superpowers/
 public/styles.css
