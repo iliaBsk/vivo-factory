@@ -3,10 +3,31 @@
   "compose_file": "generated/docker-compose.yml",
   "plugin_base_url_default": "http://127.0.0.1:5400",
   "openclaw_image": "ghcr.io/openclaw/openclaw:latest",
-  "profile_engine_image": "ghcr.io/openclaw/openclaw:latest",
-  "profile_engine_command": "profile-engine",
+  "profile_engine_image": "ghcr.io/openclaw/marble-profile-service:latest",
+  "profile_engine_command": "node api/profile-server.js",
   "profile_engine_health_path": "/healthz",
   "profile_storage_path": "/data/user-profile",
   "profile_plugin_path": "/plugins/user-profile",
-  "audiences": {}
+  "audiences": {
+    "bald-high-man-early-40s-barcelona": {
+      "telegram_bot_token": "REDACTED_BOT_TOKEN",
+      "telegram_chat_id": "@vivo_bald",
+      "telegram_report_chat_id": "@vivo_bald",
+      "openclaw_admin_url": "http://127.0.0.1:18802",
+      "openclaw_health_path": "/healthz",
+      "openclaw_report_path": "/operator/report",
+      "openclaw_chat_path": "/operator/chat",
+      "plugin_base_url": "http://127.0.0.1:5402"
+    },
+    "aleks-barcelona-tech-ai-30s": {
+      "telegram_bot_token": "",
+      "telegram_chat_id": "",
+      "telegram_report_chat_id": "",
+      "openclaw_admin_url": "http://127.0.0.1:18801",
+      "openclaw_health_path": "/healthz",
+      "openclaw_report_path": "/operator/report",
+      "openclaw_chat_path": "/operator/chat",
+      "plugin_base_url": "http://127.0.0.1:5401"
+    }
+  }
 }
