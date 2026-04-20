@@ -15,11 +15,17 @@ export default definePluginEntry({
       try {
         const res = await fetch(`${baseUrl}/user-profile/graph/summary`);
         if (!res.ok) return {};
-        const { interests = [], context } = await res.json();
+        const { interests = [], context, wikidataLabels = {} } = await res.json();
+
+        const resolveLabel = topic => {
+          if (!topic.startsWith('wikidata:')) return topic;
+          const qid = topic.slice('wikidata:'.length);
+          return wikidataLabels[qid]?.label ?? topic;
+        };
 
         const top = interests
           .slice(0, 10)
-          .map(i => `${i.topic}(${Number(i.weight ?? 0).toFixed(2)})`)
+          .map(i => `${resolveLabel(i.topic)}(${Number(i.weight ?? 0).toFixed(2)})`)
           .join(', ');
 
         const lines = ['## User Profile (marble)'];
@@ -169,6 +175,25 @@ export default definePluginEntry({
 
       const vivoFactoryUrl = (api.pluginConfig?.vivoFactoryUrl ?? "").replace(/\/$/, "");
       const audienceId = process.env.AUDIENCE_ID ?? "";
+
+      // Tool: publish all ready_to_publish stories
+      api.registerTool({
+        name: "publish_ready_stories",
+        description: "Fetch all stories with status ready_to_publish for this audience and publish them via Telegram, marking each as published. Call this daily or whenever new curated content should go out.",
+        parameters: { type: "object", properties: {}, additionalProperties: false },
+        execute: async (_id, _params) => {
+          if (!vivoFactoryUrl || !audienceId) {
+            return jsonResult({ ok: false, error: "vivoFactoryUrl or AUDIENCE_ID not configured", published: 0 });
+          }
+          const res = await fetch(`${vivoFactoryUrl}/api/audiences/${audienceId}/publish-recap`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({}),
+          });
+          if (!res.ok) throw new Error(`publish-recap failed: ${res.status} ${await res.text()}`);
+          return jsonResult(await res.json());
+        },
+      });
 
       api.registerTool({
         name: "audience_add_source",

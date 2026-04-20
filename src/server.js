@@ -74,13 +74,35 @@ const contentFetcher = createContentFetcher({
   clock: () => new Date().toISOString()
 });
 
+async function publishReadyStories(audienceId) {
+  try {
+    const res = await fetch(`http://localhost:${serverPort}/api/audiences/${audienceId}/publish-recap`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      console.log(`[cron] Published ${data.published} stories for ${audienceId}`);
+    } else {
+      console.error(`[cron] publish-recap ${audienceId} → ${res.status}`);
+    }
+  } catch (err) {
+    console.error(`[cron] publish failed for ${audienceId}:`, err.message);
+  }
+}
+
 async function dispatchFetch(audience, instance, jobId, fetchOptions = {}) {
-  await repository.updateJob(jobId, { status: "running" });
+  console.log(`[fetch] Starting for ${audience.audience_key} (${audience.id})`);
+  if (jobId) await repository.updateJob(jobId, { status: "running" }).catch(() => {});
   try {
     const result = await contentFetcher.fetchForAudience(audience, instance, fetchOptions);
-    await repository.updateJob(jobId, { status: "done", stories_created: result.stories_created });
+    console.log(`[fetch] Done for ${audience.audience_key}: ${result.stories_created} stories`);
+    if (jobId) await repository.updateJob(jobId, { status: "done", stories_created: result.stories_created }).catch(() => {});
+    await publishReadyStories(audience.id);
   } catch (err) {
-    await repository.updateJob(jobId, { status: "failed", error: String(err.message ?? err).slice(0, 500) });
+    console.error(`[fetch] Error for ${audience.audience_key}:`, err.message);
+    if (jobId) await repository.updateJob(jobId, { status: "failed", error: String(err.message ?? err).slice(0, 500) }).catch(() => {});
   }
 }
 
@@ -91,6 +113,7 @@ const app = createApp({
   setupService,
   audienceImportService,
   audienceManagerLauncher,
+  audienceRuntimeConfig: runtimeConfig.audiences ?? {},
   dispatchFetch,
   fetchImpl: globalThis.fetch,
   publicationTargetResolver(audience, story) {

@@ -6,6 +6,7 @@ import {
   renderTremorMetric,
   renderSidebarNav
 } from "./tremor-dashboard.js";
+import { getSourcesForAudience } from "./sources-catalog.js";
 
 export function createApp(options) {
   const repository = options.repository;
@@ -18,6 +19,7 @@ export function createApp(options) {
   const clock = options.clock ?? (() => new Date().toISOString());
   const dispatchFetch = options.dispatchFetch ?? null;
   const fetchImpl = options.fetchImpl ?? globalThis.fetch;
+  const audienceRuntimeConfig = options.audienceRuntimeConfig ?? {};
 
   return {
     async handle(request) {
@@ -33,6 +35,7 @@ export function createApp(options) {
           dispatchFetch,
           fetchImpl,
           clock,
+          audienceRuntimeConfig,
           request
         });
       } catch (error) {
@@ -54,6 +57,7 @@ async function handleRequest(context) {
     dispatchFetch,
     fetchImpl,
     clock,
+    audienceRuntimeConfig,
     request
   } = context;
 
@@ -550,20 +554,30 @@ async function handleRequest(context) {
     if (!dispatchFetch) {
       return json(404, { error: "Content fetching is not configured." });
     }
-    const audienceId = request.pathname.split("/")[3];
-    const audience = await repository.getAudience(audienceId);
+    const rawAudienceId = request.pathname.split("/")[3];
+    let audience = await safeLoad(() => repository.getAudience(rawAudienceId), null);
+    if (!audience) {
+      const all = await safeLoad(() => repository.listAudiences(), []);
+      audience = all.find(a => a.audience_key === rawAudienceId) ?? null;
+    }
     if (!audience) {
       return json(404, { error: "Audience not found" });
     }
     const body = readBody(request.body);
     const instance = typeof repository.getInstanceByAudience === "function"
-      ? await safeLoad(() => repository.getInstanceByAudience(audienceId), null)
+      ? await safeLoad(() => repository.getInstanceByAudience(audience.id), null)
       : null;
-    const job = await repository.createJob({ audience_id: audienceId }, { timestamp: clock() });
-    dispatchFetch(audience, instance, job.id, { limit: body.limit ?? 20 }).catch((err) => {
-      repository.updateJob(job.id, { status: "failed", error: String(err.message ?? err).slice(0, 500) }).catch(() => {});
+    let jobId = null;
+    try {
+      const job = await repository.createJob({ audience_id: audience.id }, { timestamp: clock() });
+      jobId = job?.id ?? null;
+    } catch {
+      // jobs table may not exist; proceed without tracking
+    }
+    dispatchFetch(audience, instance, jobId, { limit: body.limit ?? 20 }).catch((err) => {
+      if (jobId) repository.updateJob(jobId, { status: "failed", error: String(err.message ?? err).slice(0, 500) }).catch(() => {});
     });
-    return json(200, { job_id: job.id });
+    return json(200, { job_id: jobId });
   }
 
   // GET /api/jobs/:jobId
@@ -600,22 +614,71 @@ async function handleRequest(context) {
     return json(200, { source_id: newSource.id });
   }
 
+  // POST /api/audiences/:id/sources/seed
+  if (request.method === "POST" && matchPath(request.pathname, /^\/api\/audiences\/([^/]+)\/sources\/seed$/)) {
+    const audienceId = request.pathname.split("/")[3];
+    let audience = await safeLoad(() => repository.getAudience(audienceId), null);
+    if (!audience) {
+      const all = await safeLoad(() => repository.listAudiences(), []);
+      audience = all.find(a => a.audience_key === audienceId) ?? null;
+    }
+    if (!audience) return json(404, { error: "Audience not found" });
+    let instance = typeof repository.getInstanceByAudience === "function"
+      ? await safeLoad(() => repository.getInstanceByAudience(audience.id), null)
+      : null;
+    if (!instance && repository.createInstanceForAudience) {
+      const audienceKey = audience.audience_key ?? audience.id;
+      const rconf = audienceRuntimeConfig?.[audienceKey] ?? {};
+      instance = await repository.createInstanceForAudience(
+        audience,
+        buildAudienceInstance(audience, rconf),
+        { actorId: "system", timestamp: clock() }
+      );
+    }
+    if (!instance) return json(404, { error: "No instance configured for this audience." });
+
+    const body = readBody(request.body);
+    const catalogSources = getSourcesForAudience({
+      city: body.city ?? audience.location ?? "",
+      passions: body.passions ?? [],
+      foodPreferences: body.foodPreferences ?? [],
+      movieGenres: body.movieGenres ?? [],
+    });
+
+    const { randomUUID } = await import("node:crypto");
+    const existing = new Set((instance.runtime_config?.custom_sources ?? []).map(s => s.id));
+    const toAdd = catalogSources.filter(s => !existing.has(s.id));
+    if (toAdd.length === 0) return json(200, { added: 0 });
+
+    const newSources = [...(instance.runtime_config?.custom_sources ?? []), ...toAdd];
+    await repository.updateInstance(instance.id, {
+      runtime_config: { ...instance.runtime_config, custom_sources: newSources }
+    }, { actorId: "system", timestamp: clock() });
+
+    return json(200, { added: toAdd.length, sources: toAdd.map(s => s.id) });
+  }
+
   // POST /api/audiences/:id/publish-recap
   if (request.method === "POST" && matchPath(request.pathname, /^\/api\/audiences\/([^/]+)\/publish-recap$/)) {
     const audienceId = request.pathname.split("/")[3];
-    const audience = await repository.getAudience(audienceId);
+    let audience = await safeLoad(() => repository.getAudience(audienceId), null);
+    if (!audience) {
+      const all = await safeLoad(() => repository.listAudiences(), []);
+      audience = all.find(a => a.audience_key === audienceId) ?? null;
+    }
     if (!audience) {
       return json(404, { error: "Audience not found" });
     }
     const body = readBody(request.body);
     const instance = typeof repository.getInstanceByAudience === "function"
-      ? await safeLoad(() => repository.getInstanceByAudience(audienceId), null)
+      ? await safeLoad(() => repository.getInstanceByAudience(audience.id), null)
       : null;
-    const openclawUrl = instance?.openclaw_admin_url ?? "";
-    if (!openclawUrl) {
-      return json(409, { error: "No OpenClaw admin URL configured for this audience." });
+    const botToken = instance?.runtime_config?.telegram_bot_token ?? "";
+    const chatId = instance?.runtime_config?.telegram_chat_id ?? "";
+    if (!botToken || !chatId) {
+      return json(409, { error: "No Telegram bot token or chat_id configured for this audience." });
     }
-    const allReady = (await repository.listStories({ audience_id: audienceId }))
+    const allReady = (await repository.listStories({ audience_id: audience.id }))
       .filter((s) => s.status === "ready_to_publish" && s.operator_review_status === "approved");
     const toPublish = body.story_ids?.length
       ? allReady.filter((s) => body.story_ids.includes(s.id))
@@ -626,16 +689,20 @@ async function handleRequest(context) {
       try {
         const message = [
           `<b>${escapeHtml(story.title)}</b>`,
-          story.story_text,
-          story.primary_source_url ?? ""
+          story.story_text ? escapeHtml(story.story_text.slice(0, 800)) : "",
+          story.primary_source_url ? `<a href="${story.primary_source_url}">Read more</a>` : ""
         ].filter(Boolean).join("\n\n");
-        const sendRes = await fetchImpl(`${openclawUrl}/api/send`, {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ channel: "telegram", message })
-        });
+        const sendRes = await fetchImpl(
+          `https://api.telegram.org/bot${botToken}/sendMessage`,
+          {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ chat_id: chatId, text: message, parse_mode: "HTML" })
+          }
+        );
         if (!sendRes.ok) {
-          throw new Error(`OpenClaw send failed: ${sendRes.status}`);
+          const errText = await sendRes.text().catch(() => "");
+          throw new Error(`Telegram sendMessage failed: ${sendRes.status} ${errText.slice(0, 100)}`);
         }
         await repository.transitionStoryStatus(story.id, "published", {
           actorId: "system",
@@ -645,7 +712,8 @@ async function handleRequest(context) {
           metadata: { ...story.metadata, published_at: clock() }
         }, { actorId: "system", timestamp: clock() });
         published++;
-      } catch {
+      } catch (err) {
+        console.error(`[publish-recap] Failed to publish story ${story.id}:`, err.message);
         try {
           await repository.transitionStoryStatus(story.id, "failed", {
             actorId: "system",

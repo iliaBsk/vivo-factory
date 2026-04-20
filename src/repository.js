@@ -40,6 +40,24 @@ export function createRepository(seed = {}) {
       });
       return hydrateStory(state, updated);
     },
+    markStoryApproved(storyId, options = {}) {
+      const story = requireStory(state, storyId);
+      const updated = {
+        ...story,
+        operator_review_status: "approved",
+        updated_at: options.timestamp ?? nowIso()
+      };
+      state.stories.set(storyId, updated);
+      appendAudit(state, {
+        type: "story_approved",
+        entity_type: "story",
+        entity_id: storyId,
+        actor_id: options.actorId ?? "system",
+        timestamp: updated.updated_at,
+        payload: { review_status: "approved" }
+      });
+      return hydrateStory(state, updated);
+    },
     listAudiences() {
       return [...state.audiences.values()].sort(compareByUpdatedDesc);
     },
@@ -671,6 +689,18 @@ export function createSupabaseRepository(options) {
       });
       return hydrateSupabaseStories(client, rows).then((items) => items[0]);
     },
+    async markStoryApproved(storyId, options = {}) {
+      await client.update("vivo_stories", { id: `eq.${storyId}` }, {
+        operator_review_status: "approved"
+      });
+      await insertAuditEvent(client, {
+        entity_type: "story",
+        entity_id: storyId,
+        event_type: "story_approved",
+        actor_id: options.actorId ?? "system",
+        payload: { review_status: "approved" }
+      });
+    },
     async listAudiences() {
       return client.select("vivo_audiences", {
         order: "updated_at.desc"
@@ -792,7 +822,7 @@ export function createSupabaseRepository(options) {
       return hydrated[0] ?? null;
     },
     async createJob(job, options = {}) {
-      const rows = await client.insert("vivo_content_fetch_jobs", {
+      const rows = await client.insert("vivo_pipeline_jobs", {
         factory_id: job.factory_id ?? null,
         audience_id: job.audience_id,
         status: "pending"
@@ -800,7 +830,7 @@ export function createSupabaseRepository(options) {
       return rows[0];
     },
     async getJob(jobId) {
-      const rows = await client.select("vivo_content_fetch_jobs", {
+      const rows = await client.select("vivo_pipeline_jobs", {
         id: `eq.${jobId}`,
         limit: "1"
       });
@@ -808,7 +838,7 @@ export function createSupabaseRepository(options) {
     },
     async updateJob(jobId, changes = {}, options = {}) {
       const patch = { ...changes, updated_at: options.timestamp ?? new Date().toISOString() };
-      const rows = await client.update("vivo_content_fetch_jobs", { id: `eq.${jobId}` }, patch);
+      const rows = await client.update("vivo_pipeline_jobs", { id: `eq.${jobId}` }, patch);
       return rows[0] ?? null;
     },
     async selectStoryAsset(storyId, assetId, options = {}) {
@@ -1283,6 +1313,7 @@ function withPersistence(repository, pathname) {
     "createJob",
     "updateJob",
     "updateStory",
+    "markStoryApproved",
     "updateAudience",
     "createInstanceForAudience",
     "updateInstance",

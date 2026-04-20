@@ -13,7 +13,10 @@ export function createContentFetcher(options = {}) {
     async fetchForAudience(audience, instance, fetchOptions = {}) {
       const limit = fetchOptions.limit ?? 20;
       const repoMerchants = typeof repository?.listMerchants === "function"
-        ? (await Promise.resolve(repository.listMerchants())).filter((m) => m.enabled && m.publisher_id)
+        ? await Promise.resolve(repository.listMerchants()).then(
+            (ms) => ms.filter((m) => m.enabled && m.publisher_id),
+            () => null
+          )
         : null;
       const activeMerchantRegistry = (repoMerchants !== null && repoMerchants.length > 0)
         ? { merchants: repoMerchants, overrides: [] }
@@ -57,12 +60,13 @@ export function createContentFetcher(options = {}) {
       const storyKey = (audienceId, url) =>
         crypto.createHash("sha1").update(`${audienceId}:${url}`).digest("hex");
 
+      const AUTO_APPROVE_THRESHOLD = 0.4;
       let created = 0;
       const timestamp = clock();
       for (const item of scored) {
         try {
-          await repository.createStory({
-            factory_id: factoryId,
+          const story = await repository.createStory({
+            factory_id: factoryId ?? audience.factory_id ?? null,
             audience_id: audience.id,
             instance_id: instance?.id ?? null,
             story_key: storyKey(audience.id, item.url),
@@ -81,6 +85,15 @@ export function createContentFetcher(options = {}) {
             }
           }, { actorId: "content-fetcher", timestamp });
           created++;
+
+          // Mark high-scoring stories as approved so the content engine can pick them up.
+          // Status stays "new" — the content engine generates assets and transitions to ready_to_publish.
+          const score = item.score ?? 0;
+          if (score >= AUTO_APPROVE_THRESHOLD && story?.id) {
+            await repository.markStoryApproved(story.id, {
+              actorId: "marble-auto"
+            }).catch(() => {});
+          }
         } catch (err) {
           // Duplicate story_key = already seen; skip silently
           if (!String(err.message).toLowerCase().includes("duplicate") &&
@@ -212,5 +225,14 @@ function stripHtml(text) {
 }
 
 function normalizeLocation(location) {
-  return String(location).toLowerCase().trim();
+  const s = String(location).trim();
+  if (s.startsWith("{")) {
+    try {
+      const obj = JSON.parse(s);
+      return String(obj.city ?? obj.name ?? "").toLowerCase().trim();
+    } catch {
+      // fall through
+    }
+  }
+  return s.toLowerCase();
 }
