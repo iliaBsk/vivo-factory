@@ -791,17 +791,25 @@ export function createSupabaseRepository(options) {
       const buffer = Buffer.from(photo.file_data_base64, "base64");
       const ext = photo.mime_type?.split("/")[1] ?? "jpg";
       const objectPath = `audiences/${audienceId}/photo.${ext}`;
-      const storageRows = await client.insert("vivo_storage_objects", {
-        bucket_name: "vivo-content",
+      const bucket = options.storageBucket ?? "vivo-content";
+
+      await client.uploadObject(bucket, objectPath, buffer, {
+        contentType: photo.mime_type ?? "image/jpeg"
+      });
+
+      const baseUrlClean = String(options.url ?? "").replace(/\/+$/, "");
+      const encodedPath = objectPath.split("/").map(encodeURIComponent).join("/");
+      const photoUrl = `${baseUrlClean}/storage/v1/object/public/${encodeURIComponent(bucket)}/${encodedPath}`;
+
+      await client.insert("vivo_storage_objects", {
+        bucket_name: bucket,
         object_path: objectPath,
         file_name: photo.file_name ?? `photo.${ext}`,
         mime_type: photo.mime_type ?? "image/jpeg",
         size_bytes: buffer.length,
-        storage_metadata: { uploaded_by: "operator" },
-        raw_data: buffer.toString("base64")
-      });
-      const obj = Array.isArray(storageRows) ? storageRows[0] : storageRows;
-      const photoUrl = obj?.download_url ?? obj?.public_url ?? objectPath;
+        storage_metadata: { uploaded_by: "operator" }
+      }).catch(() => {});
+
       await client.update("vivo_audiences", { id: `eq.${audienceId}` }, { photo_url: photoUrl });
       return photoUrl;
     },
