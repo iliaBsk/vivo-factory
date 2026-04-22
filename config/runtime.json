@@ -4,30 +4,74 @@
   "plugin_base_url_default": "http://127.0.0.1:5400",
   "openclaw_image": "ghcr.io/openclaw/openclaw:latest",
   "profile_engine_image": "ghcr.io/openclaw/marble-profile-service:latest",
-  "profile_engine_command": "node api/profile-server.js",
+  "profile_engine_command": "cd /app && node api/profile-server.js",
   "profile_engine_health_path": "/healthz",
   "profile_storage_path": "/data/user-profile",
   "profile_plugin_path": "/plugins/user-profile",
+  "profile_app_source_path": "/srv/projects/marble",
+  "openclaw_config_dir": "generated/audience-managers",
+  "audience_ports": {
+    "bald-high-man-early-40s-barcelona": ["18802:18789", "5402:5400"],
+    "aleks-barcelona-tech-ai-30s": ["18801:18789", "5401:5400"],
+    "chontang": ["18803:18789", "5403:5400"],
+    "a16z-andrew-chen-applied-mathematics-from-the-university-of-washington": ["18804:18789", "5404:5400"]
+  },
   "audiences": {
     "bald-high-man-early-40s-barcelona": {
       "telegram_bot_token": "REDACTED_BOT_TOKEN",
       "telegram_chat_id": "@vivo_bald",
       "telegram_report_chat_id": "@vivo_bald",
-      "openclaw_admin_url": "http://127.0.0.1:18802",
+      "openclaw_admin_url": "http://192.168.1.79:18802",
       "openclaw_health_path": "/healthz",
       "openclaw_report_path": "/operator/report",
       "openclaw_chat_path": "/operator/chat",
-      "plugin_base_url": "http://127.0.0.1:5402"
+      "plugin_base_url": "http://192.168.1.79:5402",
+      "twitter_api_key": "",
+      "twitter_api_secret": "",
+      "twitter_access_token": "",
+      "twitter_access_token_secret": ""
     },
     "aleks-barcelona-tech-ai-30s": {
       "telegram_bot_token": "",
       "telegram_chat_id": "",
       "telegram_report_chat_id": "",
-      "openclaw_admin_url": "http://127.0.0.1:18801",
+      "openclaw_admin_url": "http://192.168.1.79:18801",
       "openclaw_health_path": "/healthz",
       "openclaw_report_path": "/operator/report",
       "openclaw_chat_path": "/operator/chat",
-      "plugin_base_url": "http://127.0.0.1:5401"
+      "plugin_base_url": "http://192.168.1.79:5401",
+      "twitter_api_key": "",
+      "twitter_api_secret": "",
+      "twitter_access_token": "",
+      "twitter_access_token_secret": ""
+    },
+    "chontang": {
+      "telegram_bot_token": "",
+      "telegram_chat_id": "",
+      "telegram_report_chat_id": "",
+      "openclaw_admin_url": "http://192.168.1.79:18803",
+      "openclaw_health_path": "/healthz",
+      "openclaw_report_path": "/operator/report",
+      "openclaw_chat_path": "/operator/chat",
+      "plugin_base_url": "http://192.168.1.79:5403",
+      "twitter_api_key": "",
+      "twitter_api_secret": "",
+      "twitter_access_token": "",
+      "twitter_access_token_secret": ""
+    },
+    "a16z-andrew-chen-applied-mathematics-from-the-university-of-washington": {
+      "telegram_bot_token": "",
+      "telegram_chat_id": "",
+      "telegram_report_chat_id": "",
+      "openclaw_admin_url": "http://192.168.1.79:18804",
+      "openclaw_health_path": "/healthz",
+      "openclaw_report_path": "/operator/report",
+      "openclaw_chat_path": "/operator/chat",
+      "plugin_base_url": "http://192.168.1.79:5404",
+      "twitter_api_key": "",
+      "twitter_api_secret": "",
+      "twitter_access_token": "",
+      "twitter_access_token_secret": ""
     }
   }
 }
