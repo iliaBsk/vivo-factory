@@ -25,7 +25,7 @@ export function createPublishService({ fetchImpl, twitterClientFactory, reposito
         const message = [
           `<b>${escapeHtml(story.title)}</b>`,
           story.story_text ? escapeHtml(story.story_text.slice(0, 800)) : "",
-          story.primary_source_url ? `<a href="${story.primary_source_url}">Read more</a>` : ""
+          story.primary_source_url ? `<a href="${escapeHtml(story.primary_source_url)}">Read more</a>` : ""
         ].filter(Boolean).join("\n\n");
 
         const sendRes = await fetchImpl(
@@ -42,20 +42,23 @@ export function createPublishService({ fetchImpl, twitterClientFactory, reposito
           throw new Error(`Telegram sendMessage failed: ${sendRes.status} ${errText.slice(0, 100)}`);
         }
 
+        const now = clock();
         await repository.transitionStoryStatus(story.id, "published", {
           actorId: "system",
-          timestamp: clock()
+          timestamp: now
         });
         await repository.updateStory(story.id, {
-          metadata: { ...story.metadata, published_at: clock() }
-        }, { actorId: "system", timestamp: clock() });
+          metadata: { ...story.metadata, published_at: now }
+        }, { actorId: "system", timestamp: now });
       } catch (err) {
         try {
           await repository.transitionStoryStatus(story.id, "failed", {
             actorId: "system",
             timestamp: clock()
           });
-        } catch {}
+        } catch (rollbackErr) {
+          console.error("[publish-service] failed to mark story as failed:", rollbackErr.message);
+        }
         throw err;
       }
     }

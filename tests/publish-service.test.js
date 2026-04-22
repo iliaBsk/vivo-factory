@@ -152,3 +152,30 @@ test("publishStory: Telegram message includes title, text, and source URL", asyn
   assert.equal(capturedBody.chat_id, "@test_channel");
   assert.equal(capturedBody.parse_mode, "HTML");
 });
+
+test("publishStory: generateTweet fails → transitions to failed, Telegram never called", async () => {
+  const { createPublishService } = await loadModule();
+  const repo = makeRepo();
+  const telegramCalls = [];
+
+  const twitterClient = {
+    async generateTweet() { throw new Error("OpenAI tweet generation failed: 429"); },
+    async postTweet() {}
+  };
+
+  const service = createPublishService({
+    fetchImpl: async (url) => { telegramCalls.push(url); return { ok: true, text: async () => "" }; },
+    twitterClientFactory: () => twitterClient,
+    repository: repo,
+    clock: () => "2026-04-22T10:00:00.000Z"
+  });
+
+  await assert.rejects(
+    () => service.publishStory(baseStory, baseAudienceConfig),
+    (err) => err.message.includes("OpenAI tweet generation failed: 429")
+  );
+
+  assert.equal(telegramCalls.length, 0);
+  assert.equal(repo.transitions.length, 1);
+  assert.equal(repo.transitions[0].status, "failed");
+});
