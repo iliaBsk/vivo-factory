@@ -9,6 +9,9 @@ function percentEncode(value) {
 function buildOAuthHeader({ method, url, apiKey, apiSecret, accessToken, accessTokenSecret }) {
   const nonce = randomBytes(16).toString("hex");
   const timestamp = Math.floor(Date.now() / 1000).toString();
+  const parsedUrl = new URL(url);
+  const baseUrl = `${parsedUrl.origin}${parsedUrl.pathname}`;
+  const queryParams = Object.fromEntries(parsedUrl.searchParams);
   const oauthParams = {
     oauth_consumer_key: apiKey,
     oauth_nonce: nonce,
@@ -17,9 +20,10 @@ function buildOAuthHeader({ method, url, apiKey, apiSecret, accessToken, accessT
     oauth_token: accessToken,
     oauth_version: "1.0"
   };
-  const paramString = Object.keys(oauthParams).sort()
-    .map(k => `${percentEncode(k)}=${percentEncode(oauthParams[k])}`).join("&");
-  const signatureBase = [method.toUpperCase(), percentEncode(url), percentEncode(paramString)].join("&");
+  const allParams = { ...queryParams, ...oauthParams };
+  const paramString = Object.keys(allParams).sort()
+    .map(k => `${percentEncode(k)}=${percentEncode(allParams[k])}`).join("&");
+  const signatureBase = [method.toUpperCase(), percentEncode(baseUrl), percentEncode(paramString)].join("&");
   const signingKey = `${percentEncode(apiSecret)}&${percentEncode(accessTokenSecret)}`;
   const signature = createHmac("sha1", signingKey).update(signatureBase).digest("base64");
   const withSig = { ...oauthParams, oauth_signature: signature };
@@ -48,6 +52,8 @@ export function createTwitterClient({
 
   return {
     async generateTweet(story) {
+      if (!openaiApiKey) throw new Error("openaiApiKey is required for generateTweet");
+      if (!openaiModel) throw new Error("openaiModel is required for generateTweet");
       const context = [story.title, story.summary ?? "", story.primary_source_url ?? ""]
         .filter(Boolean).join(" — ");
       const response = await fetchImpl(`${base}/responses`, {
@@ -75,6 +81,7 @@ export function createTwitterClient({
     },
 
     async postTweet(text) {
+      if (!text || typeof text !== "string") throw new Error("postTweet: text must be a non-empty string");
       const url = "https://api.twitter.com/2/tweets";
       const authHeader = buildOAuthHeader({ method: "POST", url, apiKey, apiSecret, accessToken, accessTokenSecret });
       const response = await fetchImpl(url, {
