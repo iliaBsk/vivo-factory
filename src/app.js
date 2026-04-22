@@ -780,6 +780,10 @@ async function handleRequest(context) {
       ? allReady.filter((s) => body.story_ids.includes(s.id))
       : allReady;
 
+    if (!publishService) {
+      return json(503, { error: "Publish service is not configured." });
+    }
+
     let published = 0;
     for (const story of toPublish) {
       try {
@@ -787,6 +791,7 @@ async function handleRequest(context) {
         published++;
       } catch (err) {
         console.error(`[publish-recap] Failed to publish story ${story.id}:`, err.message);
+        // publishService must transition story to "failed" before throwing.
       }
     }
     return json(200, { published });
