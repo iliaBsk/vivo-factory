@@ -148,10 +148,10 @@ async function handleRequest(context) {
       }
     });
 
-    let photoUrl = null;
+    let heroImageStorageId = null;
     if (photo && result.audience?.id) {
       try {
-        photoUrl = await repository.storeAudiencePhoto(result.audience.id, photo);
+        heroImageStorageId = await repository.storeAudiencePhoto(result.audience.id, photo);
       } catch (err) {
         console.error("[create-full] photo upload failed:", err.message);
       }
@@ -160,7 +160,7 @@ async function handleRequest(context) {
     return json(200, {
       audience_id: result.audience?.id,
       audience_key: result.audience?.audience_key,
-      photo_url: photoUrl,
+      hero_image_asset_storage_id: heroImageStorageId,
       status: "new"
     });
   }

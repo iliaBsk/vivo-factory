@@ -790,28 +790,29 @@ export function createSupabaseRepository(options) {
     async storeAudiencePhoto(audienceId, photo) {
       const buffer = Buffer.from(photo.file_data_base64, "base64");
       const ext = photo.mime_type?.split("/")[1] ?? "jpg";
-      const objectPath = `audiences/${audienceId}/photo.${ext}`;
-      const bucket = options.storageBucket ?? "vivo-content";
+      const bucket = "vivo-audiences";
+      const storagePath = `${audienceId}/photo.${ext}`;
+      const objectPath = `${bucket}/${storagePath}`;
 
-      await client.uploadObject(bucket, objectPath, buffer, {
+      await client.uploadObject(bucket, storagePath, buffer, {
         contentType: photo.mime_type ?? "image/jpeg"
       });
 
-      const baseUrlClean = String(options.url ?? "").replace(/\/+$/, "");
-      const encodedPath = objectPath.split("/").map(encodeURIComponent).join("/");
-      const photoUrl = `${baseUrlClean}/storage/v1/object/public/${encodeURIComponent(bucket)}/${encodedPath}`;
-
-      await client.insert("vivo_storage_objects", {
+      const storageRows = await client.insert("vivo_storage_objects", {
         bucket_name: bucket,
         object_path: objectPath,
         file_name: photo.file_name ?? `photo.${ext}`,
         mime_type: photo.mime_type ?? "image/jpeg",
         size_bytes: buffer.length,
-        storage_metadata: { uploaded_by: "operator" }
-      }).catch(() => {});
+        storage_metadata: {}
+      });
+      const storageObject = Array.isArray(storageRows) ? storageRows[0] : storageRows;
+      if (!storageObject?.id) throw new Error("Failed to create storage object record");
 
-      await client.update("vivo_audiences", { id: `eq.${audienceId}` }, { photo_url: photoUrl });
-      return photoUrl;
+      await client.update("vivo_audiences", { id: `eq.${audienceId}` }, {
+        hero_image_asset_storage_id: storageObject.id
+      });
+      return storageObject.id;
     },
     async createStory(story, options = {}) {
       if (!story.story_key) throw new Error("story_key is required");
