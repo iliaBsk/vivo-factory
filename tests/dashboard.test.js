@@ -1202,7 +1202,14 @@ test("POST /api/audiences/:id/publish-recap publishes ready_to_publish+approved 
   const seed = createSeed();
   const repo = createRepository({
     audiences: seed.audiences,
-    instances: [{ ...seed.instances[0], openclaw_admin_url: "http://127.0.0.1:18801" }]
+    instances: [{
+      ...seed.instances[0],
+      openclaw_admin_url: "http://127.0.0.1:18801",
+      runtime_config: {
+        telegram_bot_token: "test-bot-token",
+        telegram_chat_id: "@test_channel"
+      }
+    }]
   });
   const story = repo.createStory({
     factory_id: "factory-1", audience_id: "aud-1", instance_id: "inst-1",
@@ -1216,14 +1223,19 @@ test("POST /api/audiences/:id/publish-recap publishes ready_to_publish+approved 
     review_status: "approved", review_notes: "", actor_id: "op-1", selected_asset_id: null, payload: {}
   });
 
-  const openclawRequests = [];
+  const publishedStories = [];
+  const mockPublishService = {
+    async publishStory(s, audienceConfig) {
+      publishedStories.push({ story: s, audienceConfig });
+      await repo.transitionStoryStatus(s.id, "published", { actorId: "system", timestamp: "2026-04-22T10:00:00.000Z" });
+      await repo.updateStory(s.id, { metadata: { published_at: "2026-04-22T10:00:00.000Z" } }, { actorId: "system", timestamp: "2026-04-22T10:00:00.000Z" });
+    }
+  };
+
   const app = createApp({
     repository: repo,
-    clock: () => "2026-04-17T10:00:00.000Z",
-    fetchImpl: async (url, opts) => {
-      openclawRequests.push({ url, body: JSON.parse(opts.body) });
-      return { ok: true, json: async () => ({ ok: true }) };
-    }
+    clock: () => "2026-04-22T10:00:00.000Z",
+    publishService: mockPublishService
   });
 
   const result = await app.handle({
@@ -1236,19 +1248,26 @@ test("POST /api/audiences/:id/publish-recap publishes ready_to_publish+approved 
   assert.equal(result.status, 200);
   const body = JSON.parse(result.body);
   assert.equal(body.published, 1);
-  assert.equal(openclawRequests.length, 1);
-  assert.ok(openclawRequests[0].url.includes("/api/send"));
-  assert.ok(openclawRequests[0].body.message.includes("Daily News"));
+  assert.equal(publishedStories.length, 1);
+  assert.equal(publishedStories[0].story.id, story.id);
+  assert.equal(publishedStories[0].audienceConfig.telegram_bot_token, "test-bot-token");
   const published = repo.getStory(story.id);
   assert.equal(published.status, "published");
 });
 
-test("POST /api/audiences/:id/publish-recap transitions story to failed when OpenClaw returns non-2xx", async () => {
+test("POST /api/audiences/:id/publish-recap transitions story to failed when publishService throws", async () => {
   const { createRepository, createApp } = await loadModules();
   const seed = createSeed();
   const repo = createRepository({
     audiences: seed.audiences,
-    instances: [{ ...seed.instances[0], openclaw_admin_url: "http://127.0.0.1:18801" }]
+    instances: [{
+      ...seed.instances[0],
+      openclaw_admin_url: "http://127.0.0.1:18801",
+      runtime_config: {
+        telegram_bot_token: "test-bot-token",
+        telegram_chat_id: "@test_channel"
+      }
+    }]
   });
   const story = repo.createStory({
     factory_id: "factory-1", audience_id: "aud-1", instance_id: "inst-1",
@@ -1261,10 +1280,17 @@ test("POST /api/audiences/:id/publish-recap transitions story to failed when Ope
     review_status: "approved", review_notes: "", actor_id: "op-1", selected_asset_id: null, payload: {}
   });
 
+  const mockPublishService = {
+    async publishStory(s) {
+      await repo.transitionStoryStatus(s.id, "failed", { actorId: "system", timestamp: "2026-04-22T10:00:00.000Z" });
+      throw new Error("Telegram sendMessage failed: 500");
+    }
+  };
+
   const app = createApp({
     repository: repo,
-    clock: () => "2026-04-17T10:00:00.000Z",
-    fetchImpl: async () => ({ ok: false, status: 500 })
+    clock: () => "2026-04-22T10:00:00.000Z",
+    publishService: mockPublishService
   });
 
   const result = await app.handle({

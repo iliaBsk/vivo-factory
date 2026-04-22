@@ -21,6 +21,7 @@ export function createApp(options) {
   const fetchImpl = options.fetchImpl ?? globalThis.fetch;
   const audienceRuntimeConfig = options.audienceRuntimeConfig ?? {};
   const runtimeStatusService = options.runtimeStatusService ?? null;
+  const publishService = options.publishService ?? null;
 
   return {
     async handle(request) {
@@ -38,6 +39,7 @@ export function createApp(options) {
           clock,
           audienceRuntimeConfig,
           runtimeStatusService,
+          publishService,
           request
         });
       } catch (error) {
@@ -61,6 +63,7 @@ async function handleRequest(context) {
     clock,
     audienceRuntimeConfig,
     runtimeStatusService,
+    publishService,
     request
   } = context;
 
@@ -747,7 +750,6 @@ async function handleRequest(context) {
     return json(200, { added: toAdd.length, sources: toAdd.map(s => s.id) });
   }
 
-  // POST /api/audiences/:id/publish-recap
   if (request.method === "POST" && matchPath(request.pathname, /^\/api\/audiences\/([^/]+)\/publish-recap$/)) {
     const audienceId = request.pathname.split("/")[3];
     let audience = await safeLoad(() => repository.getAudience(audienceId), null);
@@ -755,18 +757,23 @@ async function handleRequest(context) {
       const all = await safeLoad(() => repository.listAudiences(), []);
       audience = all.find(a => a.audience_key === audienceId) ?? null;
     }
-    if (!audience) {
-      return json(404, { error: "Audience not found" });
-    }
+    if (!audience) return json(404, { error: "Audience not found" });
+
     const body = readBody(request.body);
     const instance = typeof repository.getInstanceByAudience === "function"
       ? await safeLoad(() => repository.getInstanceByAudience(audience.id), null)
       : null;
-    const botToken = instance?.runtime_config?.telegram_bot_token ?? "";
-    const chatId = instance?.runtime_config?.telegram_chat_id ?? "";
+
+    const instanceRC = instance?.runtime_config ?? {};
+    const runtimeRC = audienceRuntimeConfig?.[audience.audience_key] ?? {};
+    const mergedConfig = { ...runtimeRC, ...instanceRC };
+
+    const botToken = mergedConfig.telegram_bot_token ?? "";
+    const chatId = mergedConfig.telegram_chat_id ?? "";
     if (!botToken || !chatId) {
       return json(409, { error: "No Telegram bot token or chat_id configured for this audience." });
     }
+
     const allReady = (await repository.listStories({ audience_id: audience.id }))
       .filter((s) => s.status === "ready_to_publish" && s.operator_review_status === "approved");
     const toPublish = body.story_ids?.length
@@ -776,39 +783,10 @@ async function handleRequest(context) {
     let published = 0;
     for (const story of toPublish) {
       try {
-        const message = [
-          `<b>${escapeHtml(story.title)}</b>`,
-          story.story_text ? escapeHtml(story.story_text.slice(0, 800)) : "",
-          story.primary_source_url ? `<a href="${story.primary_source_url}">Read more</a>` : ""
-        ].filter(Boolean).join("\n\n");
-        const sendRes = await fetchImpl(
-          `https://api.telegram.org/bot${botToken}/sendMessage`,
-          {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({ chat_id: chatId, text: message, parse_mode: "HTML" })
-          }
-        );
-        if (!sendRes.ok) {
-          const errText = await sendRes.text().catch(() => "");
-          throw new Error(`Telegram sendMessage failed: ${sendRes.status} ${errText.slice(0, 100)}`);
-        }
-        await repository.transitionStoryStatus(story.id, "published", {
-          actorId: "system",
-          timestamp: clock()
-        });
-        await repository.updateStory(story.id, {
-          metadata: { ...story.metadata, published_at: clock() }
-        }, { actorId: "system", timestamp: clock() });
+        await publishService.publishStory(story, mergedConfig);
         published++;
       } catch (err) {
         console.error(`[publish-recap] Failed to publish story ${story.id}:`, err.message);
-        try {
-          await repository.transitionStoryStatus(story.id, "failed", {
-            actorId: "system",
-            timestamp: clock()
-          });
-        } catch {}
       }
     }
     return json(200, { published });
@@ -1004,6 +982,10 @@ function normalizeLaunchRuntimeConfig(runtimeConfig = {}) {
     "telegram_bot_token",
     "telegram_chat_id",
     "telegram_report_chat_id",
+    "twitter_api_key",
+    "twitter_api_secret",
+    "twitter_access_token",
+    "twitter_access_token_secret",
     "llm_provider",
     "llm_model",
     "llm_base_url"

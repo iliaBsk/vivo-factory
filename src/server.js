@@ -16,6 +16,8 @@ import { createSetupService, resolveLlmDefaults } from "./setup-service.js";
 import { loadEnvConfig, loadJsonConfig } from "./runtime-config.js";
 import { createContentFetcher } from "./content-fetcher.js";
 import { createRuntimeStatusService } from "./runtime-status-service.js";
+import { createTwitterClient } from "./twitter-client.js";
+import { createPublishService } from "./publish-service.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -70,6 +72,21 @@ const runtimeStatusService = createRuntimeStatusService({
   fetchImpl: globalThis.fetch,
   runtimeConfig,
 });
+const publishService = createPublishService({
+  fetchImpl: globalThis.fetch,
+  twitterClientFactory: (audienceConfig) => createTwitterClient({
+    apiKey: audienceConfig.twitter_api_key ?? "",
+    apiSecret: audienceConfig.twitter_api_secret ?? "",
+    accessToken: audienceConfig.twitter_access_token ?? "",
+    accessTokenSecret: audienceConfig.twitter_access_token_secret ?? "",
+    fetchImpl: globalThis.fetch,
+    openaiApiKey: envConfig.OPENAI_API_KEY ?? "",
+    openaiModel: envConfig.OPENAI_MODEL ?? envConfig.LLM_MODEL ?? "",
+    openaiBaseUrl: envConfig.OPENAI_BASE_URL ?? envConfig.LLM_BASE_URL ?? "https://api.openai.com/v1"
+  }),
+  repository,
+  clock: () => new Date().toISOString()
+});
 const contentFetcher = createContentFetcher({
   sourcesConfig,
   profileClientFactory,
@@ -120,6 +137,7 @@ const app = createApp({
   audienceManagerLauncher,
   audienceRuntimeConfig: runtimeConfig.audiences ?? {},
   runtimeStatusService,
+  publishService,
   dispatchFetch,
   fetchImpl: globalThis.fetch,
   publicationTargetResolver(audience, story) {
