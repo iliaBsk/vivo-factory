@@ -42,9 +42,11 @@ export function createAudienceManagerLauncher(options = {}) {
         audienceKey,
         runtime,
         effectiveLlm,
-        pluginPath: runtimeConfig.profile_plugin_path ?? "/plugins/user-profile"
+        pluginPath: runtimeConfig.profile_plugin_path ?? "/plugins/user-profile",
+        vivoFactoryUrl
       }));
       const pluginSourcePath = runtimeConfig.profile_plugin_source_path ?? path.resolve(cwd, "src/plugins/user-profile");
+      const appSourcePath = runtimeConfig.profile_app_source_path ?? null;
       const configDir = runtimeConfig.openclaw_config_dir
         ? path.resolve(cwd, runtimeConfig.openclaw_config_dir, `${audienceKey}-openclaw-config`)
         : null;
@@ -56,7 +58,8 @@ export function createAudienceManagerLauncher(options = {}) {
         serviceNames,
         ports: runtimeConfig.audience_ports?.[audienceKey] ?? [],
         configDir,
-        pluginSourcePath
+        pluginSourcePath,
+        appSourcePath
       }));
 
       if (configDir && vivoFactoryUrl) {
@@ -124,8 +127,8 @@ function compactObject(value) {
   );
 }
 
-function renderEnvFile({ audienceKey, runtime, effectiveLlm, pluginPath }) {
-  return [
+function renderEnvFile({ audienceKey, runtime, effectiveLlm, pluginPath, vivoFactoryUrl }) {
+  const lines = [
     `AUDIENCE_ID=${audienceKey}`,
     `OPENCLAW_ADMIN_URL=${runtime.openclaw_admin_url ?? ""}`,
     `USER_PROFILE_PLUGIN_PATH=${pluginPath}`,
@@ -137,8 +140,12 @@ function renderEnvFile({ audienceKey, runtime, effectiveLlm, pluginPath }) {
     `LLM_BASE_URL=${effectiveLlm.baseUrl ?? ""}`,
     `OPENAI_API_KEY=${effectiveLlm.apiKey}`,
     `OPENAI_BASE_URL=${effectiveLlm.baseUrl ?? ""}`,
-    `OPENAI_MODEL=${effectiveLlm.model}`
-  ].join("\n");
+    `OPENAI_MODEL=${effectiveLlm.model}`,
+    `MARBLE_ONBOARDING_DEEP_RESEARCH=${runtime.marble_onboarding_deep_research ?? "true"}`,
+    `OPENAI_DEEP_RESEARCH_MODEL=${runtime.openai_deep_research_model ?? "gpt-4o"}`
+  ];
+  if (vivoFactoryUrl) lines.push(`VIVO_FACTORY_URL=${vivoFactoryUrl}`);
+  return lines.join("\n");
 }
 
 function writePluginConfig(configDir, vivoFactoryUrl) {
@@ -169,12 +176,13 @@ function writePluginConfig(configDir, vivoFactoryUrl) {
   });
 }
 
-function renderComposeFile({ openClawImage, profileEngine, envFile, serviceNames, ports, configDir, pluginSourcePath }) {
+function renderComposeFile({ openClawImage, profileEngine, envFile, serviceNames, ports, configDir, pluginSourcePath, appSourcePath }) {
   const profileDataVolume = `${serviceNames.openclaw}-profile-data`;
   const portLines = (ports ?? []).map((p) => `      - "${p}"`).join("\n");
   const portSection = portLines ? `    ports:\n${portLines}\n` : "";
   const configMount = configDir ? `      - ${configDir}:/home/node/.openclaw\n` : "";
   const pluginMount = pluginSourcePath ? `      - ${pluginSourcePath}:/home/node/.openclaw/extensions/user-profile:ro\n` : "";
+  const appMount = appSourcePath ? `      - ${appSourcePath}:/app:ro\n` : "";
 
   return `services:
   ${serviceNames.openclaw}:
@@ -194,7 +202,7 @@ ${configMount}${pluginMount}  ${serviceNames.profile}:
       disable: true
     volumes:
       - ${profileDataVolume}:${profileEngine.storagePath}
-
+${appMount}
 volumes:
   ${profileDataVolume}:
 `;

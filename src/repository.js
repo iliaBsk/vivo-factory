@@ -64,6 +64,15 @@ export function createRepository(seed = {}) {
     getAudience(audienceId) {
       return state.audiences.get(audienceId) ?? null;
     },
+    async storeAudiencePhoto(audienceId, photo) {
+      const audience = state.audiences.get(audienceId);
+      if (!audience) return null;
+      const buffer = Buffer.from(photo.file_data_base64, "base64");
+      const dataUrl = `data:${photo.mime_type};base64,${buffer.toString("base64")}`;
+      const updated = { ...audience, photo_url: dataUrl, updated_at: nowIso() };
+      state.audiences.set(audienceId, updated);
+      return dataUrl;
+    },
     listInstances() {
       return [...state.instances.values()].sort(compareByUpdatedDesc);
     },
@@ -778,6 +787,24 @@ export function createSupabaseRepository(options) {
       });
       return rows[0] ?? null;
     },
+    async storeAudiencePhoto(audienceId, photo) {
+      const buffer = Buffer.from(photo.file_data_base64, "base64");
+      const ext = photo.mime_type?.split("/")[1] ?? "jpg";
+      const objectPath = `audiences/${audienceId}/photo.${ext}`;
+      const storageRows = await client.insert("vivo_storage_objects", {
+        bucket_name: "vivo-content",
+        object_path: objectPath,
+        file_name: photo.file_name ?? `photo.${ext}`,
+        mime_type: photo.mime_type ?? "image/jpeg",
+        size_bytes: buffer.length,
+        storage_metadata: { uploaded_by: "operator" },
+        raw_data: buffer.toString("base64")
+      });
+      const obj = Array.isArray(storageRows) ? storageRows[0] : storageRows;
+      const photoUrl = obj?.download_url ?? obj?.public_url ?? objectPath;
+      await client.update("vivo_audiences", { id: `eq.${audienceId}` }, { photo_url: photoUrl });
+      return photoUrl;
+    },
     async createStory(story, options = {}) {
       if (!story.story_key) throw new Error("story_key is required");
       if (!story.audience_id) throw new Error("audience_id is required");
@@ -1008,49 +1035,42 @@ export function createSupabaseRepository(options) {
       return [...localState.deployments].sort(compareByTimestampDesc);
     },
     async getOrCreateConversation(audienceId, channel) {
-      const { data: existing, error: selectErr } = await client
-        .from("vivo_conversations")
-        .select("*")
-        .eq("audience_id", audienceId)
-        .eq("channel", channel)
-        .is("external_id", null)
-        .limit(1)
-        .maybeSingle();
-      if (selectErr) throw new Error(selectErr.message);
-      if (existing) {
+      const rows = await client.select("vivo_conversations", {
+        audience_id: `eq.${audienceId}`,
+        channel: `eq.${channel}`,
+        external_id: "is.null",
+        limit: "1"
+      });
+      if (rows.length > 0) {
+        const r = rows[0];
         return {
-          id: existing.id, audienceId: existing.audience_id, channel: existing.channel,
-          externalId: existing.external_id, title: existing.title,
-          createdAt: existing.created_at, updatedAt: existing.updated_at
+          id: r.id, audienceId: r.audience_id, channel: r.channel,
+          externalId: r.external_id, title: r.title,
+          createdAt: r.created_at, updatedAt: r.updated_at
         };
       }
-      const { data: created, error: insertErr } = await client
-        .from("vivo_conversations")
-        .insert({ audience_id: audienceId, channel })
-        .select()
-        .single();
-      if (insertErr) throw new Error(insertErr.message);
+      const created = await client.insert("vivo_conversations", {
+        audience_id: audienceId,
+        channel
+      });
+      const r = Array.isArray(created) ? created[0] : created;
       return {
-        id: created.id, audienceId: created.audience_id, channel: created.channel,
-        externalId: created.external_id, title: created.title,
-        createdAt: created.created_at, updatedAt: created.updated_at
+        id: r.id, audienceId: r.audience_id, channel: r.channel,
+        externalId: r.external_id, title: r.title,
+        createdAt: r.created_at, updatedAt: r.updated_at
       };
     },
     async appendChatMessage(conversationId, message) {
-      const { data, error } = await client
-        .from("vivo_messages")
-        .insert({
-          conversation_id: conversationId,
-          audience_id: message.audienceId,
-          role: message.role,
-          content: message.content,
-          sender_id: message.senderId ?? null,
-          sender_name: message.senderName ?? null,
-          metadata: message.metadata ?? {}
-        })
-        .select()
-        .single();
-      if (error) throw new Error(error.message);
+      const rows = await client.insert("vivo_messages", {
+        conversation_id: conversationId,
+        audience_id: message.audienceId,
+        role: message.role,
+        content: message.content,
+        sender_id: message.senderId ?? null,
+        sender_name: message.senderName ?? null,
+        metadata: message.metadata ?? {}
+      });
+      const data = Array.isArray(rows) ? rows[0] : rows;
       return {
         id: data.id, conversationId: data.conversation_id, audienceId: data.audience_id,
         role: data.role, content: data.content, senderId: data.sender_id,
@@ -1058,13 +1078,11 @@ export function createSupabaseRepository(options) {
       };
     },
     async getConversationMessages(conversationId) {
-      const { data, error } = await client
-        .from("vivo_messages")
-        .select("*")
-        .eq("conversation_id", conversationId)
-        .order("created_at", { ascending: true });
-      if (error) throw new Error(error.message);
-      return (data ?? []).map(r => ({
+      const rows = await client.select("vivo_messages", {
+        conversation_id: `eq.${conversationId}`,
+        order: "created_at.asc"
+      });
+      return rows.map(r => ({
         id: r.id, conversationId: r.conversation_id, audienceId: r.audience_id,
         role: r.role, content: r.content, senderId: r.sender_id,
         senderName: r.sender_name, metadata: r.metadata, createdAt: r.created_at

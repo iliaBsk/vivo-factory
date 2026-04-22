@@ -105,6 +105,9 @@ export function createAudienceImportService(options = {}) {
         instances: []
       };
     },
+    async inferFromPosts({ twitterHandle, postsText }) {
+      return await llmClient.inferPersonalityFromPosts({ twitterHandle, postsText });
+    },
     async createAudience(input = {}) {
       if (!provisioningClient) {
         throw new Error("Audience provisioning client is required for audience creation.");
@@ -120,12 +123,20 @@ export function createAudienceImportService(options = {}) {
         references: input.references ?? {}
       }));
       const ensuredFactory = await provisioningClient.ensureFactory(factory);
-      const audience = await provisioningClient.upsertAudience(ensuredFactory, buildAudiencePayload({
+      const payload = buildAudiencePayload({
         raw_text: rawText,
         audience_key: normalized.audience_id,
         normalized,
         expanded
-      }));
+      });
+      if (input.initial_status) payload.status = input.initial_status;
+      if (input.channels) {
+        payload.profile_snapshot = {
+          ...payload.profile_snapshot,
+          channels: input.channels
+        };
+      }
+      const audience = await provisioningClient.upsertAudience(ensuredFactory, payload);
       return {
         factory: ensuredFactory,
         audience,
@@ -221,6 +232,10 @@ function defaultLlmClient() {
   return {
     async expandAudience({ normalized }) {
       return normalized;
+    },
+    async inferPersonalityFromPosts({ twitterHandle }) {
+      const handle = twitterHandle ? `@${twitterHandle}` : "this user";
+      return { raw_text: `Audience inferred from social posts of ${handle}.` };
     }
   };
 }

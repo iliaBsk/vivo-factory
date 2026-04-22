@@ -1,3 +1,63 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+@layer components {
+  /* ── Buttons ── */
+  .btn {
+    @apply inline-flex items-center justify-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-offset-1 disabled:pointer-events-none disabled:opacity-50 cursor-pointer;
+  }
+  .btn-primary {
+    @apply bg-gray-900 text-white hover:bg-gray-700 focus:ring-gray-600 dark:bg-gray-100 dark:text-gray-900 dark:hover:bg-gray-300;
+  }
+  .btn-accent {
+    @apply bg-indigo-600 text-white hover:bg-indigo-700 focus:ring-indigo-500;
+  }
+  .btn-ghost {
+    @apply bg-transparent text-gray-600 hover:bg-gray-100 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-100;
+  }
+  .btn-outline {
+    @apply border border-gray-300 dark:border-gray-600 bg-transparent text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800;
+  }
+  .btn-sm { @apply px-2 py-1 text-xs; }
+  .btn-lg { @apply px-5 py-2.5 text-base; }
+
+  /* ── Form controls ── */
+  .input {
+    @apply block w-full rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500;
+  }
+  .label { @apply block text-xs font-semibold text-gray-700 dark:text-gray-300 mb-1; }
+
+  /* ── Sheet (right-side drawer) ── */
+  .sheet-overlay { @apply fixed inset-0 bg-gray-900/50 backdrop-blur-sm z-40; }
+  .sheet-panel   { @apply fixed inset-y-0 right-0 flex flex-col bg-white dark:bg-gray-800 shadow-xl z-50 overflow-hidden; }
+
+  /* ── Dialog (centered modal) ── */
+  .dialog-backdrop { @apply fixed inset-0 bg-gray-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4; }
+  .dialog-panel    { @apply relative bg-white dark:bg-gray-800 rounded-xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden; }
+
+  /* ── Status badges ── */
+  .badge-running { @apply inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400; }
+  .badge-stopped { @apply inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400; }
+  .badge-unknown { @apply inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400; }
+  .badge-new     { @apply inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400; }
+  .badge-active  { @apply inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400; }
+  .badge-neutral { @apply inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300; }
+
+  /* ── Data table ── */
+  .data-table             { @apply min-w-full divide-y divide-gray-200 dark:divide-gray-700; }
+  .data-table thead       { @apply bg-gray-50 dark:bg-gray-700/50; }
+  .data-table th          { @apply px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400; }
+  .data-table td          { @apply px-4 py-3; }
+  .data-table tbody       { @apply divide-y divide-gray-100 dark:divide-gray-700; }
+  .data-table tbody tr    { @apply cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors; }
+  .data-table tbody tr.active { @apply bg-indigo-50 dark:bg-indigo-900/20; }
+
+  /* ── Stepper ── */
+  .step-circle         { @apply flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full text-xs font-semibold; }
+  .step-circle.done    { @apply bg-indigo-600 text-white; }
+  .step-circle.active  { @apply bg-indigo-600 text-white ring-4 ring-indigo-100 dark:ring-indigo-900; }
+  .step-circle.pending { @apply bg-gray-200 text-gray-500 dark:bg-gray-700 dark:text-gray-400; }
+  .step-connector      { @apply flex-1 h-0.5 bg-gray-200 dark:bg-gray-700 mx-1; }
+  .step-connector.done { @apply bg-indigo-600; }
+}

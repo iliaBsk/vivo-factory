@@ -20,6 +20,7 @@ export function createApp(options) {
   const dispatchFetch = options.dispatchFetch ?? null;
   const fetchImpl = options.fetchImpl ?? globalThis.fetch;
   const audienceRuntimeConfig = options.audienceRuntimeConfig ?? {};
+  const runtimeStatusService = options.runtimeStatusService ?? null;
 
   return {
     async handle(request) {
@@ -36,6 +37,7 @@ export function createApp(options) {
           fetchImpl,
           clock,
           audienceRuntimeConfig,
+          runtimeStatusService,
           request
         });
       } catch (error) {
@@ -58,6 +60,7 @@ async function handleRequest(context) {
     fetchImpl,
     clock,
     audienceRuntimeConfig,
+    runtimeStatusService,
     request
   } = context;
 
@@ -93,6 +96,91 @@ async function handleRequest(context) {
     }
     const body = readBody(request.body);
     return json(200, await audienceImportService.createAudience(body));
+  }
+
+  // POST /api/audiences/create-full — wizard 3-step create
+  if (request.method === "POST" && request.pathname === "/api/audiences/create-full") {
+    if (!audienceImportService?.createAudience) {
+      return json(404, { error: "Audience creation is not configured." });
+    }
+    const body = readBody(request.body);
+    const details = body.details ?? {};
+    const channels = body.channels ?? {};
+    const photo = body.photo ?? null;
+
+    const label = String(details.label ?? "").trim();
+    const profileRawText = String(details.profile_raw_text ?? details.description ?? "").trim();
+    const botToken = String(channels.telegram_bot_token ?? "").trim();
+    const chatId = String(channels.telegram_chat_id ?? "").trim();
+
+    if (!label) return json(400, { error: "details.label is required." });
+    if (!profileRawText) return json(400, { error: "details.profile_raw_text is required." });
+    if (!botToken) return json(400, { error: "channels.telegram_bot_token is required." });
+    if (!chatId) return json(400, { error: "channels.telegram_chat_id is required." });
+    if (photo) {
+      const allowed = ["image/jpeg", "image/png", "image/webp", "image/gif"];
+      if (!allowed.includes(photo.mime_type)) return json(400, { error: "photo.mime_type must be jpeg, png, webp, or gif." });
+      if ((photo.size_bytes ?? 0) > 5 * 1024 * 1024) return json(400, { error: "Photo must be under 5 MB." });
+    }
+
+    const rawText = [
+      label,
+      details.description && details.description !== label ? details.description : null,
+      details.location ? `Location: ${details.location}` : null,
+      details.interests?.length ? `Interests: ${details.interests.join(", ")}` : null,
+      profileRawText !== label ? profileRawText : null,
+    ].filter(Boolean).join(". ");
+
+    const result = await audienceImportService.createAudience({
+      raw_text: rawText,
+      initial_status: "new",
+      channels: { telegram_bot_token: botToken, telegram_chat_id: chatId, posting_schedule: channels.posting_schedule ?? "twice_daily" }
+    });
+
+    let photoUrl = null;
+    if (photo && result.audience?.id) {
+      try {
+        photoUrl = await repository.storeAudiencePhoto(result.audience.id, photo);
+      } catch (err) {
+        console.error("[create-full] photo upload failed:", err.message);
+      }
+    }
+
+    return json(200, {
+      audience_id: result.audience?.id,
+      audience_key: result.audience?.audience_key,
+      photo_url: photoUrl,
+      status: "new"
+    });
+  }
+
+  // GET /api/audiences/:id/runtime-status
+  if (request.method === "GET" && matchPath(request.pathname, /^\/api\/audiences\/([^/]+)\/runtime-status$/)) {
+    const audienceKey = request.pathname.split("/")[3];
+    if (!runtimeStatusService) {
+      return json(200, { openclaw: "unknown", marble: "unknown" });
+    }
+    const audiences = await safeLoad(() => repository.listAudiences(), []);
+    const audience = audiences.find(a => a.audience_key === audienceKey || a.id === audienceKey);
+    if (!audience) return json(404, { error: "Audience not found" });
+    const status = await runtimeStatusService.getStatus(audience.audience_key);
+    return json(200, status);
+  }
+
+  if (request.method === "POST" && request.pathname === "/api/audiences/infer-from-posts") {
+    if (!audienceImportService?.inferFromPosts) {
+      return json(404, { error: "Post inference is not configured." });
+    }
+    const body = readBody(request.body);
+    const twitterHandle = String(body.twitter_handle ?? "").trim().replace(/^@+/, "");
+    const postsText = String(body.posts_text ?? "").trim();
+    if (!twitterHandle && !postsText) {
+      return json(400, { error: "twitter_handle or posts_text is required." });
+    }
+    return json(200, await audienceImportService.inferFromPosts({
+      twitterHandle: twitterHandle || null,
+      postsText: postsText || null
+    }));
   }
 
   if (request.method === "GET" && request.pathname === "/api/instances") {
@@ -524,7 +612,7 @@ async function handleRequest(context) {
     const selectedAudience = selectAudience(audiences, selectedAudienceId);
     const chatHistory = selectedAudience && activeTab === "audiences"
       ? await (async () => {
-          const conv = await repository.getOrCreateConversation(selectedAudience.id, "operator_console");
+          const conv = await repository.getOrCreateConversation(selectedAudience.audience_key, "operator_console");
           return repository.getConversationMessages(conv.id);
         })()
       : [];
@@ -545,7 +633,8 @@ async function handleRequest(context) {
       chatHistory,
       merchants,
       activeMerchant,
-      activeMerchantOverrides
+      activeMerchantOverrides,
+      audienceRuntimeConfig
     }));
   }
 
@@ -975,6 +1064,16 @@ function renderDashboard(model) {
   const merchantDrawerPortal = activeTab === "merchants" && model.activeMerchant
     ? renderMerchantDrawer({ merchant: model.activeMerchant, overrides: model.activeMerchantOverrides ?? [], audiences: model.audiences ?? [] })
     : "";
+  const audienceDrawerPortal = activeTab === "audiences" && model.selectedAudienceId && selectedAudience
+    ? renderAudienceDrawer({
+        audience: selectedAudience,
+        instance: selectedAudienceInstance,
+        profileState: selectedProfileState,
+        deployment: selectedDeployment,
+        deployments,
+        chatHistory: model.chatHistory ?? []
+      })
+    : "";
   const workspace = activeTab === "stories"
     ? renderStoriesWorkspace({
         model,
@@ -1039,6 +1138,8 @@ function renderDashboard(model) {
 
     ${drawerPortal}
     ${merchantDrawerPortal}
+    ${audienceDrawerPortal}
+    ${renderAudienceWizard()}
     ${renderDashboardScript()}
   </body>
 </html>`;
@@ -1079,9 +1180,12 @@ function renderSetupWorkspace({ model, setupChecklist, audienceImportPanel }) {
     </div>
     <div class="space-y-5">
       <div class="bg-white dark:bg-gray-800 ring-1 ring-gray-200 dark:ring-gray-700 rounded-lg shadow-sm overflow-hidden">
-        <div class="px-5 py-4 border-b border-gray-200 dark:border-gray-700">
-          <h2 class="text-sm font-semibold text-gray-900 dark:text-gray-100">Create Audiences</h2>
-          <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">Import audience.md or create one investigated profile. Instances are not prepared until launch.</p>
+        <div class="px-5 py-4 border-b border-gray-200 dark:border-gray-700 flex items-start justify-between gap-3">
+          <div>
+            <h2 class="text-sm font-semibold text-gray-900 dark:text-gray-100">Create Audiences</h2>
+            <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">Import audience.md or create one investigated profile. Instances are not prepared until launch.</p>
+          </div>
+          <button onclick="openAudienceWizard()" class="btn btn-accent btn-sm shrink-0">+ New Audience</button>
         </div>
         <div class="px-5 py-4 space-y-5">
           ${audienceImportPanel}
@@ -1089,8 +1193,23 @@ function renderSetupWorkspace({ model, setupChecklist, audienceImportPanel }) {
             <h3 class="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-3">Create One Audience</h3>
             <form id="create-audience-form" class="space-y-3">
               <label class="block">
+                <span class="block text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-1.5">Twitter handle</span>
+                <input name="twitter_handle" type="text" placeholder="@username"
+                       class="block w-full rounded-md border-0 py-1.5 px-3 text-sm text-gray-900 dark:text-gray-100 dark:bg-gray-700 ring-1 ring-inset ring-gray-300 dark:ring-gray-600 placeholder:text-gray-400 focus:ring-2 focus:ring-blue-500 focus:outline-none" />
+              </label>
+              <label class="block">
+                <span class="block text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-1.5">Twitter extract (.txt)</span>
+                <div class="flex items-center gap-2">
+                  <input id="posts-file-input" type="file" accept=".txt,.csv,.tsv"
+                         class="block flex-1 text-sm text-gray-500 dark:text-gray-400 file:mr-3 file:rounded file:border-0 file:bg-gray-100 dark:file:bg-gray-700 file:px-3 file:py-1.5 file:text-xs file:font-medium file:text-gray-700 dark:file:text-gray-300 cursor-pointer" />
+                  <button type="button" id="analyze-posts-button"
+                          class="shrink-0 rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-500 transition-colors cursor-pointer">Analyze</button>
+                </div>
+              </label>
+              <p id="analyze-status" class="text-xs text-gray-400 hidden"></p>
+              <label class="block">
                 <span class="block text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-1.5">Raw audience brief, sources, photos, accounts</span>
-                <textarea name="raw_text" rows="5" placeholder="Describe the audience. Add Twitter accounts, similar photos, references, and constraints."
+                <textarea name="raw_text" rows="5" placeholder="Describe the audience. Add Twitter accounts, similar photos, references, and constraints. Or use Analyze above to infer from posts."
                           class="block w-full rounded-md border-0 py-1.5 px-3 text-sm text-gray-900 dark:text-gray-100 dark:bg-gray-700 ring-1 ring-inset ring-gray-300 dark:ring-gray-600 placeholder:text-gray-400 focus:ring-2 focus:ring-blue-500 focus:outline-none resize-y"></textarea>
               </label>
               <button type="submit" class="rounded-md bg-gray-900 dark:bg-gray-100 px-3 py-1.5 text-sm font-medium text-white dark:text-gray-900 hover:bg-gray-700 transition-colors cursor-pointer">Run LLM Investigation</button>
@@ -1521,29 +1640,102 @@ function renderStoryDetailDrawer({ story, assetCards, publicationItems, reviewIt
 }
 
 function renderAudiencesWorkspace({ model, deployments, selectedAudience, selectedAudienceInstance, selectedProfileState, selectedDeployment, chatHistory = [] }) {
+  const audiences = model.audiences ?? [];
+  const runtimeConfig = model.audienceRuntimeConfig ?? {};
+
+  const rows = audiences.map((audience) => {
+    const audienceKey = audience.audience_key ?? audience.id;
+    const rconf = runtimeConfig[audienceKey] ?? {};
+    const isActive = selectedAudience?.id === audience.id;
+    const href = escapeAttribute(`/?tab=audiences&audience_id=${encodeURIComponent(audience.id)}`);
+    const interests = normalizeAudienceList(audience.interests ?? []).slice(0, 3);
+    const photo = audience.photo_url ?? null;
+    const initials = (audience.label ?? audienceKey ?? "?").slice(0, 2).toUpperCase();
+    const thumbnail = photo
+      ? `<img src="${escapeAttribute(photo)}" alt="" class="w-10 h-10 rounded-full object-cover flex-shrink-0" />`
+      : `<div class="w-10 h-10 rounded-full bg-indigo-100 dark:bg-indigo-900/40 flex items-center justify-center flex-shrink-0 text-xs font-bold text-indigo-600 dark:text-indigo-300">${escapeHtml(initials)}</div>`;
+    const statusClass = audience.status === "active" ? "badge-active" : audience.status === "new" ? "badge-new" : "badge-neutral";
+    const interestTags = interests.map((i) => `<span class="badge-neutral text-xs px-1.5 py-0.5 rounded-full">${escapeHtml(i)}</span>`).join("");
+
+    const marbleBase = rconf.plugin_base_url ?? "";
+    const marbleLink = marbleBase
+      ? `<a href="${escapeAttribute(marbleBase + "/user-profile/graph/ui")}" target="_blank" rel="noopener"
+            onclick="event.stopPropagation()"
+            class="inline-flex items-center gap-1 rounded px-2 py-0.5 text-xs font-medium bg-violet-50 dark:bg-violet-900/20 text-violet-700 dark:text-violet-300 hover:bg-violet-100 dark:hover:bg-violet-900/40 transition-colors whitespace-nowrap">
+           <span>Marble</span><span class="opacity-60">↗</span>
+         </a>`
+      : `<span class="text-xs text-gray-400">—</span>`;
+
+    return `<tr class="${isActive ? "bg-indigo-50 dark:bg-indigo-900/20" : ""} cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors" onclick="window.location.href='${href}'" data-runtime-audience-id="${escapeAttribute(audienceKey)}">
+      <td class="px-4 py-3 w-12">${thumbnail}</td>
+      <td class="px-4 py-3">
+        <div class="text-sm font-medium text-gray-900 dark:text-gray-100">${escapeHtml(audienceKey)}</div>
+        <div class="text-xs text-gray-500 dark:text-gray-400 mt-0.5 line-clamp-1">${escapeHtml(formatStructuredText(audience.label, ""))}</div>
+      </td>
+      <td class="px-4 py-3 max-w-xs">
+        <p class="text-xs text-gray-500 dark:text-gray-400 line-clamp-2">${escapeHtml(formatStructuredText(audience.family_context, "No description"))}</p>
+      </td>
+      <td class="px-4 py-3">
+        <div class="flex flex-wrap gap-1">${interestTags || `<span class="text-xs text-gray-400">—</span>`}</div>
+      </td>
+      <td class="px-4 py-3 whitespace-nowrap">
+        <span class="badge-unknown" data-runtime-openclaw>
+          <span class="w-1.5 h-1.5 rounded-full bg-current opacity-60"></span>…
+        </span>
+      </td>
+      <td class="px-4 py-3 whitespace-nowrap">
+        <span class="badge-unknown" data-runtime-marble>
+          <span class="w-1.5 h-1.5 rounded-full bg-current opacity-60"></span>…
+        </span>
+      </td>
+      <td class="px-4 py-3 whitespace-nowrap">${marbleLink}</td>
+      <td class="px-4 py-3 whitespace-nowrap">
+        <span class="${statusClass}">${escapeHtml(audience.status ?? "unknown")}</span>
+      </td>
+    </tr>`;
+  }).join("");
+
+  const emptyState = audiences.length === 0
+    ? `<tr><td colspan="8" class="px-4 py-16 text-center">
+        <div class="flex flex-col items-center gap-4">
+          <div class="w-12 h-12 rounded-full bg-gray-100 dark:bg-gray-800 flex items-center justify-center text-2xl">👥</div>
+          <div>
+            <p class="text-sm font-medium text-gray-900 dark:text-gray-100">No audiences yet</p>
+            <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">Create your first audience to get started</p>
+          </div>
+          <button onclick="openAudienceWizard()" class="btn btn-accent">+ Create Audience</button>
+        </div>
+      </td></tr>`
+    : "";
+
   return `<div>
-    <div class="mb-6">
-      <h1 class="text-lg font-semibold text-gray-900 dark:text-gray-100">Audiences</h1>
-      <p class="text-sm text-gray-500 dark:text-gray-400 mt-0.5">Marble profile state, enrichment, and runtime delivery.</p>
-    </div>
-    <div class="grid gap-6" style="grid-template-columns: 200px minmax(0,1fr) 280px; align-items: start;">
-    <div class="sticky top-0 space-y-0.5">
-      <div class="flex items-start justify-between gap-2 mb-3">
-        <h2 class="text-sm font-semibold text-gray-900 dark:text-gray-100">Audience Directory</h2>
-        <span class="text-xs text-gray-500 dark:text-gray-400">${escapeHtml(String(model.audiences.length))}</span>
+    <div class="mb-5 flex items-center justify-between">
+      <div>
+        <h1 class="text-lg font-semibold text-gray-900 dark:text-gray-100">Audiences</h1>
+        <p class="text-sm text-gray-500 dark:text-gray-400 mt-0.5">${escapeHtml(String(audiences.length))} audience${audiences.length !== 1 ? "s" : ""} · Marble profile and runtime delivery.</p>
       </div>
-      ${renderAudienceDirectory(model.audiences ?? [], deployments, model.audienceProfiles ?? new Map(), selectedAudience?.id ?? "")}
+      <button onclick="openAudienceWizard()" class="btn btn-accent btn-sm">+ New Audience</button>
     </div>
-    <div>
-      <div class="flex items-start justify-between gap-3 mb-4">
-        <h2 class="text-sm font-semibold text-gray-900 dark:text-gray-100">Audience Workspace</h2>
-      </div>
-      ${renderAudienceWorkspaceCanvas(selectedAudience, selectedAudienceInstance, selectedProfileState)}
+
+    <div class="overflow-hidden rounded-lg ring-1 ring-gray-200 dark:ring-gray-700 bg-white dark:bg-gray-800">
+      <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+        <thead class="bg-gray-50 dark:bg-gray-700/50">
+          <tr>
+            <th class="px-4 py-3 w-12"></th>
+            <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Audience</th>
+            <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Description</th>
+            <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Interests</th>
+            <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">OpenClaw</th>
+            <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Marble</th>
+            <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Profile</th>
+            <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Status</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-gray-100 dark:divide-gray-700">
+          ${rows || emptyState}
+        </tbody>
+      </table>
     </div>
-    <div class="sticky top-0 space-y-5">
-      ${renderAudienceInspector(selectedAudience, selectedDeployment, deployments, chatHistory)}
-    </div>
-  </div>
   </div>`;
 }
 
@@ -1567,7 +1759,7 @@ function normalizeDeploymentInstance(instance, source) {
     service_name: instance.service_name ?? instance.instance_key,
     profile_service_name: instance.profile_service_name ?? runtime.profile_service_name,
     openclaw_admin_url: instance.openclaw_admin_url ?? runtime.openclaw_admin_url ?? "",
-    profile_base_url: instance.profile_base_url ?? runtime.plugin_base_url ?? "",
+    profile_base_url: instance.profile_base_url ?? instance.plugin_base_url ?? runtime.plugin_base_url ?? "",
     profile_engine_image: runtime.profile_engine_image ?? "",
     profile_engine_command: runtime.profile_engine_command ?? "",
     profile_engine_health_path: runtime.profile_engine_health_path ?? "",
@@ -1583,10 +1775,10 @@ function normalizeDeploymentInstance(instance, source) {
 }
 
 function selectAudience(audiences, selectedAudienceId) {
-  if (!audiences?.length) {
+  if (!audiences?.length || !selectedAudienceId) {
     return null;
   }
-  return audiences.find((audience) => audience.id === selectedAudienceId) ?? audiences[0];
+  return audiences.find((audience) => audience.id === selectedAudienceId) ?? null;
 }
 
 function selectAudienceDeployment(deployments, audience) {
@@ -1596,7 +1788,7 @@ function selectAudienceDeployment(deployments, audience) {
   if (!audience) {
     return deployments[0];
   }
-  return deployments.find((deployment) => deploymentMatchesAudience(deployment, audience)) ?? deployments[0];
+  return deployments.find((deployment) => deploymentMatchesAudience(deployment, audience)) ?? null;
 }
 
 function deploymentMatchesAudience(deployment, audience) {
@@ -1921,6 +2113,277 @@ function renderDeploymentIndex(deployments) {
   </div>`;
 }
 
+function renderAudienceDrawer({ audience, instance, profileState = {}, deployment, deployments = [], chatHistory = [] }) {
+  const closeHref = "/?tab=audiences";
+  const audienceKey = audience.audience_key ?? audience.id;
+  const photo = audience.photo_url ?? null;
+  const initials = (audience.label ?? audienceKey ?? "?").slice(0, 2).toUpperCase();
+  const thumbnail = photo
+    ? `<img src="${escapeAttribute(photo)}" alt="" class="w-12 h-12 rounded-full object-cover flex-shrink-0" />`
+    : `<div class="w-12 h-12 rounded-full bg-indigo-100 dark:bg-indigo-900/40 flex items-center justify-center text-sm font-bold text-indigo-600 dark:text-indigo-300 flex-shrink-0">${escapeHtml(initials)}</div>`;
+  const statusClass = audience.status === "active" ? "badge-active" : audience.status === "new" ? "badge-new" : "badge-neutral";
+
+  const marbleUrl = deployment?.profile_base_url ? `${deployment.profile_base_url}/user-profile/graph/ui` : null;
+  const openclawUrl = deployment?.openclaw_admin_url ?? null;
+
+  const interests = normalizeAudienceList(audience.interests ?? []);
+  const contentPillars = normalizeAudienceList(audience.content_pillars ?? []);
+  const excludedTopics = normalizeAudienceList(audience.excluded_topics ?? []);
+
+  const detailsTab = `
+    <div class="space-y-5 p-5">
+      <div class="grid grid-cols-2 gap-4">
+        <div><span class="label">Audience Key</span><p class="text-sm text-gray-800 dark:text-gray-200 font-mono">${escapeHtml(audienceKey)}</p></div>
+        <div><span class="label">Status</span><span class="${statusClass} mt-1 inline-flex">${escapeHtml(audience.status ?? "unknown")}</span></div>
+        <div><span class="label">Location</span><p class="text-sm text-gray-800 dark:text-gray-200">${escapeHtml(formatStructuredText(audience.location, "—"))}</p></div>
+        <div><span class="label">Language</span><p class="text-sm text-gray-800 dark:text-gray-200">${escapeHtml(audience.language ?? "en")}</p></div>
+        <div class="col-span-2"><span class="label">Description</span><p class="text-sm text-gray-800 dark:text-gray-200 leading-relaxed">${escapeHtml(formatStructuredText(audience.family_context, "—"))}</p></div>
+        <div class="col-span-2"><span class="label">Tone</span><p class="text-sm text-gray-800 dark:text-gray-200">${escapeHtml(formatStructuredText(audience.tone, "—"))}</p></div>
+      </div>
+      <div><span class="label">Interests</span>
+        <div class="flex flex-wrap gap-1.5 mt-1">${interests.map((i) => `<span class="badge-neutral rounded-full px-2 py-0.5 text-xs">${escapeHtml(i)}</span>`).join("") || `<span class="text-xs text-gray-400">None</span>`}</div>
+      </div>
+      <div><span class="label">Content Pillars</span>
+        <div class="flex flex-wrap gap-1.5 mt-1">${contentPillars.map((i) => `<span class="badge-neutral rounded-full px-2 py-0.5 text-xs">${escapeHtml(i)}</span>`).join("") || `<span class="text-xs text-gray-400">None</span>`}</div>
+      </div>
+      <div><span class="label">Excluded Topics</span>
+        <div class="flex flex-wrap gap-1.5 mt-1">${excludedTopics.map((i) => `<span class="badge-neutral rounded-full px-2 py-0.5 text-xs">${escapeHtml(i)}</span>`).join("") || `<span class="text-xs text-gray-400">None</span>`}</div>
+      </div>
+      ${renderLaunchConfigForm(audience, instance)}
+    </div>`;
+
+  const linksTab = `
+    <div class="space-y-3 p-5">
+      ${marbleUrl
+        ? `<a href="${escapeAttribute(marbleUrl)}" target="_blank" rel="noopener"
+              class="flex items-center gap-3 rounded-lg border border-gray-200 dark:border-gray-700 p-4 hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors">
+            <div class="w-8 h-8 rounded-lg bg-violet-100 dark:bg-violet-900/30 flex items-center justify-center text-violet-600 dark:text-violet-400 text-sm font-bold flex-shrink-0">M</div>
+            <div class="min-w-0">
+              <p class="text-sm font-medium text-gray-900 dark:text-gray-100">Marble Profile Graph</p>
+              <p class="text-xs text-gray-500 dark:text-gray-400 truncate">${escapeHtml(marbleUrl)}</p>
+            </div>
+            <span class="ml-auto text-gray-400 text-xs">↗</span>
+          </a>`
+        : `<div class="rounded-lg border border-dashed border-gray-200 dark:border-gray-700 p-4 text-sm text-gray-500 dark:text-gray-400">Marble URL not configured for this audience.</div>`}
+      ${openclawUrl
+        ? `<a href="${escapeAttribute(openclawUrl)}" target="_blank" rel="noopener"
+              class="flex items-center gap-3 rounded-lg border border-gray-200 dark:border-gray-700 p-4 hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors">
+            <div class="w-8 h-8 rounded-lg bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center text-blue-600 dark:text-blue-400 text-sm font-bold flex-shrink-0">O</div>
+            <div class="min-w-0">
+              <p class="text-sm font-medium text-gray-900 dark:text-gray-100">OpenClaw Manager</p>
+              <p class="text-xs text-gray-500 dark:text-gray-400 truncate">${escapeHtml(openclawUrl)}</p>
+            </div>
+            <span class="ml-auto text-gray-400 text-xs">↗</span>
+          </a>`
+        : `<div class="rounded-lg border border-dashed border-gray-200 dark:border-gray-700 p-4 text-sm text-gray-500 dark:text-gray-400">OpenClaw URL not configured.</div>`}
+    </div>`;
+
+  const chatTab = `
+    <div class="p-4 h-full flex flex-col">
+      ${renderOperatorConsole(audience, deployment, chatHistory)}
+    </div>`;
+
+  const audienceKeyJs = JSON.stringify(audienceKey);
+
+  return `<div class="fixed inset-0 z-40" data-tremor-component="AudienceDrawerPortal">
+    <a class="sheet-overlay" href="${escapeAttribute(closeHref)}" aria-label="Close audience details"></a>
+    <aside class="sheet-panel w-[52rem]" aria-label="Audience details">
+
+      <div class="sticky top-0 z-10 flex items-center gap-3 border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-5 py-4">
+        ${thumbnail}
+        <div class="flex-1 min-w-0">
+          <div class="flex items-center gap-2 flex-wrap">
+            <span class="text-sm font-bold text-gray-900 dark:text-gray-100">${escapeHtml(audience.label ?? audienceKey)}</span>
+            <span class="text-xs text-gray-500 dark:text-gray-400 font-mono">${escapeHtml(audienceKey)}</span>
+            <span class="${statusClass}">${escapeHtml(audience.status ?? "unknown")}</span>
+          </div>
+          <div class="flex items-center gap-3 mt-1">
+            <span class="badge-unknown text-xs" data-drawer-openclaw-badge>
+              <span class="w-1.5 h-1.5 rounded-full bg-current opacity-60"></span>OpenClaw …
+            </span>
+            <span class="badge-unknown text-xs" data-drawer-marble-badge>
+              <span class="w-1.5 h-1.5 rounded-full bg-current opacity-60"></span>Marble …
+            </span>
+          </div>
+        </div>
+        <a href="${escapeAttribute(closeHref)}"
+           class="rounded p-1.5 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-600 transition-colors ml-2"
+           aria-label="Close">✕</a>
+      </div>
+
+      <div class="border-b border-gray-200 dark:border-gray-700 flex" role="tablist">
+        <button class="audience-drawer-tab px-5 py-3 text-sm font-medium border-b-2 border-indigo-600 text-indigo-600 dark:text-indigo-400 dark:border-indigo-400 -mb-px" data-tab="details" role="tab" aria-selected="true">Details</button>
+        <button class="audience-drawer-tab px-5 py-3 text-sm font-medium border-b-2 border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 -mb-px" data-tab="links" role="tab" aria-selected="false">Links</button>
+        <button class="audience-drawer-tab px-5 py-3 text-sm font-medium border-b-2 border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 -mb-px" data-tab="chat" role="tab" aria-selected="false">Chat</button>
+      </div>
+
+      <div class="flex-1 overflow-y-auto">
+        <div data-tab-panel="details">${detailsTab}</div>
+        <div data-tab-panel="links" class="hidden">${linksTab}</div>
+        <div data-tab-panel="chat" class="hidden">${chatTab}</div>
+      </div>
+
+    </aside>
+    <script>
+    (function() {
+      var audienceKey = ${audienceKeyJs};
+
+      // Tab switching
+      document.querySelectorAll('.audience-drawer-tab').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+          var tab = btn.dataset.tab;
+          document.querySelectorAll('.audience-drawer-tab').forEach(function(b) {
+            var active = b.dataset.tab === tab;
+            b.setAttribute('aria-selected', active ? 'true' : 'false');
+            b.className = 'audience-drawer-tab px-5 py-3 text-sm font-medium border-b-2 -mb-px ' + (active
+              ? 'border-indigo-600 text-indigo-600 dark:text-indigo-400 dark:border-indigo-400'
+              : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300');
+          });
+          document.querySelectorAll('[data-tab-panel]').forEach(function(panel) {
+            panel.classList.toggle('hidden', panel.dataset.tabPanel !== tab);
+          });
+        });
+      });
+
+      // Live status for drawer header badges
+      async function refreshDrawerStatus() {
+        try {
+          var res = await fetch('/api/audiences/' + encodeURIComponent(audienceKey) + '/runtime-status');
+          if (!res.ok) return;
+          var data = await res.json();
+          updateBadge(document.querySelector('[data-drawer-openclaw-badge]'), data.openclaw, 'OpenClaw');
+          updateBadge(document.querySelector('[data-drawer-marble-badge]'), data.marble, 'Marble');
+        } catch {}
+      }
+
+      function updateBadge(el, status, label) {
+        if (!el) return;
+        var cls = status === 'running' ? 'badge-running text-xs' : status === 'stopped' ? 'badge-stopped text-xs' : 'badge-unknown text-xs';
+        el.className = cls;
+        el.innerHTML = '<span class="w-1.5 h-1.5 rounded-full bg-current opacity-60"></span>' + label + ' ' + status;
+      }
+
+      refreshDrawerStatus();
+      var drawerPoller = setInterval(refreshDrawerStatus, 10000);
+      document.addEventListener('visibilitychange', function() {
+        if (document.hidden) clearInterval(drawerPoller);
+        else { refreshDrawerStatus(); drawerPoller = setInterval(refreshDrawerStatus, 10000); }
+      });
+    })();
+    </script>
+  </div>`;
+}
+
+function renderAudienceWizard() {
+  const stepTitles = ["Audience Details", "Publishing Channels", "Protagonist Photo"];
+
+  const step1 = `
+    <div class="space-y-4">
+      <div class="grid grid-cols-2 gap-4">
+        <div class="col-span-2">
+          <label class="label" for="wiz-label">Audience Name *</label>
+          <input id="wiz-label" name="label" class="input" placeholder="e.g. Tech founder in Barcelona, 35" required />
+        </div>
+        <div class="col-span-2">
+          <label class="label" for="wiz-description">Short Description *</label>
+          <textarea id="wiz-description" name="description" rows="2" class="input resize-none" placeholder="One sentence about this audience persona"></textarea>
+        </div>
+        <div>
+          <label class="label" for="wiz-location">Location</label>
+          <input id="wiz-location" name="location" class="input" placeholder="Barcelona, Spain" />
+        </div>
+        <div>
+          <label class="label" for="wiz-interests">Interests <span class="font-normal text-gray-400">(comma-separated)</span></label>
+          <input id="wiz-interests" name="interests" class="input" placeholder="technology, AI, startups" />
+        </div>
+        <div class="col-span-2">
+          <label class="label" for="wiz-profile">Profile Brief *</label>
+          <textarea id="wiz-profile" name="profile_raw_text" rows="5" class="input resize-y" placeholder="Detailed description of this audience's personality, behaviour, lifestyle, values…"></textarea>
+        </div>
+      </div>
+    </div>`;
+
+  const step2 = `
+    <div class="space-y-4">
+      <div>
+        <label class="label" for="wiz-bot-token">Telegram Bot Token *</label>
+        <input id="wiz-bot-token" name="telegram_bot_token" class="input font-mono" placeholder="123456:ABC-DEF..." />
+        <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">Get from @BotFather on Telegram</p>
+      </div>
+      <div>
+        <label class="label" for="wiz-chat-id">Telegram Chat ID *</label>
+        <input id="wiz-chat-id" name="telegram_chat_id" class="input font-mono" placeholder="-100123456789" />
+        <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">Channel or group ID where posts will be sent</p>
+      </div>
+      <div>
+        <label class="label" for="wiz-schedule">Posting Schedule</label>
+        <select id="wiz-schedule" name="posting_schedule" class="input">
+          <option value="twice_daily">Twice daily (9:00 and 18:00)</option>
+          <option value="daily">Daily (9:00)</option>
+          <option value="hourly">Hourly</option>
+        </select>
+      </div>
+    </div>`;
+
+  const step3 = `
+    <div class="space-y-4">
+      <p class="text-sm text-gray-500 dark:text-gray-400">Upload a photo that represents your audience protagonist. This will appear as the avatar in the dashboard.</p>
+      <div id="wiz-drop-zone"
+           class="flex flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed border-gray-300 dark:border-gray-600 p-10 cursor-pointer hover:border-indigo-400 transition-colors"
+           onclick="document.getElementById('wiz-photo-file').click()">
+        <div class="w-14 h-14 rounded-full bg-gray-100 dark:bg-gray-700 overflow-hidden flex items-center justify-center">
+          <img id="wiz-photo-preview" src="" alt="" class="w-full h-full object-cover hidden" />
+          <span id="wiz-photo-placeholder" class="text-2xl">📷</span>
+        </div>
+        <p class="text-sm text-gray-500 dark:text-gray-400">Click to select or drag &amp; drop</p>
+        <p class="text-xs text-gray-400">JPEG, PNG or WebP · max 5 MB</p>
+        <input type="file" id="wiz-photo-file" name="photo" accept="image/jpeg,image/png,image/webp" class="hidden" />
+      </div>
+      <p class="text-xs text-gray-500 dark:text-gray-400 text-center">Photo is optional — you can add it later.</p>
+    </div>`;
+
+  return `<div id="audience-wizard" class="dialog-backdrop" style="display:none" role="dialog" aria-modal="true" aria-labelledby="wiz-title">
+    <div class="dialog-panel">
+
+      <div class="flex items-center justify-between border-b border-gray-200 dark:border-gray-700 px-6 py-4">
+        <h2 id="wiz-title" class="text-base font-semibold text-gray-900 dark:text-gray-100">New Audience</h2>
+        <button onclick="closeAudienceWizard()" class="rounded p-1.5 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors" aria-label="Close">✕</button>
+      </div>
+
+      <div class="px-6 py-5 border-b border-gray-200 dark:border-gray-700">
+        <div class="flex items-center gap-1" id="wiz-stepper">
+          ${stepTitles.map((title, i) => `
+            <div class="flex items-center gap-1 flex-1 ${i < stepTitles.length - 1 ? "" : "flex-none"}">
+              <div class="flex items-center gap-2">
+                <span class="step-circle ${i === 0 ? "active" : "pending"}" data-step-circle="${i}">${i + 1}</span>
+                <span class="text-xs font-medium text-gray-700 dark:text-gray-300 whitespace-nowrap" data-step-label="${i}">${escapeHtml(title)}</span>
+              </div>
+              ${i < stepTitles.length - 1 ? `<div class="step-connector flex-1" data-step-connector="${i}"></div>` : ""}
+            </div>`).join("")}
+        </div>
+      </div>
+
+      <form id="audience-wizard-form" class="flex-1 overflow-y-auto">
+        <div class="px-6 py-5">
+          <div data-wiz-step="0">${step1}</div>
+          <div data-wiz-step="1" class="hidden">${step2}</div>
+          <div data-wiz-step="2" class="hidden">${step3}</div>
+        </div>
+      </form>
+
+      <div class="border-t border-gray-200 dark:border-gray-700 px-6 py-4 flex items-center justify-between bg-gray-50 dark:bg-gray-800/50">
+        <button id="wiz-back" class="btn btn-outline btn-sm hidden" onclick="wizardBack()">← Back</button>
+        <div class="ml-auto flex items-center gap-3">
+          <span id="wiz-error" class="text-xs text-red-600 dark:text-red-400 hidden"></span>
+          <button id="wiz-next" class="btn btn-accent btn-sm" onclick="wizardNext()">Next →</button>
+          <button id="wiz-submit" class="btn btn-accent btn-sm hidden" onclick="wizardSubmit()">Create Audience</button>
+        </div>
+      </div>
+
+    </div>
+  </div>`;
+}
+
 function renderDashboardScript() {
   return `<script>
       async function sendJson(url, method, body) {
@@ -2085,6 +2548,43 @@ function renderDashboardScript() {
           raw_text: form.raw_text.value
         });
         window.location.href = "/?tab=audiences";
+      });
+
+      document.getElementById("analyze-posts-button")?.addEventListener("click", async () => {
+        const form = document.getElementById("create-audience-form");
+        const fileInput = document.getElementById("posts-file-input");
+        const statusEl = document.getElementById("analyze-status");
+        const twitterHandle = (form.twitter_handle?.value ?? "").trim().replace(/^@+/, "");
+        const file = fileInput?.files[0];
+
+        if (!file && !twitterHandle) {
+          alert("Provide a Twitter handle or upload a posts file.");
+          return;
+        }
+
+        let postsText = "";
+        if (file) {
+          postsText = await file.text();
+        }
+
+        statusEl.textContent = "Inferring personality from posts…";
+        statusEl.className = "text-xs text-gray-500 dark:text-gray-400";
+        statusEl.classList.remove("hidden");
+
+        try {
+          const result = await sendJson("/api/audiences/infer-from-posts", "POST", {
+            twitter_handle: twitterHandle || null,
+            posts_text: postsText || null
+          });
+          if (result.raw_text) {
+            form.raw_text.value = result.raw_text;
+          }
+          statusEl.textContent = "Personality inferred — review the brief and click Run LLM Investigation.";
+          statusEl.className = "text-xs text-green-600 dark:text-green-400";
+        } catch (err) {
+          statusEl.textContent = "Error: " + err.message;
+          statusEl.className = "text-xs text-red-600 dark:text-red-400";
+        }
       });
 
       function splitList(value) {
@@ -2255,6 +2755,175 @@ function renderDashboardScript() {
           threadEl.scrollTop = threadEl.scrollHeight;
         }, 20);
       }
+
+      // ── Audience Wizard ──────────────────────────────────────────
+      var _wizStep = 0;
+      var _wizStepCount = 3;
+
+      function openAudienceWizard() {
+        _wizStep = 0;
+        wizardRender();
+        var wiz = document.getElementById('audience-wizard');
+        wiz.style.display = '';
+        wiz.addEventListener('click', function onBdClick(e) {
+          if (e.target === wiz) closeAudienceWizard();
+        }, { once: true });
+      }
+
+      function closeAudienceWizard() {
+        document.getElementById('audience-wizard').style.display = 'none';
+        document.getElementById('audience-wizard-form').reset();
+        document.getElementById('wiz-photo-preview').classList.add('hidden');
+        document.getElementById('wiz-photo-placeholder').classList.remove('hidden');
+        showWizError('');
+      }
+
+      function wizardRender() {
+        document.querySelectorAll('[data-wiz-step]').forEach(function(panel) {
+          panel.classList.toggle('hidden', Number(panel.dataset.wizStep) !== _wizStep);
+        });
+        document.querySelectorAll('[data-step-circle]').forEach(function(el) {
+          var idx = Number(el.dataset.stepCircle);
+          el.className = 'step-circle ' + (idx < _wizStep ? 'done' : idx === _wizStep ? 'active' : 'pending');
+        });
+        document.querySelectorAll('[data-step-connector]').forEach(function(el) {
+          el.className = 'step-connector flex-1 ' + (Number(el.dataset.stepConnector) < _wizStep ? 'done' : '');
+        });
+        document.getElementById('wiz-back').classList.toggle('hidden', _wizStep === 0);
+        document.getElementById('wiz-next').classList.toggle('hidden', _wizStep === _wizStepCount - 1);
+        document.getElementById('wiz-submit').classList.toggle('hidden', _wizStep !== _wizStepCount - 1);
+        showWizError('');
+      }
+
+      function showWizError(msg) {
+        var el = document.getElementById('wiz-error');
+        el.textContent = msg;
+        el.classList.toggle('hidden', !msg);
+      }
+
+      function validateWizardStep(step) {
+        var form = document.getElementById('audience-wizard-form');
+        if (step === 0) {
+          if (!form.label.value.trim()) { showWizError('Audience Name is required.'); return false; }
+          if (!form.profile_raw_text.value.trim()) { showWizError('Profile Brief is required.'); return false; }
+        }
+        if (step === 1) {
+          if (!form.telegram_bot_token.value.trim()) { showWizError('Telegram Bot Token is required.'); return false; }
+          if (!form.telegram_chat_id.value.trim()) { showWizError('Telegram Chat ID is required.'); return false; }
+        }
+        return true;
+      }
+
+      function wizardNext() {
+        if (!validateWizardStep(_wizStep)) return;
+        if (_wizStep < _wizStepCount - 1) { _wizStep++; wizardRender(); }
+      }
+
+      function wizardBack() {
+        if (_wizStep > 0) { _wizStep--; wizardRender(); }
+      }
+
+      async function wizardSubmit() {
+        if (!validateWizardStep(_wizStep)) return;
+        var btn = document.getElementById('wiz-submit');
+        btn.disabled = true;
+        btn.textContent = 'Creating…';
+        showWizError('');
+        try {
+          var form = document.getElementById('audience-wizard-form');
+          var interestsRaw = form.interests?.value?.trim() ?? '';
+          var interests = interestsRaw ? interestsRaw.split(',').map(function(s) { return s.trim(); }).filter(Boolean) : [];
+          var photoFile = document.getElementById('wiz-photo-file')?.files[0] ?? null;
+          var photoPayload = null;
+          if (photoFile) {
+            var b64 = await fileToBase64(photoFile);
+            photoPayload = { file_name: photoFile.name, mime_type: photoFile.type, size_bytes: photoFile.size, file_data_base64: b64 };
+          }
+          var payload = {
+            details: {
+              label: form.label.value.trim(),
+              description: form.description?.value?.trim() ?? '',
+              location: form.location?.value?.trim() ?? '',
+              interests,
+              profile_raw_text: form.profile_raw_text.value.trim()
+            },
+            channels: {
+              telegram_bot_token: form.telegram_bot_token.value.trim(),
+              telegram_chat_id: form.telegram_chat_id.value.trim(),
+              posting_schedule: form.posting_schedule?.value ?? 'twice_daily'
+            },
+            photo: photoPayload
+          };
+          var result = await sendJson('/api/audiences/create-full', 'POST', payload);
+          closeAudienceWizard();
+          window.location.href = '/?tab=audiences&audience_id=' + encodeURIComponent(result.audience_id ?? '');
+        } catch (err) {
+          showWizError(err.message);
+          btn.disabled = false;
+          btn.textContent = 'Create Audience';
+        }
+      }
+
+      // Photo drop zone wiring
+      var photoFile = document.getElementById('wiz-photo-file');
+      if (photoFile) {
+        photoFile.addEventListener('change', function() {
+          var file = this.files[0];
+          if (!file) return;
+          var preview = document.getElementById('wiz-photo-preview');
+          var placeholder = document.getElementById('wiz-photo-placeholder');
+          var reader = new FileReader();
+          reader.onload = function(e) {
+            preview.src = e.target.result;
+            preview.classList.remove('hidden');
+            placeholder.classList.add('hidden');
+          };
+          reader.readAsDataURL(file);
+        });
+        var dropZone = document.getElementById('wiz-drop-zone');
+        if (dropZone) {
+          dropZone.addEventListener('dragover', function(e) { e.preventDefault(); this.classList.add('border-indigo-400'); });
+          dropZone.addEventListener('dragleave', function() { this.classList.remove('border-indigo-400'); });
+          dropZone.addEventListener('drop', function(e) {
+            e.preventDefault(); this.classList.remove('border-indigo-400');
+            var file = e.dataTransfer.files[0];
+            if (file) { photoFile.files = e.dataTransfer.files; photoFile.dispatchEvent(new Event('change')); }
+          });
+        }
+      }
+
+      // ── Runtime status poller ──────────────────────────────────────
+      (function() {
+        var rows = document.querySelectorAll('[data-runtime-audience-id]');
+        if (!rows.length) return;
+
+        function rtClass(status) {
+          return status === 'running' ? 'badge-running' : status === 'stopped' ? 'badge-stopped' : 'badge-unknown';
+        }
+        function rtDot(status) {
+          return '<span class="w-1.5 h-1.5 rounded-full bg-current opacity-60"></span>';
+        }
+
+        async function pollRow(row) {
+          var key = row.dataset.runtimeAudienceId;
+          try {
+            var res = await fetch('/api/audiences/' + encodeURIComponent(key) + '/runtime-status');
+            if (!res.ok) return;
+            var data = await res.json();
+            var oc = row.querySelector('[data-runtime-openclaw]');
+            var mb = row.querySelector('[data-runtime-marble]');
+            if (oc) { oc.className = rtClass(data.openclaw); oc.innerHTML = rtDot() + ' ' + data.openclaw; }
+            if (mb) { mb.className = rtClass(data.marble); mb.innerHTML = rtDot() + ' ' + data.marble; }
+          } catch {}
+        }
+
+        rows.forEach(pollRow);
+        var poller = setInterval(function() { rows.forEach(pollRow); }, 10000);
+        document.addEventListener('visibilitychange', function() {
+          if (document.hidden) clearInterval(poller);
+          else { rows.forEach(pollRow); poller = setInterval(function() { rows.forEach(pollRow); }, 10000); }
+        });
+      })();
 
       document.querySelectorAll("form[data-instance-chat-form]").forEach((form) => {
         const audienceId = form.dataset.instanceChatForm;

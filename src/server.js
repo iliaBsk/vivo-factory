@@ -15,6 +15,7 @@ import { createFileRepository, createSupabaseRepository, createSQLiteRepository 
 import { createSetupService, resolveLlmDefaults } from "./setup-service.js";
 import { loadEnvConfig, loadJsonConfig } from "./runtime-config.js";
 import { createContentFetcher } from "./content-fetcher.js";
+import { createRuntimeStatusService } from "./runtime-status-service.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -65,6 +66,10 @@ const audienceManagerLauncher = createAudienceManagerLauncher({
   execImpl: defaultExec
 });
 const profileClientFactory = createDashboardProfileClientFactory(runtimeConfig);
+const runtimeStatusService = createRuntimeStatusService({
+  fetchImpl: globalThis.fetch,
+  runtimeConfig,
+});
 const contentFetcher = createContentFetcher({
   sourcesConfig,
   profileClientFactory,
@@ -114,6 +119,7 @@ const app = createApp({
   audienceImportService,
   audienceManagerLauncher,
   audienceRuntimeConfig: runtimeConfig.audiences ?? {},
+  runtimeStatusService,
   dispatchFetch,
   fetchImpl: globalThis.fetch,
   publicationTargetResolver(audience, story) {

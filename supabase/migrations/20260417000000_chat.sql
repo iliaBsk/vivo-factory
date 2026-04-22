@@ -1,6 +1,6 @@
 create table if not exists vivo_conversations (
   id uuid primary key default gen_random_uuid(),
-  audience_id text not null references vivo_audiences(audience_id) on delete cascade,
+  audience_id text not null references public.vivo_audiences(audience_key) on delete cascade,
   channel text not null,
   external_id text,
   title text,
