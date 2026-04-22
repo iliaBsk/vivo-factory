@@ -137,7 +137,15 @@ async function handleRequest(context) {
     const result = await audienceImportService.createAudience({
       raw_text: rawText,
       initial_status: "new",
-      channels: { telegram_bot_token: botToken, telegram_chat_id: chatId, posting_schedule: channels.posting_schedule ?? "twice_daily" }
+      channels: {
+        telegram_bot_token: botToken,
+        telegram_chat_id: chatId,
+        posting_schedule: channels.posting_schedule ?? "twice_daily",
+        twitter_api_key: String(channels.twitter_api_key ?? "").trim(),
+        twitter_api_secret: String(channels.twitter_api_secret ?? "").trim(),
+        twitter_access_token: String(channels.twitter_access_token ?? "").trim(),
+        twitter_access_token_secret: String(channels.twitter_access_token_secret ?? "").trim()
+      }
     });
 
     let photoUrl = null;
@@ -2310,6 +2318,28 @@ function renderAudienceWizard() {
           <option value="hourly">Hourly</option>
         </select>
       </div>
+      <details class="mt-2">
+        <summary class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400 cursor-pointer select-none">Twitter / X (optional)</summary>
+        <div class="mt-3 space-y-3">
+          <p class="text-xs text-gray-400 dark:text-gray-500">Add credentials to cross-post to Twitter/X. Leave blank to use Telegram only. Each audience needs its own Twitter account and OAuth 1.0a tokens from the X Developer Portal.</p>
+          <div>
+            <label class="label" for="wiz-twitter-api-key">API Key</label>
+            <input id="wiz-twitter-api-key" name="twitter_api_key" class="input font-mono" placeholder="consumer key" autocomplete="off" />
+          </div>
+          <div>
+            <label class="label" for="wiz-twitter-api-secret">API Secret</label>
+            <input id="wiz-twitter-api-secret" name="twitter_api_secret" class="input font-mono" placeholder="consumer secret" autocomplete="off" />
+          </div>
+          <div>
+            <label class="label" for="wiz-twitter-access-token">Access Token</label>
+            <input id="wiz-twitter-access-token" name="twitter_access_token" class="input font-mono" placeholder="user access token" autocomplete="off" />
+          </div>
+          <div>
+            <label class="label" for="wiz-twitter-access-token-secret">Access Token Secret</label>
+            <input id="wiz-twitter-access-token-secret" name="twitter_access_token_secret" class="input font-mono" placeholder="user access token secret" autocomplete="off" />
+          </div>
+        </div>
+      </details>
     </div>`;
 
   const step3 = `
@@ -2837,7 +2867,11 @@ function renderDashboardScript() {
             channels: {
               telegram_bot_token: form.telegram_bot_token.value.trim(),
               telegram_chat_id: form.telegram_chat_id.value.trim(),
-              posting_schedule: form.posting_schedule?.value ?? 'twice_daily'
+              posting_schedule: form.posting_schedule?.value ?? 'twice_daily',
+              twitter_api_key: form.twitter_api_key?.value?.trim() ?? '',
+              twitter_api_secret: form.twitter_api_secret?.value?.trim() ?? '',
+              twitter_access_token: form.twitter_access_token?.value?.trim() ?? '',
+              twitter_access_token_secret: form.twitter_access_token_secret?.value?.trim() ?? ''
             },
             photo: photoPayload
           };
