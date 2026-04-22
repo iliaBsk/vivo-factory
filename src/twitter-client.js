@@ -1,4 +1,4 @@
-import { createHmac } from "node:crypto";
+import { createHmac, randomBytes } from "node:crypto";
 
 function percentEncode(value) {
   return encodeURIComponent(String(value))
@@ -7,7 +7,7 @@ function percentEncode(value) {
 }
 
 function buildOAuthHeader({ method, url, apiKey, apiSecret, accessToken, accessTokenSecret }) {
-  const nonce = Math.random().toString(36).slice(2) + Date.now().toString(36);
+  const nonce = randomBytes(16).toString("hex");
   const timestamp = Math.floor(Date.now() / 1000).toString();
   const oauthParams = {
     oauth_consumer_key: apiKey,
