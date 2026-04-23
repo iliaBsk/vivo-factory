@@ -22,6 +22,9 @@ export function createApp(options) {
   const audienceRuntimeConfig = options.audienceRuntimeConfig ?? {};
   const runtimeStatusService = options.runtimeStatusService ?? null;
   const publishService = options.publishService ?? null;
+  const onboardingRelay = options.onboardingRelay ?? null;
+  const n8nConfig = options.n8nConfig ?? {};
+  const vivoFactoryUrl = options.vivoFactoryUrl ?? "http://localhost:4310";
 
   return {
     async handle(request) {
@@ -40,6 +43,9 @@ export function createApp(options) {
           audienceRuntimeConfig,
           runtimeStatusService,
           publishService,
+          onboardingRelay,
+          n8nConfig,
+          vivoFactoryUrl,
           request
         });
       } catch (error) {
@@ -64,6 +70,9 @@ async function handleRequest(context) {
     audienceRuntimeConfig,
     runtimeStatusService,
     publishService,
+    onboardingRelay,
+    n8nConfig,
+    vivoFactoryUrl,
     request
   } = context;
 
@@ -99,6 +108,92 @@ async function handleRequest(context) {
     }
     const body = readBody(request.body);
     return json(200, await audienceImportService.createAudience(body));
+  }
+
+  // POST /api/onboarding/photo — synchronous protagonist photo analysis via N8N
+  if (request.method === "POST" && request.pathname === "/api/onboarding/photo") {
+    const body = readBody(request.body);
+    const { image_base64, mime_type } = body;
+    if (!image_base64) return json(400, { error: "image_base64 is required" });
+    if (!mime_type) return json(400, { error: "mime_type is required" });
+    const allowedMimeTypes = ["image/jpeg", "image/png", "image/webp"];
+    if (!allowedMimeTypes.includes(mime_type)) return json(400, { error: "mime_type must be jpeg, png, or webp" });
+    const photoWebhook = n8nConfig.onboarding_photo_webhook;
+    if (!photoWebhook) return json(503, { error: "Photo analysis webhook not configured" });
+    let n8nRes;
+    try {
+      n8nRes = await fetchImpl(photoWebhook, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ image_base64, mime_type })
+      });
+    } catch (err) {
+      console.error("[onboarding/photo] N8N request failed:", err.message);
+      return json(502, { error: "Photo analysis service unreachable" });
+    }
+    if (!n8nRes.ok) {
+      const errText = await n8nRes.text().catch(() => "");
+      return json(502, { error: `Photo analysis failed: ${errText.slice(0, 200)}` });
+    }
+    const photoContext = await n8nRes.json();
+    return json(200, photoContext);
+  }
+
+  // POST /api/onboarding/start — create job, fire N8N investigation webhook
+  if (request.method === "POST" && request.pathname === "/api/onboarding/start") {
+    if (!onboardingRelay) return json(503, { error: "Onboarding relay not configured" });
+    const body = readBody(request.body);
+    const { mode, payload, photo_context } = body;
+    const validModes = ["handle", "upload", "manual"];
+    if (!validModes.includes(mode)) return json(400, { error: `mode must be one of: ${validModes.join(", ")}` });
+    const webhookMap = {
+      handle: n8nConfig.onboarding_handle_webhook,
+      upload: n8nConfig.onboarding_upload_webhook,
+      manual: n8nConfig.onboarding_manual_webhook
+    };
+    const webhook = webhookMap[mode];
+    if (!webhook) return json(503, { error: `N8N webhook for mode '${mode}' not configured` });
+    const { randomUUID } = await import("node:crypto");
+    const jobId = randomUUID();
+    onboardingRelay.startJob(jobId);
+    const callbackBase = vivoFactoryUrl;
+    fetchImpl(webhook, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        mode,
+        payload: payload ?? {},
+        photo_context: photo_context ?? null,
+        job_id: jobId,
+        callback_url: callbackBase
+      })
+    }).catch(err => console.error("[onboarding/start] webhook fire failed:", err.message));
+    return json(200, { job_id: jobId });
+  }
+
+  // GET /api/onboarding/stream/:job_id — SSE stream (handled via hijack in server.js)
+  if (request.method === "GET" && matchPath(request.pathname, /^\/api\/onboarding\/stream\/([^/]+)$/)) {
+    const jobId = request.pathname.split("/")[4];
+    if (!onboardingRelay) return json(503, { error: "Onboarding relay not configured" });
+    return { __hijack: true, type: "sse", jobId };
+  }
+
+  // POST /api/onboarding/jobs/:job_id/event — N8N progress callback
+  if (request.method === "POST" && matchPath(request.pathname, /^\/api\/onboarding\/jobs\/([^/]+)\/event$/)) {
+    const jobId = request.pathname.split("/")[4];
+    if (!onboardingRelay) return json(503, { error: "Onboarding relay not configured" });
+    const body = readBody(request.body);
+    onboardingRelay.postEvent(jobId, { type: "progress", label: body.label ?? "", data: body.data ?? null });
+    return json(200, { ok: true });
+  }
+
+  // POST /api/onboarding/jobs/:job_id/complete — N8N completion callback
+  if (request.method === "POST" && matchPath(request.pathname, /^\/api\/onboarding\/jobs\/([^/]+)\/complete$/)) {
+    const jobId = request.pathname.split("/")[4];
+    if (!onboardingRelay) return json(503, { error: "Onboarding relay not configured" });
+    const body = readBody(request.body);
+    onboardingRelay.complete(jobId, body.persona ?? null);
+    return json(200, { ok: true });
   }
 
   // POST /api/audiences/create-full — wizard 3-step create
@@ -417,6 +512,49 @@ async function handleRequest(context) {
       recorded_at: body.recorded_at ?? clock()
     });
     return json(200, result.data ?? {});
+  }
+
+  if (request.method === "POST" && matchPath(request.pathname, /^\/api\/audiences\/([^/]+)\/profile-snapshot\/sync$/)) {
+    const audienceId = request.pathname.split("/")[3];
+    const audience = await repository.getAudience(audienceId);
+    if (!audience) {
+      return json(404, { error: "Audience not found" });
+    }
+    const profileClient = await resolveProfileClient({ repository, profileClientFactory, audienceId, audience });
+    if (!profileClient?.getSummary) {
+      return json(404, { error: "Audience Marble profile is not configured." });
+    }
+    const [summaryResult, debugResult] = await Promise.all([
+      profileClient.getSummary(),
+      profileClient.getDebug ? profileClient.getDebug() : Promise.resolve({ data: null })
+    ]);
+    const summary = summaryResult.data ?? {};
+    const debug = debugResult.data ?? {};
+    const user = debug.user ?? {};
+    const marble = {
+      interests: user.interests ?? summary.interests ?? [],
+      beliefs: user.beliefs ?? summary.memory?.beliefs ?? [],
+      preferences: user.preferences ?? summary.memory?.preferences ?? [],
+      identities: user.identities ?? summary.memory?.identities ?? [],
+      confidence: user.confidence ?? summary.memory?.confidence ?? {},
+      source_trust: user.source_trust ?? {},
+      entities: user.entities ?? [],
+      episodes: user.episodes ?? [],
+      insights: user.insights ?? [],
+      syntheses: user.syntheses ?? [],
+      suggestions: user.suggestions ?? [],
+      context: user.context ?? summary.context ?? {},
+      last_insight: summary.last_insight ?? null,
+      wikidataLabels: user.wikidataLabels ?? summary.wikidataLabels ?? {},
+      reasoning_summary: summary.reasoning_summary ?? null,
+      synced_at: clock()
+    };
+    const updatedSnapshot = { ...(audience.profile_snapshot ?? {}), marble };
+    await repository.updateAudience(audienceId, { profile_snapshot: updatedSnapshot }, {
+      actorId: "system",
+      timestamp: clock()
+    });
+    return json(200, { profile_snapshot: updatedSnapshot });
   }
 
   if (request.method === "POST" && matchPath(request.pathname, /^\/api\/audiences\/([^/]+)\/launch$/)) {
@@ -1943,6 +2081,16 @@ function renderAudienceWorkspaceCanvas(audience, instance, profileState = {}) {
 
     <div class="border-t border-gray-200 dark:border-gray-700 p-6 space-y-4">
       <div>
+        <h3 class="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Snapshot</h3>
+        <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">Pull the full Marble graph into <code>vivo_audiences.profile_snapshot</code> so the database reflects the current profile knowledge.</p>
+      </div>
+      <div class="flex justify-end">
+        <button data-snapshot-sync-audience-id="${escapeAttribute(audience.id)}" class="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500 transition-colors cursor-pointer">Save Snapshot from Marble</button>
+      </div>
+    </div>
+
+    <div class="border-t border-gray-200 dark:border-gray-700 p-6 space-y-4">
+      <div>
         <h3 class="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Enrichment Feed</h3>
         <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">Append shopping data, venues, event sites, and operator judgments as structured Marble events.</p>
       </div>
@@ -2691,6 +2839,12 @@ function renderDashboardScript() {
               extra_metadata: parseJsonField(form.extra_metadata.value, {})
             }
           });
+        });
+      });
+
+      document.querySelectorAll("[data-snapshot-sync-audience-id]").forEach((btn) => {
+        btn.addEventListener("click", async () => {
+          await postInstance("/api/audiences/" + btn.dataset.snapshotSyncAudienceId + "/profile-snapshot/sync", {});
         });
       });
 
