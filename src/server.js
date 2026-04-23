@@ -18,6 +18,8 @@ import { createContentFetcher } from "./content-fetcher.js";
 import { createRuntimeStatusService } from "./runtime-status-service.js";
 import { createTwitterClient } from "./twitter-client.js";
 import { createPublishService } from "./publish-service.js";
+import { createStoryEnrichmentService } from "./story-enrichment.js";
+import { createOnboardingRelay } from "./onboarding-relay.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -95,6 +97,13 @@ const contentFetcher = createContentFetcher({
   factoryId: runtimeConfig.factory_id ?? null,
   clock: () => new Date().toISOString()
 });
+const storyEnrichmentService = createStoryEnrichmentService({
+  repository,
+  fetchImpl: globalThis.fetch,
+  envConfig,
+  clock: () => new Date().toISOString()
+});
+const onboardingRelay = createOnboardingRelay();
 
 async function publishReadyStories(audienceId) {
   try {
@@ -117,10 +126,20 @@ async function publishReadyStories(audienceId) {
 async function dispatchFetch(audience, instance, jobId, fetchOptions = {}) {
   console.log(`[fetch] Starting for ${audience.audience_key} (${audience.id})`);
   if (jobId) await repository.updateJob(jobId, { status: "running" }).catch(() => {});
+  // Merge runtime.json audience config (custom_sources etc.) into instance runtime_config
+  const audienceRC = runtimeConfig.audiences?.[audience.audience_key] ?? {};
+  console.log(`[fetch-debug] audienceRC.custom_sources count=${audienceRC.custom_sources?.length ?? 0} key=${audience.audience_key}`);
+  const instanceWithSources = {
+    ...(instance ?? {}),
+    runtime_config: { ...audienceRC, ...(instance?.runtime_config ?? {}) }
+  };
   try {
-    const result = await contentFetcher.fetchForAudience(audience, instance, fetchOptions);
+    const result = await contentFetcher.fetchForAudience(audience, instanceWithSources, fetchOptions);
     console.log(`[fetch] Done for ${audience.audience_key}: ${result.stories_created} stories`);
     if (jobId) await repository.updateJob(jobId, { status: "done", stories_created: result.stories_created }).catch(() => {});
+    await storyEnrichmentService.enrichPending(audience).catch((err) => {
+      console.error(`[fetch] Enrichment error for ${audience.audience_key}:`, err.message);
+    });
     await publishReadyStories(audience.id);
   } catch (err) {
     console.error(`[fetch] Error for ${audience.audience_key}:`, err.message);
@@ -155,7 +174,10 @@ const app = createApp({
       target_identifier: telegramChatId
     };
   },
-  clock: () => new Date().toISOString()
+  clock: () => new Date().toISOString(),
+  onboardingRelay,
+  n8nConfig: runtimeConfig.n8n ?? {},
+  vivoFactoryUrl,
 });
 
 const server = http.createServer(async (request, response) => {
@@ -180,6 +202,11 @@ const server = http.createServer(async (request, response) => {
     query: Object.fromEntries(url.searchParams.entries()),
     body
   });
+
+  if (result.__hijack === true && result.type === "sse") {
+    onboardingRelay.streamSSE(result.jobId, response);
+    return;
+  }
 
   response.writeHead(result.status, result.headers);
   response.end(result.body);
