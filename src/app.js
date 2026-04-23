@@ -22,6 +22,9 @@ export function createApp(options) {
   const audienceRuntimeConfig = options.audienceRuntimeConfig ?? {};
   const runtimeStatusService = options.runtimeStatusService ?? null;
   const publishService = options.publishService ?? null;
+  const onboardingRelay = options.onboardingRelay ?? null;
+  const n8nConfig = options.n8nConfig ?? {};
+  const vivoFactoryUrl = options.vivoFactoryUrl ?? "http://localhost:4310";
 
   return {
     async handle(request) {
@@ -40,6 +43,9 @@ export function createApp(options) {
           audienceRuntimeConfig,
           runtimeStatusService,
           publishService,
+          onboardingRelay,
+          n8nConfig,
+          vivoFactoryUrl,
           request
         });
       } catch (error) {
@@ -64,6 +70,9 @@ async function handleRequest(context) {
     audienceRuntimeConfig,
     runtimeStatusService,
     publishService,
+    onboardingRelay,
+    n8nConfig,
+    vivoFactoryUrl,
     request
   } = context;
 
@@ -101,6 +110,93 @@ async function handleRequest(context) {
     return json(200, await audienceImportService.createAudience(body));
   }
 
+  // POST /api/onboarding/photo — synchronous protagonist photo analysis via N8N
+  if (request.method === "POST" && request.pathname === "/api/onboarding/photo") {
+    const body = readBody(request.body);
+    const { image_base64, mime_type } = body;
+    if (!image_base64) return json(400, { error: "image_base64 is required" });
+    if (!mime_type) return json(400, { error: "mime_type is required" });
+    const allowedMimeTypes = ["image/jpeg", "image/png", "image/webp"];
+    if (!allowedMimeTypes.includes(mime_type)) return json(400, { error: "mime_type must be jpeg, png, or webp" });
+    const photoWebhook = n8nConfig.onboarding_photo_webhook;
+    if (!photoWebhook) return json(503, { error: "Photo analysis webhook not configured" });
+    let n8nRes;
+    try {
+      n8nRes = await fetchImpl(photoWebhook, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ image_base64, mime_type })
+      });
+    } catch (err) {
+      console.error("[onboarding/photo] N8N request failed:", err.message);
+      return json(502, { error: "Photo analysis service unreachable" });
+    }
+    if (!n8nRes.ok) {
+      const errText = await n8nRes.text().catch(() => "");
+      console.error("[onboarding/photo] N8N returned non-ok:", n8nRes.status, errText.slice(0, 500));
+      return json(502, { error: "Photo analysis failed" });
+    }
+    const photoContext = await n8nRes.json();
+    return json(200, photoContext);
+  }
+
+  // POST /api/onboarding/start — create job, fire N8N investigation webhook
+  if (request.method === "POST" && request.pathname === "/api/onboarding/start") {
+    if (!onboardingRelay) return json(503, { error: "Onboarding relay not configured" });
+    const body = readBody(request.body);
+    const { mode, payload, photo_context } = body;
+    const validModes = ["handle", "upload", "manual"];
+    if (!validModes.includes(mode)) return json(400, { error: `mode must be one of: ${validModes.join(", ")}` });
+    const webhookMap = {
+      handle: n8nConfig.onboarding_handle_webhook,
+      upload: n8nConfig.onboarding_upload_webhook,
+      manual: n8nConfig.onboarding_manual_webhook
+    };
+    const webhook = webhookMap[mode];
+    if (!webhook) return json(503, { error: `N8N webhook for mode '${mode}' not configured` });
+    const { randomUUID } = await import("node:crypto");
+    const jobId = randomUUID();
+    onboardingRelay.startJob(jobId);
+    const callbackBase = vivoFactoryUrl;
+    fetchImpl(webhook, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        mode,
+        payload: payload ?? {},
+        photo_context: photo_context ?? null,
+        job_id: jobId,
+        callback_url: callbackBase
+      })
+    }).catch(err => console.error("[onboarding/start] webhook fire failed:", err.message));
+    return json(200, { job_id: jobId });
+  }
+
+  // GET /api/onboarding/stream/:job_id — SSE stream (handled via hijack in server.js)
+  if (request.method === "GET" && matchPath(request.pathname, /^\/api\/onboarding\/stream\/([^/]+)$/)) {
+    const jobId = request.pathname.split("/")[4];
+    if (!onboardingRelay) return json(503, { error: "Onboarding relay not configured" });
+    return { __hijack: true, type: "sse", jobId };
+  }
+
+  // POST /api/onboarding/jobs/:job_id/event — N8N progress callback
+  if (request.method === "POST" && matchPath(request.pathname, /^\/api\/onboarding\/jobs\/([^/]+)\/event$/)) {
+    const jobId = request.pathname.split("/")[4];
+    if (!onboardingRelay) return json(503, { error: "Onboarding relay not configured" });
+    const body = readBody(request.body);
+    onboardingRelay.postEvent(jobId, { type: "progress", label: body.label ?? "", data: body.data ?? null });
+    return json(200, { ok: true });
+  }
+
+  // POST /api/onboarding/jobs/:job_id/complete — N8N completion callback
+  if (request.method === "POST" && matchPath(request.pathname, /^\/api\/onboarding\/jobs\/([^/]+)\/complete$/)) {
+    const jobId = request.pathname.split("/")[4];
+    if (!onboardingRelay) return json(503, { error: "Onboarding relay not configured" });
+    const body = readBody(request.body);
+    onboardingRelay.complete(jobId, body.persona ?? null);
+    return json(200, { ok: true });
+  }
+
   // POST /api/audiences/create-full — wizard 3-step create
   if (request.method === "POST" && request.pathname === "/api/audiences/create-full") {
     if (!audienceImportService?.createAudience) {
@@ -110,6 +206,8 @@ async function handleRequest(context) {
     const details = body.details ?? {};
     const channels = body.channels ?? {};
     const photo = body.photo ?? null;
+    const persona = body.persona ?? null;
+    const photoContext = body.photo_context ?? null;
 
     const label = String(details.label ?? "").trim();
     const profileRawText = String(details.profile_raw_text ?? details.description ?? "").trim();
@@ -117,7 +215,7 @@ async function handleRequest(context) {
     const chatId = String(channels.telegram_chat_id ?? "").trim();
 
     if (!label) return json(400, { error: "details.label is required." });
-    if (!profileRawText) return json(400, { error: "details.profile_raw_text is required." });
+    if (!profileRawText && !persona) return json(400, { error: "details.profile_raw_text or persona is required." });
     if (!botToken) return json(400, { error: "channels.telegram_bot_token is required." });
     if (!chatId) return json(400, { error: "channels.telegram_chat_id is required." });
     if (photo) {
@@ -126,12 +224,10 @@ async function handleRequest(context) {
       if ((photo.size_bytes ?? 0) > 5 * 1024 * 1024) return json(400, { error: "Photo must be under 5 MB." });
     }
 
-    const rawText = [
+    const rawText = profileRawText || [
       label,
-      details.description && details.description !== label ? details.description : null,
       details.location ? `Location: ${details.location}` : null,
-      details.interests?.length ? `Interests: ${details.interests.join(", ")}` : null,
-      profileRawText !== label ? profileRawText : null,
+      details.interests?.length ? `Interests: ${details.interests.join(", ")}` : null
     ].filter(Boolean).join(". ");
 
     const result = await audienceImportService.createAudience({
@@ -148,17 +244,52 @@ async function handleRequest(context) {
       }
     });
 
-    let heroImageStorageId = null;
-    if (photo && result.audience?.id) {
+    const audienceId = result.audience?.id;
+
+    // Seed marble with persona facts
+    if (persona && audienceId) {
       try {
-        heroImageStorageId = await repository.storeAudiencePhoto(result.audience.id, photo);
+        const profileClient = await resolveProfileClient({ repository, profileClientFactory, audienceId });
+        if (profileClient?.updateFacts) {
+          await profileClient.updateFacts(personaToMarbleFacts(persona));
+        }
+      } catch (err) {
+        console.error("[create-full] marble seeding failed:", err.message);
+      }
+    }
+
+    // Save persona + photo_context to profile_snapshot.onboarding
+    if ((persona || photoContext) && audienceId) {
+      try {
+        const existingAudience = await repository.getAudience(audienceId);
+        const updatedSnapshot = {
+          ...(existingAudience?.profile_snapshot ?? {}),
+          onboarding: {
+            persona: persona ?? null,
+            photo_context: photoContext ?? null,
+            seeded_at: clock()
+          }
+        };
+        await repository.updateAudience(audienceId, { profile_snapshot: updatedSnapshot }, {
+          actorId: "system",
+          timestamp: clock()
+        });
+      } catch (err) {
+        console.error("[create-full] snapshot save failed:", err.message);
+      }
+    }
+
+    let heroImageStorageId = null;
+    if (photo && audienceId) {
+      try {
+        heroImageStorageId = await repository.storeAudiencePhoto(audienceId, photo);
       } catch (err) {
         console.error("[create-full] photo upload failed:", err.message);
       }
     }
 
     return json(200, {
-      audience_id: result.audience?.id,
+      audience_id: audienceId,
       audience_key: result.audience?.audience_key,
       hero_image_asset_storage_id: heroImageStorageId,
       status: "new"
@@ -417,6 +548,49 @@ async function handleRequest(context) {
       recorded_at: body.recorded_at ?? clock()
     });
     return json(200, result.data ?? {});
+  }
+
+  if (request.method === "POST" && matchPath(request.pathname, /^\/api\/audiences\/([^/]+)\/profile-snapshot\/sync$/)) {
+    const audienceId = request.pathname.split("/")[3];
+    const audience = await repository.getAudience(audienceId);
+    if (!audience) {
+      return json(404, { error: "Audience not found" });
+    }
+    const profileClient = await resolveProfileClient({ repository, profileClientFactory, audienceId, audience });
+    if (!profileClient?.getSummary) {
+      return json(404, { error: "Audience Marble profile is not configured." });
+    }
+    const [summaryResult, debugResult] = await Promise.all([
+      profileClient.getSummary(),
+      profileClient.getDebug ? profileClient.getDebug() : Promise.resolve({ data: null })
+    ]);
+    const summary = summaryResult.data ?? {};
+    const debug = debugResult.data ?? {};
+    const user = debug.user ?? {};
+    const marble = {
+      interests: user.interests ?? summary.interests ?? [],
+      beliefs: user.beliefs ?? summary.memory?.beliefs ?? [],
+      preferences: user.preferences ?? summary.memory?.preferences ?? [],
+      identities: user.identities ?? summary.memory?.identities ?? [],
+      confidence: user.confidence ?? summary.memory?.confidence ?? {},
+      source_trust: user.source_trust ?? {},
+      entities: user.entities ?? [],
+      episodes: user.episodes ?? [],
+      insights: user.insights ?? [],
+      syntheses: user.syntheses ?? [],
+      suggestions: user.suggestions ?? [],
+      context: user.context ?? summary.context ?? {},
+      last_insight: summary.last_insight ?? null,
+      wikidataLabels: user.wikidataLabels ?? summary.wikidataLabels ?? {},
+      reasoning_summary: summary.reasoning_summary ?? null,
+      synced_at: clock()
+    };
+    const updatedSnapshot = { ...(audience.profile_snapshot ?? {}), marble };
+    await repository.updateAudience(audienceId, { profile_snapshot: updatedSnapshot }, {
+      actorId: "system",
+      timestamp: clock()
+    });
+    return json(200, { profile_snapshot: updatedSnapshot });
   }
 
   if (request.method === "POST" && matchPath(request.pathname, /^\/api\/audiences\/([^/]+)\/launch$/)) {
@@ -908,6 +1082,37 @@ function normalizeAudienceProfileFacts(audience, input = {}) {
     shopping_bias: String(input.shopping_bias ?? audience.shopping_bias ?? "").trim(),
     posting_schedule: String(input.posting_schedule ?? audience.posting_schedule ?? "").trim(),
     extra_metadata: normalizeObject(input.extra_metadata ?? baseSnapshot.extra_metadata ?? {})
+  };
+}
+
+function personaToMarbleFacts(persona) {
+  if (!persona || typeof persona !== "object") return {};
+  const bio = persona.biographical ?? {};
+  const cog = persona.cognitive ?? {};
+  const comm = persona.communication ?? {};
+  const mv = persona.motivations_values ?? {};
+  const pers = persona.personalization ?? {};
+
+  return {
+    label: bio.name?.value ?? "",
+    location: bio.current_role?.value
+      ? `${bio.current_role.value}${bio.location?.value ? ", " + bio.location.value : ""}`
+      : (bio.location?.value ?? ""),
+    interests: Array.isArray(cog.interests) ? cog.interests : [],
+    tone: comm.preferred_tone ?? pers.tone ?? "",
+    content_pillars: Array.isArray(pers.topics) ? pers.topics : [],
+    excluded_topics: Array.isArray(pers.anti_patterns) ? pers.anti_patterns : [],
+    family_context: "",
+    shopping_bias: "",
+    posting_schedule: "",
+    extra_metadata: {
+      thinking_style: cog.thinking_style ?? [],
+      resonates_with: comm.resonates_with ?? [],
+      tunes_out: comm.tunes_out ?? [],
+      core_motivations: mv.core_motivations ?? [],
+      values: mv.values ?? [],
+      big_five: persona.big_five ?? {}
+    }
   };
 }
 
@@ -1943,6 +2148,16 @@ function renderAudienceWorkspaceCanvas(audience, instance, profileState = {}) {
 
     <div class="border-t border-gray-200 dark:border-gray-700 p-6 space-y-4">
       <div>
+        <h3 class="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Snapshot</h3>
+        <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">Pull the full Marble graph into <code>vivo_audiences.profile_snapshot</code> so the database reflects the current profile knowledge.</p>
+      </div>
+      <div class="flex justify-end">
+        <button data-snapshot-sync-audience-id="${escapeAttribute(audience.id)}" class="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500 transition-colors cursor-pointer">Save Snapshot from Marble</button>
+      </div>
+    </div>
+
+    <div class="border-t border-gray-200 dark:border-gray-700 p-6 space-y-4">
+      <div>
         <h3 class="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Enrichment Feed</h3>
         <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">Append shopping data, venues, event sites, and operator judgments as structured Marble events.</p>
       </div>
@@ -2270,45 +2485,153 @@ function renderAudienceDrawer({ audience, instance, profileState = {}, deploymen
 }
 
 function renderAudienceWizard() {
-  const stepTitles = ["Audience Details", "Publishing Channels", "Protagonist Photo"];
+  const stepTitles = ["Investigate", "Photo", "Progress", "Review", "Channels"];
 
-  const step1 = `
+  const step0 = `
     <div class="space-y-4">
-      <div class="grid grid-cols-2 gap-4">
-        <div class="col-span-2">
-          <label class="label" for="wiz-label">Audience Name *</label>
-          <input id="wiz-label" name="label" class="input" placeholder="e.g. Tech founder in Barcelona, 35" required />
+      <div class="flex rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden" id="wiz-tabs">
+        <button type="button" class="wiz-tab wiz-tab-active flex-1 py-2 text-sm font-medium" data-tab="handle" onclick="wizTab('handle')">Social Handle</button>
+        <button type="button" class="wiz-tab flex-1 py-2 text-sm font-medium border-l border-gray-200 dark:border-gray-700" data-tab="upload" onclick="wizTab('upload')">Upload Report</button>
+        <button type="button" class="wiz-tab flex-1 py-2 text-sm font-medium border-l border-gray-200 dark:border-gray-700" data-tab="manual" onclick="wizTab('manual')">Manual</button>
+      </div>
+
+      <div id="wiz-tab-handle">
+        <div class="space-y-3">
+          <div>
+            <label class="label" for="wiz-handle">X / Twitter Handle *</label>
+            <input id="wiz-handle" name="handle" class="input font-mono" placeholder="@andrewchen" />
+          </div>
+          <div>
+            <label class="label" for="wiz-github">GitHub Handle <span class="font-normal text-gray-400">(optional)</span></label>
+            <input id="wiz-github" name="github" class="input font-mono" placeholder="@andrewchen" />
+          </div>
         </div>
-        <div class="col-span-2">
-          <label class="label" for="wiz-description">Short Description *</label>
-          <textarea id="wiz-description" name="description" rows="2" class="input resize-none" placeholder="One sentence about this audience persona"></textarea>
+      </div>
+
+      <div id="wiz-tab-upload" class="hidden">
+        <div class="space-y-3">
+          <p class="text-sm text-gray-500 dark:text-gray-400">Upload a .md or .txt file describing this audience persona (max 500 KB).</p>
+          <label class="flex flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed border-gray-300 dark:border-gray-600 p-8 cursor-pointer hover:border-indigo-400 transition-colors">
+            <span class="text-2xl">📄</span>
+            <span class="text-sm text-gray-500" id="wiz-upload-label">Click to select .md or .txt</span>
+            <input type="file" id="wiz-upload-file" name="upload_file" accept=".md,.txt,text/markdown,text/plain" class="hidden" onchange="wizUploadChange(this)" />
+          </label>
         </div>
-        <div>
-          <label class="label" for="wiz-location">Location</label>
-          <input id="wiz-location" name="location" class="input" placeholder="Barcelona, Spain" />
-        </div>
-        <div>
-          <label class="label" for="wiz-interests">Interests <span class="font-normal text-gray-400">(comma-separated)</span></label>
-          <input id="wiz-interests" name="interests" class="input" placeholder="technology, AI, startups" />
-        </div>
-        <div class="col-span-2">
-          <label class="label" for="wiz-profile">Profile Brief *</label>
-          <textarea id="wiz-profile" name="profile_raw_text" rows="5" class="input resize-y" placeholder="Detailed description of this audience's personality, behaviour, lifestyle, values…"></textarea>
+      </div>
+
+      <div id="wiz-tab-manual" class="hidden">
+        <div class="space-y-4">
+          <div>
+            <label class="label" for="wiz-q1-role">What's your role, and what city do you live in? *</label>
+            <input id="wiz-q1-role" name="q1_role" class="input" placeholder="e.g. Startup founder in San Francisco" />
+          </div>
+          <div>
+            <label class="label" for="wiz-q2-jtbd">What's the one thing you're most trying to figure out or get done right now? *</label>
+            <textarea id="wiz-q2-jtbd" name="q2_jtbd" rows="2" class="input resize-none" placeholder="e.g. How to grow my user base without burning out my team"></textarea>
+          </div>
+          <div>
+            <p class="label">When you buy something premium, what drives you more?</p>
+            <div class="grid grid-cols-2 gap-2 mt-1">
+              <label class="wiz-tile"><input type="radio" name="q3_wealth" value="value" class="sr-only" /><span>💡 Getting the best value</span></label>
+              <label class="wiz-tile"><input type="radio" name="q3_wealth" value="quality" class="sr-only" /><span>✨ Highest quality</span></label>
+            </div>
+          </div>
+          <div>
+            <p class="label">Pick the trade-off that fits you better:</p>
+            <div class="grid grid-cols-2 gap-2 mt-1">
+              <label class="wiz-tile"><input type="radio" name="q4_values" value="speed_over_perfection" class="sr-only" /><span>⚡ Speed over perfection</span></label>
+              <label class="wiz-tile"><input type="radio" name="q4_values" value="depth_over_breadth" class="sr-only" /><span>🔬 Depth over breadth</span></label>
+              <label class="wiz-tile"><input type="radio" name="q4_values" value="autonomy_over_stability" class="sr-only" /><span>🦅 Autonomy over stability</span></label>
+              <label class="wiz-tile"><input type="radio" name="q4_values" value="impact_over_income" class="sr-only" /><span>🌍 Impact over income</span></label>
+            </div>
+          </div>
+          <div>
+            <p class="label">What are you into? <span class="font-normal text-gray-400">(pick all that apply)</span></p>
+            <div class="flex flex-wrap gap-2 mt-1" id="wiz-q5-tiles">
+              ${["Technology","AI/ML","Startups","Design","Science","Finance","Sports","Health","Travel","Food","Music","Books","Gaming","Politics","Environment"].map(p =>
+                `<label class="wiz-tile wiz-tile-check"><input type="checkbox" name="q5_passions" value="${p}" class="sr-only" /><span>${p}</span></label>`
+              ).join("")}
+            </div>
+          </div>
         </div>
       </div>
     </div>`;
 
+  const step1 = `
+    <div class="space-y-4">
+      <p class="text-sm text-gray-500 dark:text-gray-400">Upload a photo of the audience protagonist for AI-powered physical description. Optional — skip to proceed without one.</p>
+      <div id="wiz-drop-zone"
+           class="flex flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed border-gray-300 dark:border-gray-600 p-10 cursor-pointer hover:border-indigo-400 transition-colors"
+           onclick="document.getElementById('wiz-photo-file').click()">
+        <div class="w-16 h-16 rounded-full bg-gray-100 dark:bg-gray-700 overflow-hidden flex items-center justify-center">
+          <img id="wiz-photo-preview" src="" alt="" class="w-full h-full object-cover hidden" />
+          <span id="wiz-photo-placeholder" class="text-3xl">📷</span>
+        </div>
+        <p class="text-sm text-gray-500 dark:text-gray-400">Click to select or drag &amp; drop</p>
+        <p class="text-xs text-gray-400">JPEG, PNG or WebP · max 5 MB</p>
+        <input type="file" id="wiz-photo-file" accept="image/jpeg,image/png,image/webp" class="hidden" onchange="wizPhotoChanged(this)" />
+      </div>
+      <div id="wiz-photo-chips" class="hidden flex-wrap gap-2"></div>
+      <div id="wiz-photo-analyzing" class="hidden text-sm text-indigo-600 dark:text-indigo-400">Analysing photo…</div>
+    </div>`;
+
   const step2 = `
+    <div class="space-y-2">
+      <p class="text-sm font-medium text-gray-700 dark:text-gray-300">Investigation in progress…</p>
+      <div id="wiz-progress-log" class="rounded-lg bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 p-4 text-sm font-mono space-y-1 min-h-32 max-h-64 overflow-y-auto">
+        <div class="text-gray-400">Starting investigation…</div>
+      </div>
+    </div>`;
+
+  const step3 = `
+    <div class="space-y-4">
+      <p class="text-sm text-gray-500 dark:text-gray-400">Review and edit the generated profile before creating the audience.</p>
+      <div class="grid grid-cols-2 gap-4">
+        <div class="col-span-2">
+          <label class="label" for="wiz-review-label">Audience Name *</label>
+          <input id="wiz-review-label" name="review_label" class="input" required />
+        </div>
+        <div>
+          <label class="label" for="wiz-review-location">Location</label>
+          <input id="wiz-review-location" name="review_location" class="input" />
+        </div>
+        <div>
+          <label class="label" for="wiz-review-tone">Tone</label>
+          <input id="wiz-review-tone" name="review_tone" class="input" placeholder="direct, warm, professional…" />
+        </div>
+        <div class="col-span-2">
+          <label class="label" for="wiz-review-interests">Interests <span class="font-normal text-gray-400">(comma-separated)</span></label>
+          <input id="wiz-review-interests" name="review_interests" class="input" placeholder="AI, startups, design…" />
+        </div>
+        <div class="col-span-2">
+          <label class="label" for="wiz-review-pillars">Content Pillars <span class="font-normal text-gray-400">(comma-separated)</span></label>
+          <input id="wiz-review-pillars" name="review_pillars" class="input" placeholder="growth, product, leadership…" />
+        </div>
+        <div class="col-span-2">
+          <label class="label" for="wiz-review-excluded">Excluded Topics <span class="font-normal text-gray-400">(comma-separated)</span></label>
+          <input id="wiz-review-excluded" name="review_excluded" class="input" placeholder="politics, religion…" />
+        </div>
+      </div>
+      <div id="wiz-photo-context-block" class="hidden rounded-lg bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 p-3">
+        <p class="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-1">Physical Description (from photo)</p>
+        <p id="wiz-photo-context-text" class="text-sm text-gray-700 dark:text-gray-300"></p>
+      </div>
+      <details>
+        <summary class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400 cursor-pointer select-none">Raw Synthesis Output</summary>
+        <pre id="wiz-persona-raw" class="mt-2 text-xs bg-gray-50 dark:bg-gray-800 rounded p-3 overflow-auto max-h-48"></pre>
+      </details>
+    </div>`;
+
+  const step4 = `
     <div class="space-y-4">
       <div>
         <label class="label" for="wiz-bot-token">Telegram Bot Token *</label>
-        <input id="wiz-bot-token" name="telegram_bot_token" class="input font-mono" placeholder="123456:ABC-DEF..." />
+        <input id="wiz-bot-token" name="telegram_bot_token" class="input font-mono" placeholder="123456:ABC-DEF…" />
         <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">Get from @BotFather on Telegram</p>
       </div>
       <div>
         <label class="label" for="wiz-chat-id">Telegram Chat ID *</label>
         <input id="wiz-chat-id" name="telegram_chat_id" class="input font-mono" placeholder="-100123456789" />
-        <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">Channel or group ID where posts will be sent</p>
       </div>
       <div>
         <label class="label" for="wiz-schedule">Posting Schedule</label>
@@ -2321,42 +2644,25 @@ function renderAudienceWizard() {
       <details class="mt-2">
         <summary class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400 cursor-pointer select-none">Twitter / X (optional)</summary>
         <div class="mt-3 space-y-3">
-          <p class="text-xs text-gray-400 dark:text-gray-500">Add credentials to cross-post to Twitter/X. Leave blank to use Telegram only. Each audience needs its own Twitter account and OAuth 1.0a tokens from the X Developer Portal.</p>
+          <p class="text-xs text-gray-400 dark:text-gray-500">Add credentials to cross-post to Twitter/X. Leave blank to use Telegram only.</p>
           <div>
             <label class="label" for="wiz-twitter-api-key">API Key</label>
-            <input id="wiz-twitter-api-key" name="twitter_api_key" class="input font-mono" placeholder="consumer key" autocomplete="off" />
+            <input id="wiz-twitter-api-key" name="twitter_api_key" class="input font-mono" autocomplete="off" />
           </div>
           <div>
             <label class="label" for="wiz-twitter-api-secret">API Secret</label>
-            <input id="wiz-twitter-api-secret" name="twitter_api_secret" class="input font-mono" placeholder="consumer secret" autocomplete="off" />
+            <input id="wiz-twitter-api-secret" name="twitter_api_secret" class="input font-mono" autocomplete="off" />
           </div>
           <div>
             <label class="label" for="wiz-twitter-access-token">Access Token</label>
-            <input id="wiz-twitter-access-token" name="twitter_access_token" class="input font-mono" placeholder="user access token" autocomplete="off" />
+            <input id="wiz-twitter-access-token" name="twitter_access_token" class="input font-mono" autocomplete="off" />
           </div>
           <div>
             <label class="label" for="wiz-twitter-access-token-secret">Access Token Secret</label>
-            <input id="wiz-twitter-access-token-secret" name="twitter_access_token_secret" class="input font-mono" placeholder="user access token secret" autocomplete="off" />
+            <input id="wiz-twitter-access-token-secret" name="twitter_access_token_secret" class="input font-mono" autocomplete="off" />
           </div>
         </div>
       </details>
-    </div>`;
-
-  const step3 = `
-    <div class="space-y-4">
-      <p class="text-sm text-gray-500 dark:text-gray-400">Upload a photo that represents your audience protagonist. This will appear as the avatar in the dashboard.</p>
-      <div id="wiz-drop-zone"
-           class="flex flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed border-gray-300 dark:border-gray-600 p-10 cursor-pointer hover:border-indigo-400 transition-colors"
-           onclick="document.getElementById('wiz-photo-file').click()">
-        <div class="w-14 h-14 rounded-full bg-gray-100 dark:bg-gray-700 overflow-hidden flex items-center justify-center">
-          <img id="wiz-photo-preview" src="" alt="" class="w-full h-full object-cover hidden" />
-          <span id="wiz-photo-placeholder" class="text-2xl">📷</span>
-        </div>
-        <p class="text-sm text-gray-500 dark:text-gray-400">Click to select or drag &amp; drop</p>
-        <p class="text-xs text-gray-400">JPEG, PNG or WebP · max 5 MB</p>
-        <input type="file" id="wiz-photo-file" name="photo" accept="image/jpeg,image/png,image/webp" class="hidden" />
-      </div>
-      <p class="text-xs text-gray-500 dark:text-gray-400 text-center">Photo is optional — you can add it later.</p>
     </div>`;
 
   return `<div id="audience-wizard" class="dialog-backdrop" style="display:none" role="dialog" aria-modal="true" aria-labelledby="wiz-title">
@@ -2382,9 +2688,11 @@ function renderAudienceWizard() {
 
       <form id="audience-wizard-form" class="flex-1 overflow-y-auto">
         <div class="px-6 py-5">
-          <div data-wiz-step="0">${step1}</div>
-          <div data-wiz-step="1" class="hidden">${step2}</div>
-          <div data-wiz-step="2" class="hidden">${step3}</div>
+          <div data-wiz-step="0">${step0}</div>
+          <div data-wiz-step="1" class="hidden">${step1}</div>
+          <div data-wiz-step="2" class="hidden">${step2}</div>
+          <div data-wiz-step="3" class="hidden">${step3}</div>
+          <div data-wiz-step="4" class="hidden">${step4}</div>
         </div>
       </form>
 
@@ -2393,6 +2701,7 @@ function renderAudienceWizard() {
         <div class="ml-auto flex items-center gap-3">
           <span id="wiz-error" class="text-xs text-red-600 dark:text-red-400 hidden"></span>
           <button id="wiz-next" class="btn btn-accent btn-sm" onclick="wizardNext()">Next →</button>
+          <button id="wiz-investigate" class="btn btn-accent btn-sm hidden" onclick="wizardInvestigate()">Investigate →</button>
           <button id="wiz-submit" class="btn btn-accent btn-sm hidden" onclick="wizardSubmit()">Create Audience</button>
         </div>
       </div>
@@ -2694,6 +3003,12 @@ function renderDashboardScript() {
         });
       });
 
+      document.querySelectorAll("[data-snapshot-sync-audience-id]").forEach((btn) => {
+        btn.addEventListener("click", async () => {
+          await postInstance("/api/audiences/" + btn.dataset.snapshotSyncAudienceId + "/profile-snapshot/sync", {});
+        });
+      });
+
       document.querySelectorAll("form[data-profile-decision-audience-id]").forEach((form) => {
         form.addEventListener("submit", async (event) => {
           event.preventDefault();
@@ -2774,24 +3089,78 @@ function renderDashboardScript() {
       }
 
       // ── Audience Wizard ──────────────────────────────────────────
+      // ── Wizard state ────────────────────────────────────────────────
       var _wizStep = 0;
-      var _wizStepCount = 3;
+      var _wizStepCount = 5;
+      var _wizTab = 'handle';
+      var _wizPhotoFile = null;
+      var _wizPhotoContext = null;
+      var _wizPersona = null;
+      var _wizJobId = null;
+      var _wizUploadText = null;
+      var _wizSseSource = null;
+
+      function wizTab(tab) {
+        _wizTab = tab;
+        ['handle','upload','manual'].forEach(function(t) {
+          var panel = document.getElementById('wiz-tab-' + t);
+          var btn = document.querySelector('[data-tab="' + t + '"]');
+          if (panel) panel.classList.toggle('hidden', t !== tab);
+          if (btn) btn.classList.toggle('wiz-tab-active', t === tab);
+        });
+      }
+
+      function wizUploadChange(input) {
+        var file = input.files[0];
+        if (!file) return;
+        if (file.size > 500 * 1024) { showWizError('File must be under 500 KB.'); input.value = ''; return; }
+        var label = document.getElementById('wiz-upload-label');
+        if (label) label.textContent = file.name;
+        var reader = new FileReader();
+        reader.onload = function(e) { _wizUploadText = e.target.result; };
+        reader.readAsText(file);
+      }
+
+      function wizPhotoChanged(input) {
+        var file = input.files[0];
+        if (!file) return;
+        _wizPhotoFile = file;
+        var preview = document.getElementById('wiz-photo-preview');
+        var placeholder = document.getElementById('wiz-photo-placeholder');
+        var reader = new FileReader();
+        reader.onload = function(e) {
+          if (preview) { preview.src = e.target.result; preview.classList.remove('hidden'); }
+          if (placeholder) placeholder.classList.add('hidden');
+        };
+        reader.readAsDataURL(file);
+      }
 
       function openAudienceWizard() {
         _wizStep = 0;
+        _wizTab = 'handle';
+        _wizPhotoFile = null;
+        _wizPhotoContext = null;
+        _wizPersona = null;
+        _wizJobId = null;
+        _wizUploadText = null;
+        if (_wizSseSource) { _wizSseSource.close(); _wizSseSource = null; }
         wizardRender();
         var wiz = document.getElementById('audience-wizard');
         wiz.style.display = '';
         wiz.addEventListener('click', function onBdClick(e) {
           if (e.target === wiz) closeAudienceWizard();
         }, { once: true });
+        wizTab('handle');
       }
 
       function closeAudienceWizard() {
+        if (_wizSseSource) { _wizSseSource.close(); _wizSseSource = null; }
         document.getElementById('audience-wizard').style.display = 'none';
         document.getElementById('audience-wizard-form').reset();
-        document.getElementById('wiz-photo-preview').classList.add('hidden');
-        document.getElementById('wiz-photo-placeholder').classList.remove('hidden');
+        var preview = document.getElementById('wiz-photo-preview');
+        var placeholder = document.getElementById('wiz-photo-placeholder');
+        if (preview) preview.classList.add('hidden');
+        if (placeholder) placeholder.classList.remove('hidden');
         showWizError('');
       }
 
@@ -2806,9 +3175,12 @@ function renderDashboardScript() {
         document.querySelectorAll('[data-step-connector]').forEach(function(el) {
           el.className = 'step-connector flex-1 ' + (Number(el.dataset.stepConnector) < _wizStep ? 'done' : '');
         });
-        document.getElementById('wiz-back').classList.toggle('hidden', _wizStep === 0);
-        document.getElementById('wiz-next').classList.toggle('hidden', _wizStep === _wizStepCount - 1);
-        document.getElementById('wiz-submit').classList.toggle('hidden', _wizStep !== _wizStepCount - 1);
+        var isProgress = (_wizStep === 2);
+        var isLast = (_wizStep === _wizStepCount - 1);
+        document.getElementById('wiz-back').classList.toggle('hidden', _wizStep === 0 || isProgress);
+        document.getElementById('wiz-next').classList.toggle('hidden', _wizStep === 1 || isProgress || isLast);
+        document.getElementById('wiz-investigate').classList.toggle('hidden', _wizStep !== 1);
+        document.getElementById('wiz-submit').classList.toggle('hidden', !isLast);
         showWizError('');
       }
 
@@ -2819,14 +3191,30 @@ function renderDashboardScript() {
       }
 
       function validateWizardStep(step) {
-        var form = document.getElementById('audience-wizard-form');
         if (step === 0) {
-          if (!form.label.value.trim()) { showWizError('Audience Name is required.'); return false; }
-          if (!form.profile_raw_text.value.trim()) { showWizError('Profile Brief is required.'); return false; }
+          if (_wizTab === 'handle') {
+            var handle = document.getElementById('wiz-handle') ? document.getElementById('wiz-handle').value.trim() : '';
+            if (!handle) { showWizError('X/Twitter handle is required.'); return false; }
+          }
+          if (_wizTab === 'upload') {
+            if (!_wizUploadText) { showWizError('Please select a .md or .txt file.'); return false; }
+          }
+          if (_wizTab === 'manual') {
+            var role = document.getElementById('wiz-q1-role') ? document.getElementById('wiz-q1-role').value.trim() : '';
+            var jtbd = document.getElementById('wiz-q2-jtbd') ? document.getElementById('wiz-q2-jtbd').value.trim() : '';
+            if (!role) { showWizError('Role + city is required.'); return false; }
+            if (!jtbd) { showWizError('JTBD answer is required.'); return false; }
+          }
         }
-        if (step === 1) {
-          if (!form.telegram_bot_token.value.trim()) { showWizError('Telegram Bot Token is required.'); return false; }
-          if (!form.telegram_chat_id.value.trim()) { showWizError('Telegram Chat ID is required.'); return false; }
+        if (step === 3) {
+          var label = document.getElementById('wiz-review-label') ? document.getElementById('wiz-review-label').value.trim() : '';
+          if (!label) { showWizError('Audience Name is required.'); return false; }
+        }
+        if (step === 4) {
+          var botToken = document.getElementById('wiz-bot-token') ? document.getElementById('wiz-bot-token').value.trim() : '';
+          var chatId = document.getElementById('wiz-chat-id') ? document.getElementById('wiz-chat-id').value.trim() : '';
+          if (!botToken) { showWizError('Telegram Bot Token is required.'); return false; }
+          if (!chatId) { showWizError('Telegram Chat ID is required.'); return false; }
         }
         return true;
       }
@@ -2840,6 +3228,157 @@ function renderDashboardScript() {
         if (_wizStep > 0) { _wizStep--; wizardRender(); }
       }
 
+      async function wizardInvestigate() {
+        showWizError('');
+        var btn = document.getElementById('wiz-investigate');
+        btn.disabled = true;
+        btn.textContent = 'Starting…';
+        try {
+          if (_wizPhotoFile && !_wizPhotoContext) {
+            var b64 = await fileToBase64(_wizPhotoFile);
+            var analysing = document.getElementById('wiz-photo-analyzing');
+            if (analysing) analysing.classList.remove('hidden');
+            var photoRes = await sendJson('/api/onboarding/photo', 'POST', {
+              image_base64: b64,
+              mime_type: _wizPhotoFile.type
+            });
+            _wizPhotoContext = photoRes;
+            if (analysing) analysing.classList.add('hidden');
+            renderPhotoChips(photoRes);
+          }
+          var payload = buildInvestigationPayload();
+          var startRes = await sendJson('/api/onboarding/start', 'POST', {
+            mode: _wizTab,
+            payload: payload,
+            photo_context: _wizPhotoContext || null
+          });
+          _wizJobId = startRes.job_id;
+          _wizStep = 2;
+          wizardRender();
+          wizardStartSse(_wizJobId);
+        } catch (err) {
+          showWizError(err.message);
+        } finally {
+          btn.disabled = false;
+          btn.textContent = 'Investigate →';
+        }
+      }
+
+      function buildInvestigationPayload() {
+        if (_wizTab === 'handle') {
+          var handle = document.getElementById('wiz-handle') ? document.getElementById('wiz-handle').value.trim() : '';
+          var github = document.getElementById('wiz-github') ? document.getElementById('wiz-github').value.trim() : '';
+          return { handle: handle, github: github || null };
+        }
+        if (_wizTab === 'upload') {
+          var uploadFile = document.getElementById('wiz-upload-file') ? document.getElementById('wiz-upload-file').files[0] : null;
+          return { text: _wizUploadText || '', filename: uploadFile ? uploadFile.name : 'report.txt' };
+        }
+        var passions = Array.from(document.querySelectorAll('[name="q5_passions"]:checked')).map(function(el) { return el.value; });
+        var q3El = document.querySelector('[name="q3_wealth"]:checked');
+        var q4El = document.querySelector('[name="q4_values"]:checked');
+        return {
+          q1_role: document.getElementById('wiz-q1-role') ? document.getElementById('wiz-q1-role').value.trim() : '',
+          q2_jtbd: document.getElementById('wiz-q2-jtbd') ? document.getElementById('wiz-q2-jtbd').value.trim() : '',
+          q3_wealth: q3El ? q3El.value : '',
+          q4_values: q4El ? q4El.value : '',
+          q5_passions: passions
+        };
+      }
+
+      function renderPhotoChips(ctx) {
+        var chips = document.getElementById('wiz-photo-chips');
+        if (!chips || !ctx) return;
+        var entries = [
+          ctx.gender_presentation ? 'Gender: ' + ctx.gender_presentation : null,
+          ctx.age_range ? 'Age: ' + ctx.age_range : null,
+          ctx.skin_tone ? 'Skin tone: ' + ctx.skin_tone : null,
+          ctx.build ? 'Build: ' + ctx.build : null,
+          ctx.notable_features ? ctx.notable_features : null
+        ].filter(Boolean);
+        chips.innerHTML = entries.map(function(e) {
+          return '<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-indigo-50 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-700">' + escapeHtml(e) + '</span>';
+        }).join('');
+        chips.classList.remove('hidden');
+        chips.classList.add('flex');
+      }
+
+      function wizardStartSse(jobId) {
+        var log = document.getElementById('wiz-progress-log');
+        if (log) log.innerHTML = '';
+        if (_wizSseSource) { _wizSseSource.close(); }
+        var es = new EventSource('/api/onboarding/stream/' + encodeURIComponent(jobId));
+        _wizSseSource = es;
+        es.onmessage = function(e) {
+          var event;
+          try { event = JSON.parse(e.data); } catch(ex) { return; }
+          if (event.type === 'progress') {
+            wizAppendLog(event.label || '');
+          } else if (event.type === 'complete') {
+            _wizPersona = event.persona || null;
+            es.close();
+            _wizSseSource = null;
+            wizardFillReviewStep();
+            _wizStep = 3;
+            wizardRender();
+          } else if (event.type === 'error') {
+            showWizError(event.label || 'Investigation failed');
+            _wizStep = 1;
+            wizardRender();
+          }
+        };
+        es.onerror = function() {
+          es.close();
+          _wizSseSource = null;
+          showWizError('Connection to investigation stream lost. Please try again.');
+          _wizStep = 1;
+          wizardRender();
+        };
+      }
+
+      function wizAppendLog(label) {
+        var log = document.getElementById('wiz-progress-log');
+        if (!log) return;
+        var line = document.createElement('div');
+        line.className = 'text-gray-700 dark:text-gray-300';
+        line.textContent = '✓ ' + label;
+        log.appendChild(line);
+        log.scrollTop = log.scrollHeight;
+      }
+
+      function wizardFillReviewStep() {
+        if (!_wizPersona) return;
+        var bio = _wizPersona.biographical || {};
+        var cog = _wizPersona.cognitive || {};
+        var comm = _wizPersona.communication || {};
+        var pers = _wizPersona.personalization || {};
+        function setVal(id, val) {
+          var el = document.getElementById(id);
+          if (el && val) el.value = val;
+        }
+        setVal('wiz-review-label', bio.name && bio.name.value ? bio.name.value : '');
+        setVal('wiz-review-location', bio.location && bio.location.value ? bio.location.value : '');
+        setVal('wiz-review-tone', comm.preferred_tone || (pers.tone || ''));
+        setVal('wiz-review-interests', (cog.interests || []).join(', '));
+        setVal('wiz-review-pillars', (pers.topics || []).join(', '));
+        setVal('wiz-review-excluded', (pers.anti_patterns || []).join(', '));
+        var rawEl = document.getElementById('wiz-persona-raw');
+        if (rawEl) rawEl.textContent = JSON.stringify(_wizPersona, null, 2);
+        if (_wizPhotoContext) {
+          var block = document.getElementById('wiz-photo-context-block');
+          var text = document.getElementById('wiz-photo-context-text');
+          var ctx = _wizPhotoContext;
+          var desc = [
+            ctx.gender_presentation, ctx.age_range,
+            ctx.skin_tone ? 'skin tone: ' + ctx.skin_tone : null,
+            ctx.build ? 'build: ' + ctx.build : null,
+            ctx.notable_features
+          ].filter(Boolean).join(', ');
+          if (text) text.textContent = desc;
+          if (block) block.classList.remove('hidden');
+        }
+      }
+
       async function wizardSubmit() {
         if (!validateWizardStep(_wizStep)) return;
         var btn = document.getElementById('wiz-submit');
@@ -2847,37 +3386,51 @@ function renderDashboardScript() {
         btn.textContent = 'Creating…';
         showWizError('');
         try {
-          var form = document.getElementById('audience-wizard-form');
-          var interestsRaw = form.interests?.value?.trim() ?? '';
-          var interests = interestsRaw ? interestsRaw.split(',').map(function(s) { return s.trim(); }).filter(Boolean) : [];
-          var photoFile = document.getElementById('wiz-photo-file')?.files[0] ?? null;
+          var label = document.getElementById('wiz-review-label') ? document.getElementById('wiz-review-label').value.trim() : '';
+          var location = document.getElementById('wiz-review-location') ? document.getElementById('wiz-review-location').value.trim() : '';
+          var tone = document.getElementById('wiz-review-tone') ? document.getElementById('wiz-review-tone').value.trim() : '';
+          var interestsRaw = document.getElementById('wiz-review-interests') ? document.getElementById('wiz-review-interests').value : '';
+          var interests = interestsRaw.split(',').map(function(s) { return s.trim(); }).filter(Boolean);
+          var pillarsRaw = document.getElementById('wiz-review-pillars') ? document.getElementById('wiz-review-pillars').value : '';
+          var pillars = pillarsRaw.split(',').map(function(s) { return s.trim(); }).filter(Boolean);
+          var excludedRaw = document.getElementById('wiz-review-excluded') ? document.getElementById('wiz-review-excluded').value : '';
+          var excluded = excludedRaw.split(',').map(function(s) { return s.trim(); }).filter(Boolean);
+          var persona = _wizPersona ? JSON.parse(JSON.stringify(_wizPersona)) : null;
+          if (persona) {
+            persona.biographical = persona.biographical || {};
+            persona.biographical.name = { value: label, confidence: 1.0 };
+            persona.biographical.location = { value: location, confidence: 1.0 };
+            persona.cognitive = persona.cognitive || {};
+            persona.cognitive.interests = interests;
+            persona.communication = persona.communication || {};
+            persona.communication.preferred_tone = tone;
+            persona.personalization = persona.personalization || {};
+            persona.personalization.topics = pillars;
+            persona.personalization.anti_patterns = excluded;
+          }
           var photoPayload = null;
-          if (photoFile) {
-            var b64 = await fileToBase64(photoFile);
-            photoPayload = { file_name: photoFile.name, mime_type: photoFile.type, size_bytes: photoFile.size, file_data_base64: b64 };
+          if (_wizPhotoFile) {
+            var b64 = await fileToBase64(_wizPhotoFile);
+            photoPayload = { file_name: _wizPhotoFile.name, mime_type: _wizPhotoFile.type, size_bytes: _wizPhotoFile.size, file_data_base64: b64 };
           }
           var payload = {
-            details: {
-              label: form.label.value.trim(),
-              description: form.description?.value?.trim() ?? '',
-              location: form.location?.value?.trim() ?? '',
-              interests,
-              profile_raw_text: form.profile_raw_text.value.trim()
-            },
+            details: { label: label, profile_raw_text: label },
             channels: {
-              telegram_bot_token: form.telegram_bot_token.value.trim(),
-              telegram_chat_id: form.telegram_chat_id.value.trim(),
-              posting_schedule: form.posting_schedule?.value ?? 'twice_daily',
-              twitter_api_key: form.twitter_api_key?.value?.trim() ?? '',
-              twitter_api_secret: form.twitter_api_secret?.value?.trim() ?? '',
-              twitter_access_token: form.twitter_access_token?.value?.trim() ?? '',
-              twitter_access_token_secret: form.twitter_access_token_secret?.value?.trim() ?? ''
+              telegram_bot_token: document.getElementById('wiz-bot-token') ? document.getElementById('wiz-bot-token').value.trim() : '',
+              telegram_chat_id: document.getElementById('wiz-chat-id') ? document.getElementById('wiz-chat-id').value.trim() : '',
+              posting_schedule: document.getElementById('wiz-schedule') ? document.getElementById('wiz-schedule').value : 'twice_daily',
+              twitter_api_key: document.getElementById('wiz-twitter-api-key') ? document.getElementById('wiz-twitter-api-key').value.trim() : '',
+              twitter_api_secret: document.getElementById('wiz-twitter-api-secret') ? document.getElementById('wiz-twitter-api-secret').value.trim() : '',
+              twitter_access_token: document.getElementById('wiz-twitter-access-token') ? document.getElementById('wiz-twitter-access-token').value.trim() : '',
+              twitter_access_token_secret: document.getElementById('wiz-twitter-access-token-secret') ? document.getElementById('wiz-twitter-access-token-secret').value.trim() : ''
             },
-            photo: photoPayload
+            photo: photoPayload,
+            persona: persona,
+            photo_context: _wizPhotoContext || null
           };
           var result = await sendJson('/api/audiences/create-full', 'POST', payload);
           closeAudienceWizard();
-          window.location.href = '/?tab=audiences&audience_id=' + encodeURIComponent(result.audience_id ?? '');
+          window.location.href = '/?tab=audiences&audience_id=' + encodeURIComponent(result.audience_id || '');
         } catch (err) {
           showWizError(err.message);
           btn.disabled = false;
@@ -2886,32 +3439,18 @@ function renderDashboardScript() {
       }
 
       // Photo drop zone wiring
-      var photoFile = document.getElementById('wiz-photo-file');
-      if (photoFile) {
-        photoFile.addEventListener('change', function() {
-          var file = this.files[0];
-          if (!file) return;
-          var preview = document.getElementById('wiz-photo-preview');
-          var placeholder = document.getElementById('wiz-photo-placeholder');
-          var reader = new FileReader();
-          reader.onload = function(e) {
-            preview.src = e.target.result;
-            preview.classList.remove('hidden');
-            placeholder.classList.add('hidden');
-          };
-          reader.readAsDataURL(file);
-        });
+      (function() {
         var dropZone = document.getElementById('wiz-drop-zone');
-        if (dropZone) {
-          dropZone.addEventListener('dragover', function(e) { e.preventDefault(); this.classList.add('border-indigo-400'); });
-          dropZone.addEventListener('dragleave', function() { this.classList.remove('border-indigo-400'); });
-          dropZone.addEventListener('drop', function(e) {
-            e.preventDefault(); this.classList.remove('border-indigo-400');
-            var file = e.dataTransfer.files[0];
-            if (file) { photoFile.files = e.dataTransfer.files; photoFile.dispatchEvent(new Event('change')); }
-          });
-        }
-      }
+        var photoFile = document.getElementById('wiz-photo-file');
+        if (!dropZone || !photoFile) return;
+        dropZone.addEventListener('dragover', function(e) { e.preventDefault(); this.classList.add('border-indigo-400'); });
+        dropZone.addEventListener('dragleave', function() { this.classList.remove('border-indigo-400'); });
+        dropZone.addEventListener('drop', function(e) {
+          e.preventDefault(); this.classList.remove('border-indigo-400');
+          var file = e.dataTransfer.files[0];
+          if (file) { photoFile.files = e.dataTransfer.files; wizPhotoChanged(photoFile); }
+        });
+      })();
 
       // ── Runtime status poller ──────────────────────────────────────
       (function() {
