@@ -133,7 +133,8 @@ async function handleRequest(context) {
     }
     if (!n8nRes.ok) {
       const errText = await n8nRes.text().catch(() => "");
-      return json(502, { error: `Photo analysis failed: ${errText.slice(0, 200)}` });
+      console.error("[onboarding/photo] N8N returned non-ok:", n8nRes.status, errText.slice(0, 500));
+      return json(502, { error: "Photo analysis failed" });
     }
     const photoContext = await n8nRes.json();
     return json(200, photoContext);
