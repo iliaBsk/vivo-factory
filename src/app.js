@@ -3089,24 +3089,78 @@ function renderDashboardScript() {
       }
 
       // ── Audience Wizard ──────────────────────────────────────────
+      // ── Wizard state ────────────────────────────────────────────────
       var _wizStep = 0;
-      var _wizStepCount = 3;
+      var _wizStepCount = 5;
+      var _wizTab = 'handle';
+      var _wizPhotoFile = null;
+      var _wizPhotoContext = null;
+      var _wizPersona = null;
+      var _wizJobId = null;
+      var _wizUploadText = null;
+      var _wizSseSource = null;
+
+      function wizTab(tab) {
+        _wizTab = tab;
+        ['handle','upload','manual'].forEach(function(t) {
+          var panel = document.getElementById('wiz-tab-' + t);
+          var btn = document.querySelector('[data-tab="' + t + '"]');
+          if (panel) panel.classList.toggle('hidden', t !== tab);
+          if (btn) btn.classList.toggle('wiz-tab-active', t === tab);
+        });
+      }
+
+      function wizUploadChange(input) {
+        var file = input.files[0];
+        if (!file) return;
+        if (file.size > 500 * 1024) { showWizError('File must be under 500 KB.'); input.value = ''; return; }
+        var label = document.getElementById('wiz-upload-label');
+        if (label) label.textContent = file.name;
+        var reader = new FileReader();
+        reader.onload = function(e) { _wizUploadText = e.target.result; };
+        reader.readAsText(file);
+      }
+
+      function wizPhotoChanged(input) {
+        var file = input.files[0];
+        if (!file) return;
+        _wizPhotoFile = file;
+        var preview = document.getElementById('wiz-photo-preview');
+        var placeholder = document.getElementById('wiz-photo-placeholder');
+        var reader = new FileReader();
+        reader.onload = function(e) {
+          if (preview) { preview.src = e.target.result; preview.classList.remove('hidden'); }
+          if (placeholder) placeholder.classList.add('hidden');
+        };
+        reader.readAsDataURL(file);
+      }
 
       function openAudienceWizard() {
         _wizStep = 0;
+        _wizTab = 'handle';
+        _wizPhotoFile = null;
+        _wizPhotoContext = null;
+        _wizPersona = null;
+        _wizJobId = null;
+        _wizUploadText = null;
+        if (_wizSseSource) { _wizSseSource.close(); _wizSseSource = null; }
         wizardRender();
         var wiz = document.getElementById('audience-wizard');
         wiz.style.display = '';
         wiz.addEventListener('click', function onBdClick(e) {
           if (e.target === wiz) closeAudienceWizard();
         }, { once: true });
+        wizTab('handle');
       }
 
       function closeAudienceWizard() {
+        if (_wizSseSource) { _wizSseSource.close(); _wizSseSource = null; }
         document.getElementById('audience-wizard').style.display = 'none';
         document.getElementById('audience-wizard-form').reset();
-        document.getElementById('wiz-photo-preview').classList.add('hidden');
-        document.getElementById('wiz-photo-placeholder').classList.remove('hidden');
+        var preview = document.getElementById('wiz-photo-preview');
+        var placeholder = document.getElementById('wiz-photo-placeholder');
+        if (preview) preview.classList.add('hidden');
+        if (placeholder) placeholder.classList.remove('hidden');
         showWizError('');
       }
 
@@ -3121,9 +3175,12 @@ function renderDashboardScript() {
         document.querySelectorAll('[data-step-connector]').forEach(function(el) {
           el.className = 'step-connector flex-1 ' + (Number(el.dataset.stepConnector) < _wizStep ? 'done' : '');
         });
-        document.getElementById('wiz-back').classList.toggle('hidden', _wizStep === 0);
-        document.getElementById('wiz-next').classList.toggle('hidden', _wizStep === _wizStepCount - 1);
-        document.getElementById('wiz-submit').classList.toggle('hidden', _wizStep !== _wizStepCount - 1);
+        var isProgress = (_wizStep === 2);
+        var isLast = (_wizStep === _wizStepCount - 1);
+        document.getElementById('wiz-back').classList.toggle('hidden', _wizStep === 0 || isProgress);
+        document.getElementById('wiz-next').classList.toggle('hidden', _wizStep === 1 || isProgress || isLast);
+        document.getElementById('wiz-investigate').classList.toggle('hidden', _wizStep !== 1);
+        document.getElementById('wiz-submit').classList.toggle('hidden', !isLast);
         showWizError('');
       }
 
@@ -3134,14 +3191,30 @@ function renderDashboardScript() {
       }
 
       function validateWizardStep(step) {
-        var form = document.getElementById('audience-wizard-form');
         if (step === 0) {
-          if (!form.label.value.trim()) { showWizError('Audience Name is required.'); return false; }
-          if (!form.profile_raw_text.value.trim()) { showWizError('Profile Brief is required.'); return false; }
+          if (_wizTab === 'handle') {
+            var handle = document.getElementById('wiz-handle') ? document.getElementById('wiz-handle').value.trim() : '';
+            if (!handle) { showWizError('X/Twitter handle is required.'); return false; }
+          }
+          if (_wizTab === 'upload') {
+            if (!_wizUploadText) { showWizError('Please select a .md or .txt file.'); return false; }
+          }
+          if (_wizTab === 'manual') {
+            var role = document.getElementById('wiz-q1-role') ? document.getElementById('wiz-q1-role').value.trim() : '';
+            var jtbd = document.getElementById('wiz-q2-jtbd') ? document.getElementById('wiz-q2-jtbd').value.trim() : '';
+            if (!role) { showWizError('Role + city is required.'); return false; }
+            if (!jtbd) { showWizError('JTBD answer is required.'); return false; }
+          }
         }
-        if (step === 1) {
-          if (!form.telegram_bot_token.value.trim()) { showWizError('Telegram Bot Token is required.'); return false; }
-          if (!form.telegram_chat_id.value.trim()) { showWizError('Telegram Chat ID is required.'); return false; }
+        if (step === 3) {
+          var label = document.getElementById('wiz-review-label') ? document.getElementById('wiz-review-label').value.trim() : '';
+          if (!label) { showWizError('Audience Name is required.'); return false; }
+        }
+        if (step === 4) {
+          var botToken = document.getElementById('wiz-bot-token') ? document.getElementById('wiz-bot-token').value.trim() : '';
+          var chatId = document.getElementById('wiz-chat-id') ? document.getElementById('wiz-chat-id').value.trim() : '';
+          if (!botToken) { showWizError('Telegram Bot Token is required.'); return false; }
+          if (!chatId) { showWizError('Telegram Chat ID is required.'); return false; }
         }
         return true;
       }
@@ -3155,6 +3228,157 @@ function renderDashboardScript() {
         if (_wizStep > 0) { _wizStep--; wizardRender(); }
       }
 
+      async function wizardInvestigate() {
+        showWizError('');
+        var btn = document.getElementById('wiz-investigate');
+        btn.disabled = true;
+        btn.textContent = 'Starting…';
+        try {
+          if (_wizPhotoFile && !_wizPhotoContext) {
+            var b64 = await fileToBase64(_wizPhotoFile);
+            var analysing = document.getElementById('wiz-photo-analyzing');
+            if (analysing) analysing.classList.remove('hidden');
+            var photoRes = await sendJson('/api/onboarding/photo', 'POST', {
+              image_base64: b64,
+              mime_type: _wizPhotoFile.type
+            });
+            _wizPhotoContext = photoRes;
+            if (analysing) analysing.classList.add('hidden');
+            renderPhotoChips(photoRes);
+          }
+          var payload = buildInvestigationPayload();
+          var startRes = await sendJson('/api/onboarding/start', 'POST', {
+            mode: _wizTab,
+            payload: payload,
+            photo_context: _wizPhotoContext || null
+          });
+          _wizJobId = startRes.job_id;
+          _wizStep = 2;
+          wizardRender();
+          wizardStartSse(_wizJobId);
+        } catch (err) {
+          showWizError(err.message);
+        } finally {
+          btn.disabled = false;
+          btn.textContent = 'Investigate →';
+        }
+      }
+
+      function buildInvestigationPayload() {
+        if (_wizTab === 'handle') {
+          var handle = document.getElementById('wiz-handle') ? document.getElementById('wiz-handle').value.trim() : '';
+          var github = document.getElementById('wiz-github') ? document.getElementById('wiz-github').value.trim() : '';
+          return { handle: handle, github: github || null };
+        }
+        if (_wizTab === 'upload') {
+          var uploadFile = document.getElementById('wiz-upload-file') ? document.getElementById('wiz-upload-file').files[0] : null;
+          return { text: _wizUploadText || '', filename: uploadFile ? uploadFile.name : 'report.txt' };
+        }
+        var passions = Array.from(document.querySelectorAll('[name="q5_passions"]:checked')).map(function(el) { return el.value; });
+        var q3El = document.querySelector('[name="q3_wealth"]:checked');
+        var q4El = document.querySelector('[name="q4_values"]:checked');
+        return {
+          q1_role: document.getElementById('wiz-q1-role') ? document.getElementById('wiz-q1-role').value.trim() : '',
+          q2_jtbd: document.getElementById('wiz-q2-jtbd') ? document.getElementById('wiz-q2-jtbd').value.trim() : '',
+          q3_wealth: q3El ? q3El.value : '',
+          q4_values: q4El ? q4El.value : '',
+          q5_passions: passions
+        };
+      }
+
+      function renderPhotoChips(ctx) {
+        var chips = document.getElementById('wiz-photo-chips');
+        if (!chips || !ctx) return;
+        var entries = [
+          ctx.gender_presentation ? 'Gender: ' + ctx.gender_presentation : null,
+          ctx.age_range ? 'Age: ' + ctx.age_range : null,
+          ctx.skin_tone ? 'Skin tone: ' + ctx.skin_tone : null,
+          ctx.build ? 'Build: ' + ctx.build : null,
+          ctx.notable_features ? ctx.notable_features : null
+        ].filter(Boolean);
+        chips.innerHTML = entries.map(function(e) {
+          return '<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-indigo-50 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-700">' + escapeHtml(e) + '</span>';
+        }).join('');
+        chips.classList.remove('hidden');
+        chips.classList.add('flex');
+      }
+
+      function wizardStartSse(jobId) {
+        var log = document.getElementById('wiz-progress-log');
+        if (log) log.innerHTML = '';
+        if (_wizSseSource) { _wizSseSource.close(); }
+        var es = new EventSource('/api/onboarding/stream/' + encodeURIComponent(jobId));
+        _wizSseSource = es;
+        es.onmessage = function(e) {
+          var event;
+          try { event = JSON.parse(e.data); } catch(ex) { return; }
+          if (event.type === 'progress') {
+            wizAppendLog(event.label || '');
+          } else if (event.type === 'complete') {
+            _wizPersona = event.persona || null;
+            es.close();
+            _wizSseSource = null;
+            wizardFillReviewStep();
+            _wizStep = 3;
+            wizardRender();
+          } else if (event.type === 'error') {
+            showWizError(event.label || 'Investigation failed');
+            _wizStep = 1;
+            wizardRender();
+          }
+        };
+        es.onerror = function() {
+          es.close();
+          _wizSseSource = null;
+          showWizError('Connection to investigation stream lost. Please try again.');
+          _wizStep = 1;
+          wizardRender();
+        };
+      }
+
+      function wizAppendLog(label) {
+        var log = document.getElementById('wiz-progress-log');
+        if (!log) return;
+        var line = document.createElement('div');
+        line.className = 'text-gray-700 dark:text-gray-300';
+        line.textContent = '✓ ' + label;
+        log.appendChild(line);
+        log.scrollTop = log.scrollHeight;
+      }
+
+      function wizardFillReviewStep() {
+        if (!_wizPersona) return;
+        var bio = _wizPersona.biographical || {};
+        var cog = _wizPersona.cognitive || {};
+        var comm = _wizPersona.communication || {};
+        var pers = _wizPersona.personalization || {};
+        function setVal(id, val) {
+          var el = document.getElementById(id);
+          if (el && val) el.value = val;
+        }
+        setVal('wiz-review-label', bio.name && bio.name.value ? bio.name.value : '');
+        setVal('wiz-review-location', bio.location && bio.location.value ? bio.location.value : '');
+        setVal('wiz-review-tone', comm.preferred_tone || (pers.tone || ''));
+        setVal('wiz-review-interests', (cog.interests || []).join(', '));
+        setVal('wiz-review-pillars', (pers.topics || []).join(', '));
+        setVal('wiz-review-excluded', (pers.anti_patterns || []).join(', '));
+        var rawEl = document.getElementById('wiz-persona-raw');
+        if (rawEl) rawEl.textContent = JSON.stringify(_wizPersona, null, 2);
+        if (_wizPhotoContext) {
+          var block = document.getElementById('wiz-photo-context-block');
+          var text = document.getElementById('wiz-photo-context-text');
+          var ctx = _wizPhotoContext;
+          var desc = [
+            ctx.gender_presentation, ctx.age_range,
+            ctx.skin_tone ? 'skin tone: ' + ctx.skin_tone : null,
+            ctx.build ? 'build: ' + ctx.build : null,
+            ctx.notable_features
+          ].filter(Boolean).join(', ');
+          if (text) text.textContent = desc;
+          if (block) block.classList.remove('hidden');
+        }
+      }
+
       async function wizardSubmit() {
         if (!validateWizardStep(_wizStep)) return;
         var btn = document.getElementById('wiz-submit');
@@ -3162,37 +3386,51 @@ function renderDashboardScript() {
         btn.textContent = 'Creating…';
         showWizError('');
         try {
-          var form = document.getElementById('audience-wizard-form');
-          var interestsRaw = form.interests?.value?.trim() ?? '';
-          var interests = interestsRaw ? interestsRaw.split(',').map(function(s) { return s.trim(); }).filter(Boolean) : [];
-          var photoFile = document.getElementById('wiz-photo-file')?.files[0] ?? null;
+          var label = document.getElementById('wiz-review-label') ? document.getElementById('wiz-review-label').value.trim() : '';
+          var location = document.getElementById('wiz-review-location') ? document.getElementById('wiz-review-location').value.trim() : '';
+          var tone = document.getElementById('wiz-review-tone') ? document.getElementById('wiz-review-tone').value.trim() : '';
+          var interestsRaw = document.getElementById('wiz-review-interests') ? document.getElementById('wiz-review-interests').value : '';
+          var interests = interestsRaw.split(',').map(function(s) { return s.trim(); }).filter(Boolean);
+          var pillarsRaw = document.getElementById('wiz-review-pillars') ? document.getElementById('wiz-review-pillars').value : '';
+          var pillars = pillarsRaw.split(',').map(function(s) { return s.trim(); }).filter(Boolean);
+          var excludedRaw = document.getElementById('wiz-review-excluded') ? document.getElementById('wiz-review-excluded').value : '';
+          var excluded = excludedRaw.split(',').map(function(s) { return s.trim(); }).filter(Boolean);
+          var persona = _wizPersona ? JSON.parse(JSON.stringify(_wizPersona)) : null;
+          if (persona) {
+            persona.biographical = persona.biographical || {};
+            persona.biographical.name = { value: label, confidence: 1.0 };
+            persona.biographical.location = { value: location, confidence: 1.0 };
+            persona.cognitive = persona.cognitive || {};
+            persona.cognitive.interests = interests;
+            persona.communication = persona.communication || {};
+            persona.communication.preferred_tone = tone;
+            persona.personalization = persona.personalization || {};
+            persona.personalization.topics = pillars;
+            persona.personalization.anti_patterns = excluded;
+          }
           var photoPayload = null;
-          if (photoFile) {
-            var b64 = await fileToBase64(photoFile);
-            photoPayload = { file_name: photoFile.name, mime_type: photoFile.type, size_bytes: photoFile.size, file_data_base64: b64 };
+          if (_wizPhotoFile) {
+            var b64 = await fileToBase64(_wizPhotoFile);
+            photoPayload = { file_name: _wizPhotoFile.name, mime_type: _wizPhotoFile.type, size_bytes: _wizPhotoFile.size, file_data_base64: b64 };
           }
           var payload = {
-            details: {
-              label: form.label.value.trim(),
-              description: form.description?.value?.trim() ?? '',
-              location: form.location?.value?.trim() ?? '',
-              interests,
-              profile_raw_text: form.profile_raw_text.value.trim()
-            },
+            details: { label: label, profile_raw_text: label },
             channels: {
-              telegram_bot_token: form.telegram_bot_token.value.trim(),
-              telegram_chat_id: form.telegram_chat_id.value.trim(),
-              posting_schedule: form.posting_schedule?.value ?? 'twice_daily',
-              twitter_api_key: form.twitter_api_key?.value?.trim() ?? '',
-              twitter_api_secret: form.twitter_api_secret?.value?.trim() ?? '',
-              twitter_access_token: form.twitter_access_token?.value?.trim() ?? '',
-              twitter_access_token_secret: form.twitter_access_token_secret?.value?.trim() ?? ''
+              telegram_bot_token: document.getElementById('wiz-bot-token') ? document.getElementById('wiz-bot-token').value.trim() : '',
+              telegram_chat_id: document.getElementById('wiz-chat-id') ? document.getElementById('wiz-chat-id').value.trim() : '',
+              posting_schedule: document.getElementById('wiz-schedule') ? document.getElementById('wiz-schedule').value : 'twice_daily',
+              twitter_api_key: document.getElementById('wiz-twitter-api-key') ? document.getElementById('wiz-twitter-api-key').value.trim() : '',
+              twitter_api_secret: document.getElementById('wiz-twitter-api-secret') ? document.getElementById('wiz-twitter-api-secret').value.trim() : '',
+              twitter_access_token: document.getElementById('wiz-twitter-access-token') ? document.getElementById('wiz-twitter-access-token').value.trim() : '',
+              twitter_access_token_secret: document.getElementById('wiz-twitter-access-token-secret') ? document.getElementById('wiz-twitter-access-token-secret').value.trim() : ''
             },
-            photo: photoPayload
+            photo: photoPayload,
+            persona: persona,
+            photo_context: _wizPhotoContext || null
           };
           var result = await sendJson('/api/audiences/create-full', 'POST', payload);
           closeAudienceWizard();
-          window.location.href = '/?tab=audiences&audience_id=' + encodeURIComponent(result.audience_id ?? '');
+          window.location.href = '/?tab=audiences&audience_id=' + encodeURIComponent(result.audience_id || '');
         } catch (err) {
           showWizError(err.message);
           btn.disabled = false;
@@ -3201,32 +3439,18 @@ function renderDashboardScript() {
       }
 
       // Photo drop zone wiring
-      var photoFile = document.getElementById('wiz-photo-file');
-      if (photoFile) {
-        photoFile.addEventListener('change', function() {
-          var file = this.files[0];
-          if (!file) return;
-          var preview = document.getElementById('wiz-photo-preview');
-          var placeholder = document.getElementById('wiz-photo-placeholder');
-          var reader = new FileReader();
-          reader.onload = function(e) {
-            preview.src = e.target.result;
-            preview.classList.remove('hidden');
-            placeholder.classList.add('hidden');
-          };
-          reader.readAsDataURL(file);
-        });
+      (function() {
         var dropZone = document.getElementById('wiz-drop-zone');
-        if (dropZone) {
-          dropZone.addEventListener('dragover', function(e) { e.preventDefault(); this.classList.add('border-indigo-400'); });
-          dropZone.addEventListener('dragleave', function() { this.classList.remove('border-indigo-400'); });
-          dropZone.addEventListener('drop', function(e) {
-            e.preventDefault(); this.classList.remove('border-indigo-400');
-            var file = e.dataTransfer.files[0];
-            if (file) { photoFile.files = e.dataTransfer.files; photoFile.dispatchEvent(new Event('change')); }
-          });
-        }
-      }
+        var photoFile = document.getElementById('wiz-photo-file');
+        if (!dropZone || !photoFile) return;
+        dropZone.addEventListener('dragover', function(e) { e.preventDefault(); this.classList.add('border-indigo-400'); });
+        dropZone.addEventListener('dragleave', function() { this.classList.remove('border-indigo-400'); });
+        dropZone.addEventListener('drop', function(e) {
+          e.preventDefault(); this.classList.remove('border-indigo-400');
+          var file = e.dataTransfer.files[0];
+          if (file) { photoFile.files = e.dataTransfer.files; wizPhotoChanged(photoFile); }
+        });
+      })();
 
       // ── Runtime status poller ──────────────────────────────────────
       (function() {
