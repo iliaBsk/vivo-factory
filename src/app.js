@@ -2485,45 +2485,153 @@ function renderAudienceDrawer({ audience, instance, profileState = {}, deploymen
 }
 
 function renderAudienceWizard() {
-  const stepTitles = ["Audience Details", "Publishing Channels", "Protagonist Photo"];
+  const stepTitles = ["Investigate", "Photo", "Progress", "Review", "Channels"];
 
-  const step1 = `
+  const step0 = `
     <div class="space-y-4">
-      <div class="grid grid-cols-2 gap-4">
-        <div class="col-span-2">
-          <label class="label" for="wiz-label">Audience Name *</label>
-          <input id="wiz-label" name="label" class="input" placeholder="e.g. Tech founder in Barcelona, 35" required />
+      <div class="flex rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden" id="wiz-tabs">
+        <button type="button" class="wiz-tab wiz-tab-active flex-1 py-2 text-sm font-medium" data-tab="handle" onclick="wizTab('handle')">Social Handle</button>
+        <button type="button" class="wiz-tab flex-1 py-2 text-sm font-medium border-l border-gray-200 dark:border-gray-700" data-tab="upload" onclick="wizTab('upload')">Upload Report</button>
+        <button type="button" class="wiz-tab flex-1 py-2 text-sm font-medium border-l border-gray-200 dark:border-gray-700" data-tab="manual" onclick="wizTab('manual')">Manual</button>
+      </div>
+
+      <div id="wiz-tab-handle">
+        <div class="space-y-3">
+          <div>
+            <label class="label" for="wiz-handle">X / Twitter Handle *</label>
+            <input id="wiz-handle" name="handle" class="input font-mono" placeholder="@andrewchen" />
+          </div>
+          <div>
+            <label class="label" for="wiz-github">GitHub Handle <span class="font-normal text-gray-400">(optional)</span></label>
+            <input id="wiz-github" name="github" class="input font-mono" placeholder="@andrewchen" />
+          </div>
         </div>
-        <div class="col-span-2">
-          <label class="label" for="wiz-description">Short Description *</label>
-          <textarea id="wiz-description" name="description" rows="2" class="input resize-none" placeholder="One sentence about this audience persona"></textarea>
+      </div>
+
+      <div id="wiz-tab-upload" class="hidden">
+        <div class="space-y-3">
+          <p class="text-sm text-gray-500 dark:text-gray-400">Upload a .md or .txt file describing this audience persona (max 500 KB).</p>
+          <label class="flex flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed border-gray-300 dark:border-gray-600 p-8 cursor-pointer hover:border-indigo-400 transition-colors">
+            <span class="text-2xl">📄</span>
+            <span class="text-sm text-gray-500" id="wiz-upload-label">Click to select .md or .txt</span>
+            <input type="file" id="wiz-upload-file" name="upload_file" accept=".md,.txt,text/markdown,text/plain" class="hidden" onchange="wizUploadChange(this)" />
+          </label>
         </div>
-        <div>
-          <label class="label" for="wiz-location">Location</label>
-          <input id="wiz-location" name="location" class="input" placeholder="Barcelona, Spain" />
-        </div>
-        <div>
-          <label class="label" for="wiz-interests">Interests <span class="font-normal text-gray-400">(comma-separated)</span></label>
-          <input id="wiz-interests" name="interests" class="input" placeholder="technology, AI, startups" />
-        </div>
-        <div class="col-span-2">
-          <label class="label" for="wiz-profile">Profile Brief *</label>
-          <textarea id="wiz-profile" name="profile_raw_text" rows="5" class="input resize-y" placeholder="Detailed description of this audience's personality, behaviour, lifestyle, values…"></textarea>
+      </div>
+
+      <div id="wiz-tab-manual" class="hidden">
+        <div class="space-y-4">
+          <div>
+            <label class="label" for="wiz-q1-role">What's your role, and what city do you live in? *</label>
+            <input id="wiz-q1-role" name="q1_role" class="input" placeholder="e.g. Startup founder in San Francisco" />
+          </div>
+          <div>
+            <label class="label" for="wiz-q2-jtbd">What's the one thing you're most trying to figure out or get done right now? *</label>
+            <textarea id="wiz-q2-jtbd" name="q2_jtbd" rows="2" class="input resize-none" placeholder="e.g. How to grow my user base without burning out my team"></textarea>
+          </div>
+          <div>
+            <p class="label">When you buy something premium, what drives you more?</p>
+            <div class="grid grid-cols-2 gap-2 mt-1">
+              <label class="wiz-tile"><input type="radio" name="q3_wealth" value="value" class="sr-only" /><span>💡 Getting the best value</span></label>
+              <label class="wiz-tile"><input type="radio" name="q3_wealth" value="quality" class="sr-only" /><span>✨ Highest quality</span></label>
+            </div>
+          </div>
+          <div>
+            <p class="label">Pick the trade-off that fits you better:</p>
+            <div class="grid grid-cols-2 gap-2 mt-1">
+              <label class="wiz-tile"><input type="radio" name="q4_values" value="speed_over_perfection" class="sr-only" /><span>⚡ Speed over perfection</span></label>
+              <label class="wiz-tile"><input type="radio" name="q4_values" value="depth_over_breadth" class="sr-only" /><span>🔬 Depth over breadth</span></label>
+              <label class="wiz-tile"><input type="radio" name="q4_values" value="autonomy_over_stability" class="sr-only" /><span>🦅 Autonomy over stability</span></label>
+              <label class="wiz-tile"><input type="radio" name="q4_values" value="impact_over_income" class="sr-only" /><span>🌍 Impact over income</span></label>
+            </div>
+          </div>
+          <div>
+            <p class="label">What are you into? <span class="font-normal text-gray-400">(pick all that apply)</span></p>
+            <div class="flex flex-wrap gap-2 mt-1" id="wiz-q5-tiles">
+              ${["Technology","AI/ML","Startups","Design","Science","Finance","Sports","Health","Travel","Food","Music","Books","Gaming","Politics","Environment"].map(p =>
+                `<label class="wiz-tile wiz-tile-check"><input type="checkbox" name="q5_passions" value="${p}" class="sr-only" /><span>${p}</span></label>`
+              ).join("")}
+            </div>
+          </div>
         </div>
       </div>
     </div>`;
 
+  const step1 = `
+    <div class="space-y-4">
+      <p class="text-sm text-gray-500 dark:text-gray-400">Upload a photo of the audience protagonist for AI-powered physical description. Optional — skip to proceed without one.</p>
+      <div id="wiz-drop-zone"
+           class="flex flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed border-gray-300 dark:border-gray-600 p-10 cursor-pointer hover:border-indigo-400 transition-colors"
+           onclick="document.getElementById('wiz-photo-file').click()">
+        <div class="w-16 h-16 rounded-full bg-gray-100 dark:bg-gray-700 overflow-hidden flex items-center justify-center">
+          <img id="wiz-photo-preview" src="" alt="" class="w-full h-full object-cover hidden" />
+          <span id="wiz-photo-placeholder" class="text-3xl">📷</span>
+        </div>
+        <p class="text-sm text-gray-500 dark:text-gray-400">Click to select or drag &amp; drop</p>
+        <p class="text-xs text-gray-400">JPEG, PNG or WebP · max 5 MB</p>
+        <input type="file" id="wiz-photo-file" accept="image/jpeg,image/png,image/webp" class="hidden" onchange="wizPhotoChanged(this)" />
+      </div>
+      <div id="wiz-photo-chips" class="hidden flex-wrap gap-2"></div>
+      <div id="wiz-photo-analyzing" class="hidden text-sm text-indigo-600 dark:text-indigo-400">Analysing photo…</div>
+    </div>`;
+
   const step2 = `
+    <div class="space-y-2">
+      <p class="text-sm font-medium text-gray-700 dark:text-gray-300">Investigation in progress…</p>
+      <div id="wiz-progress-log" class="rounded-lg bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 p-4 text-sm font-mono space-y-1 min-h-32 max-h-64 overflow-y-auto">
+        <div class="text-gray-400">Starting investigation…</div>
+      </div>
+    </div>`;
+
+  const step3 = `
+    <div class="space-y-4">
+      <p class="text-sm text-gray-500 dark:text-gray-400">Review and edit the generated profile before creating the audience.</p>
+      <div class="grid grid-cols-2 gap-4">
+        <div class="col-span-2">
+          <label class="label" for="wiz-review-label">Audience Name *</label>
+          <input id="wiz-review-label" name="review_label" class="input" required />
+        </div>
+        <div>
+          <label class="label" for="wiz-review-location">Location</label>
+          <input id="wiz-review-location" name="review_location" class="input" />
+        </div>
+        <div>
+          <label class="label" for="wiz-review-tone">Tone</label>
+          <input id="wiz-review-tone" name="review_tone" class="input" placeholder="direct, warm, professional…" />
+        </div>
+        <div class="col-span-2">
+          <label class="label" for="wiz-review-interests">Interests <span class="font-normal text-gray-400">(comma-separated)</span></label>
+          <input id="wiz-review-interests" name="review_interests" class="input" placeholder="AI, startups, design…" />
+        </div>
+        <div class="col-span-2">
+          <label class="label" for="wiz-review-pillars">Content Pillars <span class="font-normal text-gray-400">(comma-separated)</span></label>
+          <input id="wiz-review-pillars" name="review_pillars" class="input" placeholder="growth, product, leadership…" />
+        </div>
+        <div class="col-span-2">
+          <label class="label" for="wiz-review-excluded">Excluded Topics <span class="font-normal text-gray-400">(comma-separated)</span></label>
+          <input id="wiz-review-excluded" name="review_excluded" class="input" placeholder="politics, religion…" />
+        </div>
+      </div>
+      <div id="wiz-photo-context-block" class="hidden rounded-lg bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 p-3">
+        <p class="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-1">Physical Description (from photo)</p>
+        <p id="wiz-photo-context-text" class="text-sm text-gray-700 dark:text-gray-300"></p>
+      </div>
+      <details>
+        <summary class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400 cursor-pointer select-none">Raw Synthesis Output</summary>
+        <pre id="wiz-persona-raw" class="mt-2 text-xs bg-gray-50 dark:bg-gray-800 rounded p-3 overflow-auto max-h-48"></pre>
+      </details>
+    </div>`;
+
+  const step4 = `
     <div class="space-y-4">
       <div>
         <label class="label" for="wiz-bot-token">Telegram Bot Token *</label>
-        <input id="wiz-bot-token" name="telegram_bot_token" class="input font-mono" placeholder="123456:ABC-DEF..." />
+        <input id="wiz-bot-token" name="telegram_bot_token" class="input font-mono" placeholder="123456:ABC-DEF…" />
         <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">Get from @BotFather on Telegram</p>
       </div>
       <div>
         <label class="label" for="wiz-chat-id">Telegram Chat ID *</label>
         <input id="wiz-chat-id" name="telegram_chat_id" class="input font-mono" placeholder="-100123456789" />
-        <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">Channel or group ID where posts will be sent</p>
       </div>
       <div>
         <label class="label" for="wiz-schedule">Posting Schedule</label>
@@ -2536,42 +2644,25 @@ function renderAudienceWizard() {
       <details class="mt-2">
         <summary class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400 cursor-pointer select-none">Twitter / X (optional)</summary>
         <div class="mt-3 space-y-3">
-          <p class="text-xs text-gray-400 dark:text-gray-500">Add credentials to cross-post to Twitter/X. Leave blank to use Telegram only. Each audience needs its own Twitter account and OAuth 1.0a tokens from the X Developer Portal.</p>
+          <p class="text-xs text-gray-400 dark:text-gray-500">Add credentials to cross-post to Twitter/X. Leave blank to use Telegram only.</p>
           <div>
             <label class="label" for="wiz-twitter-api-key">API Key</label>
-            <input id="wiz-twitter-api-key" name="twitter_api_key" class="input font-mono" placeholder="consumer key" autocomplete="off" />
+            <input id="wiz-twitter-api-key" name="twitter_api_key" class="input font-mono" autocomplete="off" />
           </div>
           <div>
             <label class="label" for="wiz-twitter-api-secret">API Secret</label>
-            <input id="wiz-twitter-api-secret" name="twitter_api_secret" class="input font-mono" placeholder="consumer secret" autocomplete="off" />
+            <input id="wiz-twitter-api-secret" name="twitter_api_secret" class="input font-mono" autocomplete="off" />
           </div>
           <div>
             <label class="label" for="wiz-twitter-access-token">Access Token</label>
-            <input id="wiz-twitter-access-token" name="twitter_access_token" class="input font-mono" placeholder="user access token" autocomplete="off" />
+            <input id="wiz-twitter-access-token" name="twitter_access_token" class="input font-mono" autocomplete="off" />
           </div>
           <div>
             <label class="label" for="wiz-twitter-access-token-secret">Access Token Secret</label>
-            <input id="wiz-twitter-access-token-secret" name="twitter_access_token_secret" class="input font-mono" placeholder="user access token secret" autocomplete="off" />
+            <input id="wiz-twitter-access-token-secret" name="twitter_access_token_secret" class="input font-mono" autocomplete="off" />
           </div>
         </div>
       </details>
-    </div>`;
-
-  const step3 = `
-    <div class="space-y-4">
-      <p class="text-sm text-gray-500 dark:text-gray-400">Upload a photo that represents your audience protagonist. This will appear as the avatar in the dashboard.</p>
-      <div id="wiz-drop-zone"
-           class="flex flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed border-gray-300 dark:border-gray-600 p-10 cursor-pointer hover:border-indigo-400 transition-colors"
-           onclick="document.getElementById('wiz-photo-file').click()">
-        <div class="w-14 h-14 rounded-full bg-gray-100 dark:bg-gray-700 overflow-hidden flex items-center justify-center">
-          <img id="wiz-photo-preview" src="" alt="" class="w-full h-full object-cover hidden" />
-          <span id="wiz-photo-placeholder" class="text-2xl">📷</span>
-        </div>
-        <p class="text-sm text-gray-500 dark:text-gray-400">Click to select or drag &amp; drop</p>
-        <p class="text-xs text-gray-400">JPEG, PNG or WebP · max 5 MB</p>
-        <input type="file" id="wiz-photo-file" name="photo" accept="image/jpeg,image/png,image/webp" class="hidden" />
-      </div>
-      <p class="text-xs text-gray-500 dark:text-gray-400 text-center">Photo is optional — you can add it later.</p>
     </div>`;
 
   return `<div id="audience-wizard" class="dialog-backdrop" style="display:none" role="dialog" aria-modal="true" aria-labelledby="wiz-title">
@@ -2597,9 +2688,11 @@ function renderAudienceWizard() {
 
       <form id="audience-wizard-form" class="flex-1 overflow-y-auto">
         <div class="px-6 py-5">
-          <div data-wiz-step="0">${step1}</div>
-          <div data-wiz-step="1" class="hidden">${step2}</div>
-          <div data-wiz-step="2" class="hidden">${step3}</div>
+          <div data-wiz-step="0">${step0}</div>
+          <div data-wiz-step="1" class="hidden">${step1}</div>
+          <div data-wiz-step="2" class="hidden">${step2}</div>
+          <div data-wiz-step="3" class="hidden">${step3}</div>
+          <div data-wiz-step="4" class="hidden">${step4}</div>
         </div>
       </form>
 
@@ -2608,6 +2701,7 @@ function renderAudienceWizard() {
         <div class="ml-auto flex items-center gap-3">
           <span id="wiz-error" class="text-xs text-red-600 dark:text-red-400 hidden"></span>
           <button id="wiz-next" class="btn btn-accent btn-sm" onclick="wizardNext()">Next →</button>
+          <button id="wiz-investigate" class="btn btn-accent btn-sm hidden" onclick="wizardInvestigate()">Investigate →</button>
           <button id="wiz-submit" class="btn btn-accent btn-sm hidden" onclick="wizardSubmit()">Create Audience</button>
         </div>
       </div>
