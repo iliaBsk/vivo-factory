@@ -206,6 +206,8 @@ async function handleRequest(context) {
     const details = body.details ?? {};
     const channels = body.channels ?? {};
     const photo = body.photo ?? null;
+    const persona = body.persona ?? null;
+    const photoContext = body.photo_context ?? null;
 
     const label = String(details.label ?? "").trim();
     const profileRawText = String(details.profile_raw_text ?? details.description ?? "").trim();
@@ -213,7 +215,7 @@ async function handleRequest(context) {
     const chatId = String(channels.telegram_chat_id ?? "").trim();
 
     if (!label) return json(400, { error: "details.label is required." });
-    if (!profileRawText) return json(400, { error: "details.profile_raw_text is required." });
+    if (!profileRawText && !persona) return json(400, { error: "details.profile_raw_text or persona is required." });
     if (!botToken) return json(400, { error: "channels.telegram_bot_token is required." });
     if (!chatId) return json(400, { error: "channels.telegram_chat_id is required." });
     if (photo) {
@@ -222,12 +224,10 @@ async function handleRequest(context) {
       if ((photo.size_bytes ?? 0) > 5 * 1024 * 1024) return json(400, { error: "Photo must be under 5 MB." });
     }
 
-    const rawText = [
+    const rawText = profileRawText || [
       label,
-      details.description && details.description !== label ? details.description : null,
       details.location ? `Location: ${details.location}` : null,
-      details.interests?.length ? `Interests: ${details.interests.join(", ")}` : null,
-      profileRawText !== label ? profileRawText : null,
+      details.interests?.length ? `Interests: ${details.interests.join(", ")}` : null
     ].filter(Boolean).join(". ");
 
     const result = await audienceImportService.createAudience({
@@ -244,17 +244,52 @@ async function handleRequest(context) {
       }
     });
 
-    let heroImageStorageId = null;
-    if (photo && result.audience?.id) {
+    const audienceId = result.audience?.id;
+
+    // Seed marble with persona facts
+    if (persona && audienceId) {
       try {
-        heroImageStorageId = await repository.storeAudiencePhoto(result.audience.id, photo);
+        const profileClient = await resolveProfileClient({ repository, profileClientFactory, audienceId });
+        if (profileClient?.updateFacts) {
+          await profileClient.updateFacts(personaToMarbleFacts(persona));
+        }
+      } catch (err) {
+        console.error("[create-full] marble seeding failed:", err.message);
+      }
+    }
+
+    // Save persona + photo_context to profile_snapshot.onboarding
+    if ((persona || photoContext) && audienceId) {
+      try {
+        const existingAudience = await repository.getAudience(audienceId);
+        const updatedSnapshot = {
+          ...(existingAudience?.profile_snapshot ?? {}),
+          onboarding: {
+            persona: persona ?? null,
+            photo_context: photoContext ?? null,
+            seeded_at: clock()
+          }
+        };
+        await repository.updateAudience(audienceId, { profile_snapshot: updatedSnapshot }, {
+          actorId: "system",
+          timestamp: clock()
+        });
+      } catch (err) {
+        console.error("[create-full] snapshot save failed:", err.message);
+      }
+    }
+
+    let heroImageStorageId = null;
+    if (photo && audienceId) {
+      try {
+        heroImageStorageId = await repository.storeAudiencePhoto(audienceId, photo);
       } catch (err) {
         console.error("[create-full] photo upload failed:", err.message);
       }
     }
 
     return json(200, {
-      audience_id: result.audience?.id,
+      audience_id: audienceId,
       audience_key: result.audience?.audience_key,
       hero_image_asset_storage_id: heroImageStorageId,
       status: "new"
@@ -1047,6 +1082,37 @@ function normalizeAudienceProfileFacts(audience, input = {}) {
     shopping_bias: String(input.shopping_bias ?? audience.shopping_bias ?? "").trim(),
     posting_schedule: String(input.posting_schedule ?? audience.posting_schedule ?? "").trim(),
     extra_metadata: normalizeObject(input.extra_metadata ?? baseSnapshot.extra_metadata ?? {})
+  };
+}
+
+function personaToMarbleFacts(persona) {
+  if (!persona || typeof persona !== "object") return {};
+  const bio = persona.biographical ?? {};
+  const cog = persona.cognitive ?? {};
+  const comm = persona.communication ?? {};
+  const mv = persona.motivations_values ?? {};
+  const pers = persona.personalization ?? {};
+
+  return {
+    label: bio.name?.value ?? "",
+    location: bio.current_role?.value
+      ? `${bio.current_role.value}${bio.location?.value ? ", " + bio.location.value : ""}`
+      : (bio.location?.value ?? ""),
+    interests: Array.isArray(cog.interests) ? cog.interests : [],
+    tone: comm.preferred_tone ?? pers.tone ?? "",
+    content_pillars: Array.isArray(pers.topics) ? pers.topics : [],
+    excluded_topics: Array.isArray(pers.anti_patterns) ? pers.anti_patterns : [],
+    family_context: "",
+    shopping_bias: "",
+    posting_schedule: "",
+    extra_metadata: {
+      thinking_style: cog.thinking_style ?? [],
+      resonates_with: comm.resonates_with ?? [],
+      tunes_out: comm.tunes_out ?? [],
+      core_motivations: mv.core_motivations ?? [],
+      values: mv.values ?? [],
+      big_five: persona.big_five ?? {}
+    }
   };
 }
 
