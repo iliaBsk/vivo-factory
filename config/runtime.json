@@ -135,6 +135,7 @@
     "onboarding_handle_webhook":  "http://localhost:5678/webhook/vivo-onboarding-handle",
     "onboarding_upload_webhook":  "http://localhost:5678/webhook/vivo-onboarding-upload",
     "onboarding_manual_webhook":  "http://localhost:5678/webhook/vivo-onboarding-manual",
-    "onboarding_photo_webhook":   "http://localhost:5678/webhook/vivo-describe-hero"
+    "onboarding_photo_webhook":   "http://localhost:5678/webhook/vivo-describe-hero",
+    "character_map_webhook":      "http://localhost:5678/webhook/vivo-protagonist-character-map"
   }
 }

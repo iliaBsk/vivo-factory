@@ -12,7 +12,8 @@ function makeApp(overrides = {}) {
       onboarding_photo_webhook: "http://localhost:19999/photo",
       onboarding_handle_webhook: "http://localhost:19999/handle",
       onboarding_upload_webhook: "http://localhost:19999/upload",
-      onboarding_manual_webhook: "http://localhost:19999/manual"
+      onboarding_manual_webhook: "http://localhost:19999/manual",
+      character_map_webhook: "http://localhost:19999/character-map"
     },
     vivoFactoryUrl: "http://localhost:4310",
     fetchImpl: overrides.fetchImpl ?? (async () => {
@@ -104,6 +105,43 @@ test("POST /api/onboarding/jobs/:id/event — returns 200 ok", async () => {
   assert.equal(result.status, 200);
   assert.deepEqual(JSON.parse(result.body), { ok: true });
   relay.cancelJob("ev-job");
+});
+
+test("POST /api/onboarding/character-map — returns 400 when image_base64 missing", async () => {
+  const { app } = makeApp();
+  const result = await app.handle({
+    method: "POST", pathname: "/api/onboarding/character-map",
+    body: JSON.stringify({ mime_type: "image/jpeg" })
+  });
+  assert.equal(result.status, 400);
+  assert.ok(JSON.parse(result.body).error.includes("image_base64"));
+});
+
+test("POST /api/onboarding/character-map — returns 503 when webhook not configured", async () => {
+  const relay = createOnboardingRelay();
+  const app = createApp({
+    repository: null, onboardingRelay: relay,
+    n8nConfig: {},
+    fetchImpl: async () => { throw new Error("should not be called"); }
+  });
+  const result = await app.handle({
+    method: "POST", pathname: "/api/onboarding/character-map",
+    body: JSON.stringify({ image_base64: "abc", mime_type: "image/jpeg" })
+  });
+  assert.equal(result.status, 503);
+});
+
+test("POST /api/onboarding/character-map — proxies N8N response on success", async () => {
+  const charMap = { character_map_base64: "base64data==", format: "jpeg", grid: "3x3" };
+  const { app } = makeApp({
+    fetchImpl: async () => ({ ok: true, json: async () => charMap })
+  });
+  const result = await app.handle({
+    method: "POST", pathname: "/api/onboarding/character-map",
+    body: JSON.stringify({ image_base64: "abc", mime_type: "image/png", photo_context: { description: "woman, 30s" } })
+  });
+  assert.equal(result.status, 200);
+  assert.deepEqual(JSON.parse(result.body), charMap);
 });
 
 test("POST /api/onboarding/jobs/:id/complete — returns 200 ok", async () => {

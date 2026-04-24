@@ -113,6 +113,36 @@ async function handleRequest(context) {
     return json(200, await audienceImportService.createAudience(body));
   }
 
+  // POST /api/onboarding/character-map — generate 3x3 character sheet via gpt-image-1 + N8N
+  if (request.method === "POST" && request.pathname === "/api/onboarding/character-map") {
+    const body = readBody(request.body);
+    const { image_base64, mime_type, photo_context } = body;
+    if (!image_base64) return json(400, { error: "image_base64 is required" });
+    if (!mime_type) return json(400, { error: "mime_type is required" });
+    const allowedMimeTypes = ["image/jpeg", "image/png", "image/webp"];
+    if (!allowedMimeTypes.includes(mime_type)) return json(400, { error: "mime_type must be jpeg, png, or webp" });
+    const charMapWebhook = n8nConfig.character_map_webhook;
+    if (!charMapWebhook) return json(503, { error: "Character map webhook not configured" });
+    let n8nRes;
+    try {
+      n8nRes = await fetchImpl(charMapWebhook, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ image_base64, mime_type, photo_context: photo_context ?? null })
+      });
+    } catch (err) {
+      console.error("[onboarding/character-map] N8N request failed:", err.message);
+      return json(502, { error: "Character map service unreachable" });
+    }
+    if (!n8nRes.ok) {
+      const errText = await n8nRes.text().catch(() => "");
+      console.error("[onboarding/character-map] N8N returned non-ok:", n8nRes.status, errText.slice(0, 500));
+      return json(502, { error: "Character map generation failed" });
+    }
+    const result = await n8nRes.json();
+    return json(200, result);
+  }
+
   // POST /api/onboarding/photo — synchronous protagonist photo analysis via N8N
   if (request.method === "POST" && request.pathname === "/api/onboarding/photo") {
     const body = readBody(request.body);
