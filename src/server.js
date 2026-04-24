@@ -13,7 +13,7 @@ import { createOpenAiAudienceClient } from "./openai-audience-client.js";
 import { createProfileClient } from "./profile-client.js";
 import { createFileRepository, createSupabaseRepository, createSQLiteRepository } from "./repository.js";
 import { createSetupService, resolveLlmDefaults } from "./setup-service.js";
-import { loadEnvConfig, loadJsonConfig } from "./runtime-config.js";
+import { loadEnvConfig, loadJsonConfig, writeJsonFile } from "./runtime-config.js";
 import { createContentFetcher } from "./content-fetcher.js";
 import { createRuntimeStatusService } from "./runtime-status-service.js";
 import { createTwitterClient } from "./twitter-client.js";
@@ -105,6 +105,15 @@ const storyEnrichmentService = createStoryEnrichmentService({
 });
 const onboardingRelay = createOnboardingRelay();
 
+function saveRuntimeAudienceConfig(audienceKey, partialConfig) {
+  runtimeConfig.audiences = runtimeConfig.audiences ?? {};
+  runtimeConfig.audiences[audienceKey] = {
+    ...(runtimeConfig.audiences[audienceKey] ?? {}),
+    ...partialConfig
+  };
+  writeJsonFile("config/runtime.json", runtimeConfig);
+}
+
 async function publishReadyStories(audienceId) {
   try {
     const res = await fetch(`http://localhost:${serverPort}/api/audiences/${audienceId}/publish-recap`, {
@@ -126,12 +135,16 @@ async function publishReadyStories(audienceId) {
 async function dispatchFetch(audience, instance, jobId, fetchOptions = {}) {
   console.log(`[fetch] Starting for ${audience.audience_key} (${audience.id})`);
   if (jobId) await repository.updateJob(jobId, { status: "running" }).catch(() => {});
-  // Merge runtime.json audience config (custom_sources etc.) into instance runtime_config
+  // Merge runtime.json audience config into instance runtime_config.
+  // custom_sources: runtime.json is the source of truth; instance DB sources are ignored in favour of it.
   const audienceRC = runtimeConfig.audiences?.[audience.audience_key] ?? {};
-  console.log(`[fetch-debug] audienceRC.custom_sources count=${audienceRC.custom_sources?.length ?? 0} key=${audience.audience_key}`);
+  const instanceRC = instance?.runtime_config ?? {};
+  const mergedCustomSources = audienceRC.custom_sources?.length
+    ? audienceRC.custom_sources
+    : (instanceRC.custom_sources ?? []);
   const instanceWithSources = {
     ...(instance ?? {}),
-    runtime_config: { ...audienceRC, ...(instance?.runtime_config ?? {}) }
+    runtime_config: { ...instanceRC, ...audienceRC, custom_sources: mergedCustomSources }
   };
   try {
     const result = await contentFetcher.fetchForAudience(audience, instanceWithSources, fetchOptions);
@@ -178,6 +191,7 @@ const app = createApp({
   onboardingRelay,
   n8nConfig: runtimeConfig.n8n ?? {},
   vivoFactoryUrl,
+  saveRuntimeAudienceConfig,
 });
 
 const server = http.createServer(async (request, response) => {

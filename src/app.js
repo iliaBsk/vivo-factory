@@ -25,6 +25,7 @@ export function createApp(options) {
   const onboardingRelay = options.onboardingRelay ?? null;
   const n8nConfig = options.n8nConfig ?? {};
   const vivoFactoryUrl = options.vivoFactoryUrl ?? "http://localhost:4310";
+  const saveRuntimeAudienceConfig = options.saveRuntimeAudienceConfig ?? null;
 
   return {
     async handle(request) {
@@ -46,6 +47,7 @@ export function createApp(options) {
           onboardingRelay,
           n8nConfig,
           vivoFactoryUrl,
+          saveRuntimeAudienceConfig,
           request
         });
       } catch (error) {
@@ -73,6 +75,7 @@ async function handleRequest(context) {
     onboardingRelay,
     n8nConfig,
     vivoFactoryUrl,
+    saveRuntimeAudienceConfig,
     request
   } = context;
 
@@ -288,9 +291,65 @@ async function handleRequest(context) {
       }
     }
 
+    const audienceKey = result.audience?.audience_key;
+
+    // Seed custom_sources + telegram creds into runtime.json
+    if (saveRuntimeAudienceConfig && audienceKey) {
+      try {
+        const normalizePassion = (s) => s.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
+        const passions = [
+          ...(persona?.cognitive?.interests ?? []),
+          ...(persona?.personalization?.topics ?? [])
+        ].map(normalizePassion);
+        const city = persona?.biographical?.location?.value ?? details.location ?? "";
+        const sources = getSourcesForAudience({ city, passions });
+        saveRuntimeAudienceConfig(audienceKey, {
+          telegram_bot_token: botToken,
+          telegram_chat_id: chatId,
+          telegram_report_chat_id: chatId,
+          ...(sources.length ? { custom_sources: sources } : {})
+        });
+      } catch (err) {
+        console.error("[create-full] runtime config save failed:", err.message);
+      }
+    }
+
+    // Fire-and-forget: launch openclaw + marble containers
+    if (audienceManagerLauncher && audienceId) {
+      (async () => {
+        try {
+          const aud = await repository.getAudience(audienceId);
+          if (!aud) return;
+          let inst = repository.getInstanceByAudience
+            ? await repository.getInstanceByAudience(audienceId).catch(() => null)
+            : null;
+          if (!inst && repository.createInstanceForAudience) {
+            inst = await repository.createInstanceForAudience(
+              aud,
+              buildAudienceInstance(aud, { telegram_bot_token: botToken, telegram_chat_id: chatId }),
+              { actorId: "wizard", timestamp: clock() }
+            );
+          }
+          const launchResult = await audienceManagerLauncher.launchAudienceManager(aud, inst, {
+            operator: "wizard",
+            timestamp: clock()
+          });
+          if (repository.updateInstance && launchResult?.instance_update && inst?.id) {
+            await repository.updateInstance(inst.id, launchResult.instance_update, {
+              actorId: "wizard",
+              timestamp: clock()
+            });
+          }
+          console.log(`[create-full] auto-launched containers for ${aud.audience_key}: exit ${launchResult?.exitCode}`);
+        } catch (err) {
+          console.error("[create-full] auto-launch failed:", err.message);
+        }
+      })();
+    }
+
     return json(200, {
       audience_id: audienceId,
-      audience_key: result.audience?.audience_key,
+      audience_key: audienceKey,
       hero_image_asset_storage_id: heroImageStorageId,
       status: "new"
     });
