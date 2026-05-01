@@ -21,14 +21,14 @@ export function createContentFetcher(options = {}) {
       const activeMerchantRegistry = (repoMerchants !== null && repoMerchants.length > 0)
         ? { merchants: repoMerchants, overrides: [] }
         : merchantRegistry;
-      const audienceLocation = normalizeLocation(audience.location ?? "");
+      const audienceGeo = parseAudienceGeo(audience.location ?? "");
 
       const customSources = instance?.runtime_config?.custom_sources ?? [];
       const allSources = [...sourcesConfig.sources, ...customSources];
       const localSources = allSources.filter(
-        (s) => normalizeLocation(s.location ?? "") === audienceLocation
+        (s) => isLocalSource(s.location ?? "", audienceGeo)
       );
-      const globalSources = allSources.filter((s) => s.location === "global");
+      const globalSources = allSources.filter((s) => !s.location || s.location === "global");
 
       const [localCandidates, globalCandidates] = await Promise.all([
         fetchSources(localSources, fetchImpl, activeMerchantRegistry, 40),
@@ -190,19 +190,26 @@ async function scoreWithMarble(profileClient, items, limit) {
     category: item.category,
     url: item.url
   }));
-  const result = await profileClient.selectItems(input, { task: "daily_recap", limit });
-  const ranked = result.data?.selected ?? [];
-  const scoreMap = new Map(ranked.map((r) => [r.id, r]));
-  return items
-    .filter((item) => scoreMap.has(item.id))
-    .map((item) => ({
-      ...item,
-      score: scoreMap.get(item.id).score,
-      rank: scoreMap.get(item.id).rank
-    }))
-    .filter((item) => item.score >= 0.3)
-    .sort((a, b) => a.rank - b.rank)
-    .slice(0, limit);
+  try {
+    const result = await profileClient.selectItems(input, { task: "daily_recap", limit });
+    const ranked = result.data?.selected ?? [];
+    const scoreMap = new Map(ranked.map((r) => [r.id, r]));
+    const scored = items
+      .filter((item) => scoreMap.has(item.id))
+      .map((item) => ({
+        ...item,
+        score: scoreMap.get(item.id).score,
+        rank: scoreMap.get(item.id).rank
+      }))
+      .filter((item) => item.score >= 0.3)
+      .sort((a, b) => a.rank - b.rank)
+      .slice(0, limit);
+    if (scored.length > 0) return scored;
+    // Marble returned no matches — fall through to default scoring
+  } catch (err) {
+    console.error("[fetch] Marble scoring failed, using default scoring:", err.message);
+  }
+  return items.slice(0, limit).map((item, i) => ({ ...item, score: 0.5, rank: i + 1 }));
 }
 
 function extractTag(xml, tag) {
@@ -224,15 +231,42 @@ function stripHtml(text) {
     .slice(0, 500);
 }
 
-function normalizeLocation(location) {
+function parseAudienceGeo(location) {
   const s = String(location).trim();
   if (s.startsWith("{")) {
     try {
       const obj = JSON.parse(s);
-      return String(obj.city ?? obj.name ?? "").toLowerCase().trim();
+      return {
+        city: String(obj.city ?? obj.name ?? "").toLowerCase().trim(),
+        country: String(obj.country ?? "").toLowerCase().trim(),
+        region: String(obj.region ?? "").toLowerCase().trim()
+      };
     } catch {
       // fall through
     }
   }
-  return s.toLowerCase();
+  const plain = s.toLowerCase();
+  return { city: plain, country: plain, region: plain };
+}
+
+// Country name aliases so "China" matches sources tagged "china", "asia" etc.
+const COUNTRY_REGION_ALIASES = {
+  china: ["china", "asia"],
+  spain: ["spain", "europe"],
+  "united states": ["us", "usa", "north america"],
+  "united kingdom": ["uk", "europe"]
+};
+
+function isLocalSource(sourceLocation, audienceGeo) {
+  const loc = String(sourceLocation).toLowerCase().trim();
+  if (!loc || loc === "global") return false;
+  if (loc === audienceGeo.city) return true;
+  if (loc === audienceGeo.country) return true;
+  if (loc === audienceGeo.region) return true;
+  const aliases = COUNTRY_REGION_ALIASES[audienceGeo.country] ?? [];
+  return aliases.includes(loc);
+}
+
+function normalizeLocation(location) {
+  return parseAudienceGeo(location).city;
 }

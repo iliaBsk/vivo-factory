@@ -25,6 +25,7 @@ export function createApp(options) {
   const onboardingRelay = options.onboardingRelay ?? null;
   const n8nConfig = options.n8nConfig ?? {};
   const vivoFactoryUrl = options.vivoFactoryUrl ?? "http://localhost:4310";
+  const readerBaseUrl = String(options.readerBaseUrl ?? "http://localhost:4310").replace(/\/+$/, "");
   const saveRuntimeAudienceConfig = options.saveRuntimeAudienceConfig ?? null;
 
   return {
@@ -48,13 +49,28 @@ export function createApp(options) {
           n8nConfig,
           vivoFactoryUrl,
           saveRuntimeAudienceConfig,
+          readerBaseUrl,
           request
         });
       } catch (error) {
+        console.error("[request-error]", error.stack ?? error.message);
         return json(500, { error: error.message });
       }
     }
   };
+}
+
+function deriveMarbleReaction(metadata) {
+  if ((metadata.chon_read_pct ?? 0) >= 80 && (metadata.chon_read_seconds ?? 0) >= 30) return "up";
+  if (metadata.chon_clicked_at) return "up";
+  if (metadata.chon_opened_at) return "skip";
+  return null;
+}
+
+function deriveCta(storyType) {
+  if (storyType === "local_event") return "RSVP";
+  if (storyType === "product") return "Check it out";
+  return "Read full analysis";
 }
 
 async function handleRequest(context) {
@@ -76,6 +92,7 @@ async function handleRequest(context) {
     n8nConfig,
     vivoFactoryUrl,
     saveRuntimeAudienceConfig,
+    readerBaseUrl,
     request
   } = context;
 
@@ -169,7 +186,18 @@ async function handleRequest(context) {
       console.error("[onboarding/photo] N8N returned non-ok:", n8nRes.status, errText.slice(0, 500));
       return json(502, { error: "Photo analysis failed" });
     }
-    const photoContext = await n8nRes.json();
+    const rawText = await n8nRes.text();
+    if (!rawText || !rawText.trim()) {
+      console.error("[onboarding/photo] N8N returned empty body");
+      return json(502, { error: "Photo analysis returned no data — check N8N workflow" });
+    }
+    let photoContext;
+    try {
+      photoContext = JSON.parse(rawText);
+    } catch (err) {
+      console.error("[onboarding/photo] N8N returned non-JSON:", rawText.slice(0, 200));
+      return json(502, { error: "Photo analysis returned invalid data" });
+    }
     return json(200, photoContext);
   }
 
@@ -226,6 +254,8 @@ async function handleRequest(context) {
     const jobId = request.pathname.split("/")[4];
     if (!onboardingRelay) return json(503, { error: "Onboarding relay not configured" });
     const body = readBody(request.body);
+    const hasPersona = !!(body.persona);
+    console.log(`[onboarding/complete] job=${jobId} hasPersona=${hasPersona}`);
     onboardingRelay.complete(jobId, body.persona ?? null);
     return json(200, { ok: true });
   }
@@ -1039,10 +1069,11 @@ async function handleRequest(context) {
     const runtimeRC = audienceRuntimeConfig?.[audience.audience_key] ?? {};
     const mergedConfig = { ...runtimeRC, ...instanceRC };
 
-    const botToken = mergedConfig.telegram_bot_token ?? "";
-    const chatId = mergedConfig.telegram_chat_id ?? "";
-    if (!botToken || !chatId) {
-      return json(409, { error: "No Telegram bot token or chat_id configured for this audience." });
+    const botToken = String(mergedConfig.telegram_bot_token ?? "").trim();
+    const chatId = String(mergedConfig.telegram_chat_id ?? "").trim();
+    const hasTwitter = !!(mergedConfig.twitter_api_key && mergedConfig.twitter_access_token);
+    if (!hasTwitter && (!botToken || !chatId)) {
+      return json(409, { error: "No publish destination configured for this audience (need Telegram or Twitter credentials)." });
     }
 
     const allReady = (await repository.listStories({ audience_id: audience.id }))
@@ -1066,6 +1097,279 @@ async function handleRequest(context) {
       }
     }
     return json(200, { published });
+  }
+
+  // GET /read/:storyId — tracking reader page for story engagement
+  if (request.method === "GET" && matchPath(request.pathname, /^\/read\/([^/]+)$/)) {
+    const storyId = request.pathname.split("/")[2];
+    const story = await safeLoad(() => repository.getStory(storyId), null);
+    if (!story) return json(404, { error: "Not found" });
+    const why = story.metadata?.why_today ?? "";
+    const excerpt = (story.story_text ?? story.summary ?? "").slice(0, 600);
+    const displayText = why || excerpt;
+    const sourceUrl = story.primary_source_url ?? "";
+    const title = story.title ?? "Story";
+    const trackBase = `${readerBaseUrl}/track/${storyId}`;
+    const html = `<!doctype html><html><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${title.replace(/</g, "&lt;")}</title>
+<meta property="og:title" content="${title.replace(/"/g, "&quot;")}">
+<meta property="og:description" content="${displayText.slice(0, 200).replace(/"/g, "&quot;")}">
+<meta property="og:type" content="article">
+<style>
+  body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:680px;margin:40px auto;padding:0 20px;color:#1a1a1a;line-height:1.6}
+  h1{font-size:1.4rem;font-weight:700;margin-bottom:16px}
+  p{margin:0 0 20px;color:#333}
+  .why{background:#f5f5f5;border-left:3px solid #555;padding:12px 16px;margin-bottom:24px;font-style:italic;color:#444}
+  a.read-btn{display:inline-block;background:#1a1a1a;color:#fff;padding:12px 24px;text-decoration:none;border-radius:6px;font-weight:600}
+  .meta{font-size:0.8rem;color:#999;margin-top:32px}
+</style>
+</head><body>
+<h1>${title.replace(/</g, "&lt;")}</h1>
+${why ? `<div class="why">${why.replace(/</g, "&lt;")}</div>` : ""}
+${!why && excerpt ? `<p>${excerpt.replace(/</g, "&lt;")}</p>` : ""}
+${sourceUrl ? `<a class="read-btn" href="${sourceUrl}" target="_blank" rel="noopener" onclick="track('click')">Read full article →</a>` : ""}
+<div class="meta">vivo · ${new Date().toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"})}</div>
+<script>
+  var start=Date.now(),tracked={};
+  function track(e,d){if(tracked[e])return;tracked[e]=1;var b=new XMLHttpRequest();b.open("POST","${trackBase}/"+e);b.setRequestHeader("content-type","application/json");b.send(JSON.stringify(d||{}));}
+  track("open");
+  window.addEventListener("scroll",function(){var s=document.documentElement;var p=Math.round(s.scrollTop/(s.scrollHeight-s.clientHeight)*100);if(p>=80)track("read",{scroll_pct:p});});
+  window.addEventListener("beforeunload",function(){track("close",{seconds:Math.round((Date.now()-start)/1000)});});
+</script>
+</body></html>`;
+    return { status: 200, headers: { "content-type": "text/html; charset=utf-8" }, body: html };
+  }
+
+  // POST /track/:storyId/:event — record reader engagement event
+  if (request.method === "POST" && matchPath(request.pathname, /^\/track\/([^/]+)\/(open|read|click|close)$/)) {
+    const parts = request.pathname.split("/");
+    const storyId = parts[2];
+    const event = parts[3];
+    const story = await safeLoad(() => repository.getStory(storyId), null);
+    if (!story) return json(200, { ok: true });
+    const body = readBody(request.body);
+    const now = clock();
+    const metaUpdate = {};
+    if (event === "open") metaUpdate.chon_opened_at = now;
+    if (event === "read") metaUpdate.chon_read_pct = body.scroll_pct ?? 80;
+    if (event === "click") metaUpdate.chon_clicked_at = now;
+    if (event === "close") metaUpdate.chon_read_seconds = body.seconds ?? 0;
+    await repository.updateStory(storyId, {
+      metadata: { ...story.metadata, ...metaUpdate }
+    }, { actorId: "reader-tracker" }).catch(() => {});
+    return json(200, { ok: true });
+  }
+
+  // POST /api/audiences/:audienceId/post-telegram — format story and send to Telegram channel
+  if (request.method === "POST" && matchPath(request.pathname, /^\/api\/audiences\/([^/]+)\/post-telegram$/)) {
+    const rawAudienceId = request.pathname.split("/")[3];
+    let audience = await safeLoad(() => repository.getAudience(rawAudienceId), null);
+    if (!audience) {
+      const all = await safeLoad(() => repository.listAudiences(), []);
+      audience = all.find(a => a.audience_key === rawAudienceId) ?? null;
+    }
+    if (!audience) return json(404, { error: "Audience not found" });
+
+    const body = readBody(request.body);
+    const storyId = body.story_id ? String(body.story_id) : null;
+    if (!storyId) return json(400, { error: "story_id is required" });
+
+    const instance = typeof repository.getInstanceByAudience === "function"
+      ? await safeLoad(() => repository.getInstanceByAudience(audience.id), null)
+      : null;
+    const instanceRC = instance?.runtime_config ?? {};
+    const runtimeRC = audienceRuntimeConfig?.[audience.audience_key] ?? {};
+
+    const botToken = instanceRC.telegram_bot_token || runtimeRC.telegram_bot_token || "";
+    const chatId = instanceRC.telegram_chat_id || runtimeRC.telegram_chat_id || "";
+    if (!botToken || !chatId) return json(503, { error: "Telegram not configured for this audience" });
+
+    const story = await safeLoad(() => repository.getStory(storyId), null);
+    if (!story) return json(404, { error: "Story not found" });
+
+    const videoAsset = story.assets?.find(a => a.asset_type === "video" && a.status === "ready" && a.is_selected)
+      ?? story.assets?.find(a => a.asset_type === "video" && a.status === "ready");
+    const videoUrl = videoAsset?.download_url ?? null;
+    if (!videoUrl) return json(503, { error: "No ready video asset — post will be triggered by 995b after generation completes" });
+
+    const why = story.metadata?.why_today ?? "";
+    const fallback = (story.story_text ?? story.summary ?? "").slice(0, 600);
+    const body2 = (why || fallback).slice(0, 800);
+    const storyType = story.metadata?.story_type ?? "news";
+    const ctaText = story.metadata?.cta_text ?? deriveCta(storyType);
+    const sourceUrl = story.primary_source_url ?? "";
+    const message = [
+      `<b>${story.title}</b>`,
+      body2,
+      sourceUrl ? `<a href="${sourceUrl}">${ctaText} →</a>` : null
+    ].filter(Boolean).join("\n\n");
+
+    const tgPayload = { chat_id: chatId, video: videoUrl, caption: message, parse_mode: "HTML", supports_streaming: true };
+    const tgRes = await fetchImpl(`https://api.telegram.org/bot${botToken}/sendVideo`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(tgPayload)
+    });
+    if (!tgRes.ok) {
+      const err = await tgRes.text().catch(() => "");
+      return json(502, { error: `Telegram sendVideo failed: ${tgRes.status} ${err.slice(0, 200)}` });
+    }
+    const tgData = await tgRes.json().catch(() => ({}));
+    const telegramMessageId = tgData.result?.message_id ?? null;
+    const now = clock();
+    const existing = await safeLoad(() => repository.getStory(storyId), null);
+    if (existing) {
+      await repository.updateStory(storyId, {
+        metadata: { ...existing.metadata, telegram_message_id: telegramMessageId, telegram_chat_id: chatId, published_at: now }
+      }, { actorId: "post-telegram" });
+      await repository.transitionStoryStatus(storyId, "published", { actorId: "post-telegram" });
+    }
+    return json(200, { success: true, telegram_message_id: telegramMessageId });
+  }
+
+  // POST /api/audiences/:audienceId/telegram-webhook — receive reaction updates from Telegram bot webhook
+  if (request.method === "POST" && matchPath(request.pathname, /^\/api\/audiences\/([^/]+)\/telegram-webhook$/)) {
+    const rawAudienceId = request.pathname.split("/")[3];
+    let audience = await safeLoad(() => repository.getAudience(rawAudienceId), null);
+    if (!audience) {
+      const all = await safeLoad(() => repository.listAudiences(), []);
+      audience = all.find(a => a.audience_key === rawAudienceId) ?? null;
+    }
+    if (!audience) return json(404, { error: "Audience not found" });
+
+    const runtimeRC = audienceRuntimeConfig?.[audience.audience_key] ?? {};
+    const chonUserId = runtimeRC.chon_telegram_user_id ?? null;
+
+    const update = readBody(request.body);
+    const reaction = update?.message_reaction;
+    if (!reaction) return json(200, { ok: true });
+
+    const fromId = reaction.user?.id ?? reaction.actor_chat?.id ?? null;
+    if (!chonUserId || String(fromId) !== String(chonUserId)) return json(200, { ok: true });
+
+    const messageId = reaction.message_id;
+    if (!messageId) return json(200, { ok: true });
+
+    const newReactions = (reaction.new_reaction ?? []).map(r => r.emoji ?? r.type ?? r.custom_emoji_id ?? "?");
+    const allStories = await safeLoad(() => repository.listStories({ audience_id: audience.id }), []);
+    const story = allStories.find(s => s.metadata?.telegram_message_id === messageId);
+    if (!story) return json(200, { ok: true });
+
+    const reactionEmoji = newReactions.length ? newReactions[0] : null;
+    await repository.updateStory(story.id, {
+      metadata: { ...story.metadata, chon_reaction: reactionEmoji, chon_reacted_at: clock() }
+    }, { actorId: "telegram-webhook" });
+
+    return json(200, { ok: true });
+  }
+
+  // POST /api/audiences/:audienceId/post-tweet — post a pre-built tweet string on behalf of an audience
+  if (request.method === "POST" && matchPath(request.pathname, /^\/api\/audiences\/([^/]+)\/post-tweet$/)) {
+    const audienceId = request.pathname.split("/")[3];
+    let audience = await safeLoad(() => repository.getAudience(audienceId), null);
+    if (!audience) {
+      const all = await safeLoad(() => repository.listAudiences(), []);
+      audience = all.find(a => a.audience_key === audienceId) ?? null;
+    }
+    if (!audience) return json(404, { error: "Audience not found" });
+
+    const body = readBody(request.body);
+    const text = String(body.text ?? "").trim();
+    if (!text) return json(400, { error: "text is required" });
+
+    const instance = typeof repository.getInstanceByAudience === "function"
+      ? await safeLoad(() => repository.getInstanceByAudience(audience.id), null)
+      : null;
+    const instanceRC = instance?.runtime_config ?? {};
+    const runtimeRC = audienceRuntimeConfig?.[audience.audience_key] ?? {};
+    const mergedConfig = { ...runtimeRC, ...instanceRC };
+
+    if (!publishService) return json(503, { error: "Publish service not configured" });
+
+    const result = await publishService.postTweetRaw(text, mergedConfig, null);
+    return json(200, { success: true, data: result?.data ?? result });
+  }
+
+  // POST /api/stories/:storyId/mark-published — transition story to published and record tweet metadata
+  if (request.method === "POST" && matchPath(request.pathname, /^\/api\/stories\/([^/]+)\/mark-published$/)) {
+    const storyId = request.pathname.split("/")[3];
+    const story = await safeLoad(() => repository.getStory(storyId), null);
+    if (!story) return json(404, { error: "Story not found" });
+
+    const body = readBody(request.body);
+    const now = clock();
+    const publishedAt = body.published_at ?? now;
+    const tweetId = body.tweet_id ?? null;
+
+    await repository.transitionStoryStatus(storyId, "published", { actorId: "n8n", timestamp: now });
+    await repository.updateStory(storyId, {
+      metadata: { ...story.metadata, published_at: publishedAt, ...(tweetId ? { tweet_id: tweetId } : {}) }
+    }, { actorId: "n8n", timestamp: now });
+
+    return json(200, { success: true });
+  }
+
+  // POST /api/audiences/:audienceId/archive-daily-remainder — archive all remaining ready_to_publish stories (end-of-day cleanup)
+  if (request.method === "POST" && matchPath(request.pathname, /^\/api\/audiences\/([^/]+)\/archive-daily-remainder$/)) {
+    const rawAudienceId = request.pathname.split("/")[3];
+    let audience = await safeLoad(() => repository.getAudience(rawAudienceId), null);
+    if (!audience) {
+      const all = await safeLoad(() => repository.listAudiences(), []);
+      audience = all.find(a => a.audience_key === rawAudienceId) ?? null;
+    }
+    if (!audience) return json(404, { error: "Audience not found" });
+
+    const allStories = await safeLoad(() => repository.listStories({ audience_id: audience.id }), []);
+    const toArchive = allStories.filter(s => s.status === "ready_to_publish");
+    const now = clock();
+    await Promise.all(
+      toArchive.map(s =>
+        repository.transitionStoryStatus(s.id, "archived", { actorId: "daily-cleanup", timestamp: now })
+      )
+    );
+    return json(200, { success: true, archived: toArchive.length });
+  }
+
+  // POST /api/audiences/:audienceId/flush-marble-feedback — send engagement signals back to Marble for learning
+  if (request.method === "POST" && matchPath(request.pathname, /^\/api\/audiences\/([^/]+)\/flush-marble-feedback$/)) {
+    const rawAudienceId = request.pathname.split("/")[3];
+    let audience = await safeLoad(() => repository.getAudience(rawAudienceId), null);
+    if (!audience) {
+      const all = await safeLoad(() => repository.listAudiences(), []);
+      audience = all.find(a => a.audience_key === rawAudienceId) ?? null;
+    }
+    if (!audience) return json(404, { error: "Audience not found" });
+
+    if (!profileClientFactory) return json(400, { error: "No profile client configured" });
+    const instance = typeof repository.getInstanceByAudience === "function"
+      ? await safeLoad(() => repository.getInstanceByAudience(audience.id), null)
+      : null;
+    const profileClient = profileClientFactory({ audience, instance });
+    if (!profileClient) return json(400, { error: "No profile client configured" });
+
+    const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    const allStories = await safeLoad(() => repository.listStories({ audience_id: audience.id }), []);
+    const toFeed = allStories.filter(s =>
+      s.status === "published" &&
+      (s.metadata?.published_at ?? "") >= cutoff
+    );
+
+    let fed = 0;
+    for (const story of toFeed) {
+      const reaction = deriveMarbleReaction(story.metadata ?? {});
+      if (!reaction) continue;
+      await profileClient.storeDecision({
+        decisionType: "feedback",
+        source: "daily_engagement",
+        content: { id: story.id, title: story.title ?? "", topics: story.metadata?.topics ?? [], source: story.source_name ?? "" },
+        reaction,
+        recorded_at: story.metadata?.chon_reacted_at ?? story.metadata?.chon_opened_at ?? clock()
+      }).catch((err) => console.error("[marble] storeDecision failed:", err.message));
+      fed++;
+    }
+    return json(200, { success: true, fed });
   }
 
   if (request.method === "GET" && matchPath(request.pathname, /^\/api\/merchants$/)) {
@@ -1347,6 +1651,7 @@ function renderDashboard(model) {
         metadataJson,
         selectedAssetId,
         publicationTarget,
+        heroImageUrl: model.activeStory?.hero_image_url ?? null,
         closeHref: buildDashboardHref(model.filters, "")
       })
     : "";
@@ -1739,6 +2044,7 @@ function renderStoriesWorkspace(context) {
         <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700" data-tremor-component="Table">
           <thead class="bg-gray-50 dark:bg-gray-800/50">
             <tr>
+              <th class="px-3 py-3 w-14"></th>
               <th class="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Story</th>
               <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Audience</th>
               <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Status</th>
@@ -1749,7 +2055,7 @@ function renderStoriesWorkspace(context) {
             </tr>
           </thead>
           <tbody class="divide-y divide-gray-100 dark:divide-gray-700 bg-white dark:bg-gray-800">
-            ${storyTableRows || `<tr><td colspan="7" class="px-6 py-4 text-sm text-gray-500 dark:text-gray-400">No stories match these filters.</td></tr>`}
+            ${storyTableRows || `<tr><td colspan="8" class="px-6 py-4 text-sm text-gray-500 dark:text-gray-400">No stories match these filters.</td></tr>`}
           </tbody>
         </table>
       </div>`
@@ -1787,7 +2093,13 @@ function renderStoryTableRows(stories, filters, activeStoryId) {
       ? `${story.publication_target.channel}:${story.publication_target.target_identifier}`
       : "unconfigured";
     const isActive = story.id === activeStoryId;
+    const heroThumb = story.hero_image_url
+      ? `<img src="${escapeAttribute(story.hero_image_url)}" alt="" class="w-10 h-10 rounded object-cover" />`
+      : `<div class="w-10 h-10 rounded bg-gray-100 dark:bg-gray-700"></div>`;
     return `<tr class="${isActive ? "bg-blue-50 dark:bg-blue-900/20" : "hover:bg-gray-50 dark:hover:bg-gray-700/50"} transition-colors cursor-pointer" data-story-href="${escapeAttribute(href)}">
+      <td class="px-3 py-2">
+        <a class="block" href="${escapeAttribute(href)}">${heroThumb}</a>
+      </td>
       <td class="px-6 py-3">
         <a class="block" href="${escapeAttribute(href)}">
           <div class="text-sm font-medium text-gray-900 dark:text-gray-100">${escapeHtml(story.title)}</div>
@@ -1804,7 +2116,7 @@ function renderStoryTableRows(stories, filters, activeStoryId) {
   }).join("");
 }
 
-function renderStoryDetailDrawer({ story, assetCards, publicationItems, reviewItems, metadataJson, selectedAssetId, publicationTarget, closeHref }) {
+function renderStoryDetailDrawer({ story, assetCards, publicationItems, reviewItems, metadataJson, selectedAssetId, publicationTarget, closeHref, heroImageUrl }) {
   return `<div class="fixed inset-0 z-40" data-tremor-component="DrawerPortal">
   <a class="fixed inset-0 bg-gray-900/50 dark:bg-gray-900/70 backdrop-blur-sm z-40"
      href="${escapeAttribute(closeHref)}" aria-label="Close story details"></a>
@@ -1835,6 +2147,11 @@ function renderStoryDetailDrawer({ story, assetCards, publicationItems, reviewIt
           <dd class="mt-0.5 text-sm font-medium text-gray-900 dark:text-gray-100 break-all">${escapeHtml(v)}</dd>
         </div>`).join("")}
       </dl>
+
+      ${heroImageUrl ? `<section>
+        <h3 class="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-3">Hero Image</h3>
+        <img src="${escapeAttribute(heroImageUrl)}" alt="Hero image" class="w-full max-h-64 rounded-lg object-cover border border-gray-200 dark:border-gray-700" />
+      </section>` : ""}
 
       <section>
         <div class="flex items-start justify-between gap-3 mb-4">
@@ -1946,7 +2263,7 @@ function renderAudiencesWorkspace({ model, deployments, selectedAudience, select
     const statusClass = audience.status === "active" ? "badge-active" : audience.status === "new" ? "badge-new" : "badge-neutral";
     const interestTags = interests.map((i) => `<span class="badge-neutral text-xs px-1.5 py-0.5 rounded-full">${escapeHtml(i)}</span>`).join("");
 
-    const marbleBase = rconf.plugin_base_url ?? "";
+    const marbleBase = rconf.profile_public_url ?? rconf.plugin_base_url ?? "";
     const marbleLink = marbleBase
       ? `<a href="${escapeAttribute(marbleBase + "/user-profile/graph/ui")}" target="_blank" rel="noopener"
             onclick="event.stopPropagation()"
@@ -2422,7 +2739,8 @@ function renderAudienceDrawer({ audience, instance, profileState = {}, deploymen
     : `<div class="w-12 h-12 rounded-full bg-indigo-100 dark:bg-indigo-900/40 flex items-center justify-center text-sm font-bold text-indigo-600 dark:text-indigo-300 flex-shrink-0">${escapeHtml(initials)}</div>`;
   const statusClass = audience.status === "active" ? "badge-active" : audience.status === "new" ? "badge-new" : "badge-neutral";
 
-  const marbleUrl = deployment?.profile_base_url ? `${deployment.profile_base_url}/user-profile/graph/ui` : null;
+  const marbleUrl = (deployment?.profile_public_url ?? deployment?.profile_base_url)
+    ? `${deployment.profile_public_url ?? deployment.profile_base_url}/user-profile/graph/ui` : null;
   const openclawUrl = deployment?.openclaw_admin_url ?? null;
 
   const interests = normalizeAudienceList(audience.interests ?? []);
@@ -3061,15 +3379,45 @@ function renderDashboardScript() {
         });
       });
 
-      document.querySelectorAll("form[data-launch-audience-id]").forEach((form) => {
-        form.addEventListener("submit", async (event) => {
-          event.preventDefault();
-          await postInstance("/api/audiences/" + form.dataset.launchAudienceId + "/launch", {
+      async function handleLaunchDeployment(btn) {
+        console.error("[handleLaunchDeployment] invoked");
+        const form = btn.closest("form[data-launch-audience-id]");
+        const statusEl = form?.querySelector(".launch-status-msg");
+        function showStatus(msg, isError) {
+          if (!statusEl) return;
+          statusEl.textContent = msg;
+          statusEl.style.color = isError ? "#dc2626" : "#16a34a";
+        }
+        if (!form) { showStatus("Launch form not found.", true); return; }
+        const audienceId = form.dataset.launchAudienceId;
+        const botToken = (form.querySelector('[name="telegram_bot_token"]')?.value ?? "").trim();
+        const chatId = (form.querySelector('[name="telegram_chat_id"]')?.value ?? "").trim();
+        if (!botToken || !chatId) {
+          showStatus("Telegram Bot Token and Chat ID are required.", true);
+          return;
+        }
+        btn.disabled = true;
+        btn.textContent = "Launching…";
+        showStatus("Sending request…", false);
+        try {
+          const result = await sendJson("/api/audiences/" + audienceId + "/launch", "POST", {
             operator: "operator@example.com",
             runtime_config: formRuntimeConfig(form)
           });
-        });
-      });
+          if (result.exitCode && result.exitCode !== 0) {
+            showStatus("Docker error: " + (result.stderr || result.stdout || String(result.exitCode)), true);
+            btn.disabled = false;
+            btn.textContent = "Launch Deployment";
+          } else {
+            showStatus("Launched! Reloading…", false);
+            setTimeout(() => window.location.reload(), 1200);
+          }
+        } catch (err) {
+          showStatus(err.message || "Launch failed.", true);
+          btn.disabled = false;
+          btn.textContent = "Launch Deployment";
+        }
+      }
 
       document.querySelectorAll("form[data-profile-facts-audience-id]").forEach((form) => {
         form.addEventListener("submit", async (event) => {
@@ -3386,7 +3734,7 @@ function renderDashboardScript() {
           ctx.notable_features ? ctx.notable_features : null
         ].filter(Boolean);
         chips.innerHTML = entries.map(function(e) {
-          return '<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-indigo-50 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-700">' + escapeHtml(e) + '</span>';
+          return '<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-indigo-50 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-700">' + escapeHtmlClient(e) + '</span>';
         }).join('');
         chips.classList.remove('hidden');
         chips.classList.add('flex');
@@ -3676,8 +4024,8 @@ function renderLaunchConfigForm(audience, instance) {
   const labelClass = "block text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-1.5";
   return `<form class="space-y-4" data-launch-audience-id="${escapeAttribute(audience.id)}">
     <div class="grid grid-cols-2 gap-3">
-      <label class="block"><span class="${labelClass}">Telegram Bot Token</span><input name="telegram_bot_token" value="${value("telegram_bot_token")}" autocomplete="off" required class="${inputClass}" /></label>
-      <label class="block"><span class="${labelClass}">Telegram Channel ID</span><input name="telegram_chat_id" value="${value("telegram_chat_id")}" placeholder="-100..." required class="${inputClass}" /></label>
+      <label class="block"><span class="${labelClass}">Telegram Bot Token <span class="font-normal normal-case text-red-500">*</span></span><input name="telegram_bot_token" value="${value("telegram_bot_token")}" autocomplete="off" placeholder="123456:ABC-DEF…" class="${inputClass}" /></label>
+      <label class="block"><span class="${labelClass}">Telegram Channel ID <span class="font-normal normal-case text-red-500">*</span></span><input name="telegram_chat_id" value="${value("telegram_chat_id")}" placeholder="-100..." class="${inputClass}" /></label>
       <label class="block col-span-2"><span class="${labelClass}">Twitter / X API Key <span class="font-normal normal-case text-gray-400">(optional)</span></span><input name="twitter_api_key" value="${value("twitter_api_key")}" autocomplete="off" class="${inputClass}" /></label>
       <label class="block"><span class="${labelClass}">Twitter / X API Secret</span><input name="twitter_api_secret" value="${value("twitter_api_secret")}" autocomplete="off" class="${inputClass}" /></label>
       <label class="block"><span class="${labelClass}">Twitter / X Access Token</span><input name="twitter_access_token" value="${value("twitter_access_token")}" autocomplete="off" class="${inputClass}" /></label>
@@ -3693,8 +4041,9 @@ function renderLaunchConfigForm(audience, instance) {
       <label class="block"><span class="${labelClass}">LLM Model</span><input name="llm_model" value="${value("llm_model")}" placeholder="global default" class="${inputClass}" /></label>
       <label class="block"><span class="${labelClass}">LLM Base URL</span><input name="llm_base_url" value="${value("llm_base_url")}" placeholder="global default" class="${inputClass}" /></label>
     </div>
-    <div class="flex justify-end">
-      <button type="submit" class="rounded-md bg-gray-900 dark:bg-gray-100 px-3 py-1.5 text-sm font-medium text-white dark:text-gray-900 hover:bg-gray-700 transition-colors cursor-pointer">Launch Deployment</button>
+    <div class="flex items-center justify-between gap-3">
+      <span class="launch-status-msg text-sm"></span>
+      <button type="button" onclick="handleLaunchDeployment(this)" class="rounded-md bg-gray-900 dark:bg-gray-100 px-3 py-1.5 text-sm font-medium text-white dark:text-gray-900 hover:bg-gray-700 transition-colors cursor-pointer">Launch Deployment</button>
     </div>
   </form>`;
 }
