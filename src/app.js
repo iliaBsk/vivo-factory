@@ -942,6 +942,75 @@ async function handleRequest(context) {
     }));
   }
 
+  // GET /api/audiences/:id/protagonist-images
+  if (request.method === "GET" && matchPath(request.pathname, /^\/api\/audiences\/([^/]+)\/protagonist-images$/)) {
+    const audienceId = request.pathname.split("/")[3];
+    const audience = await safeLoad(() => repository.getAudience(audienceId), null);
+    if (!audience) return json(404, { error: "Audience not found" });
+    const images = await repository.getProtagonistImages(audienceId);
+    const data = {};
+    for (const [category, info] of images) data[category] = info;
+    return json(200, { success: true, data: { images: data } });
+  }
+
+  // POST /api/audiences/:id/protagonist-images/:category
+  if (request.method === "POST" && matchPath(request.pathname, /^\/api\/audiences\/([^/]+)\/protagonist-images\/([^/]+)$/)) {
+    const parts = request.pathname.split("/");
+    const audienceId = parts[3];
+    const category = parts[5];
+    const VALID_CATEGORIES = new Set(['news','events','food','deals','tech','entertainment','health','sports','finance','fashion','travel']);
+    if (!VALID_CATEGORIES.has(category)) return json(400, { error: "Invalid category" });
+    const audience = await safeLoad(() => repository.getAudience(audienceId), null);
+    if (!audience) return json(404, { error: "Audience not found" });
+    const body = readBody(request.body);
+    const photo = body.photo ?? null;
+    if (!photo) return json(400, { error: "photo is required" });
+    const allowedMimes = ["image/jpeg", "image/png", "image/webp", "image/gif"];
+    if (!allowedMimes.includes(photo.mime_type)) return json(400, { error: "photo.mime_type must be jpeg, png, webp, or gif" });
+    if ((photo.size_bytes ?? 0) > 5 * 1024 * 1024) return json(400, { error: "Photo must be under 5 MB" });
+    if (!photo.file_data_base64) return json(400, { error: "photo.file_data_base64 is required" });
+    try {
+      const storageObjectId = await repository.upsertProtagonistImage(audienceId, category, photo);
+      return json(200, { success: true, data: { storage_object_id: storageObjectId } });
+    } catch (err) {
+      console.error("[protagonist-images] upload failed:", err.message);
+      return json(500, { error: "Failed to upload image" });
+    }
+  }
+
+  // DELETE /api/audiences/:id/protagonist-images/:category
+  if (request.method === "DELETE" && matchPath(request.pathname, /^\/api\/audiences\/([^/]+)\/protagonist-images\/([^/]+)$/)) {
+    const parts = request.pathname.split("/");
+    const audienceId = parts[3];
+    const category = parts[5];
+    const audience = await safeLoad(() => repository.getAudience(audienceId), null);
+    if (!audience) return json(404, { error: "Audience not found" });
+    const deleted = await repository.deleteProtagonistImage(audienceId, category);
+    if (!deleted) return json(404, { error: "No protagonist image set for this category" });
+    return json(200, { success: true });
+  }
+
+  // POST /api/audiences/:id/photo — replace hero image post-creation
+  if (request.method === "POST" && matchPath(request.pathname, /^\/api\/audiences\/([^/]+)\/photo$/)) {
+    const audienceId = request.pathname.split("/")[3];
+    const audience = await safeLoad(() => repository.getAudience(audienceId), null);
+    if (!audience) return json(404, { error: "Audience not found" });
+    const body = readBody(request.body);
+    const photo = body.photo ?? null;
+    if (!photo) return json(400, { error: "photo is required" });
+    const allowedMimes = ["image/jpeg", "image/png", "image/webp", "image/gif"];
+    if (!allowedMimes.includes(photo.mime_type)) return json(400, { error: "photo.mime_type must be jpeg, png, webp, or gif" });
+    if ((photo.size_bytes ?? 0) > 5 * 1024 * 1024) return json(400, { error: "Photo must be under 5 MB" });
+    if (!photo.file_data_base64) return json(400, { error: "photo.file_data_base64 is required" });
+    try {
+      await repository.storeAudiencePhoto(audienceId, photo);
+      return json(200, { success: true });
+    } catch (err) {
+      console.error("[audiences/photo] upload failed:", err.message);
+      return json(500, { error: "Failed to upload photo" });
+    }
+  }
+
   // POST /api/audiences/:id/fetch-content
   if (request.method === "POST" && matchPath(request.pathname, /^\/api\/audiences\/([^/]+)\/fetch-content$/)) {
     if (!dispatchFetch) {
