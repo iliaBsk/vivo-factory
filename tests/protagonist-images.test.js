@@ -114,6 +114,13 @@ test("POST /api/audiences/:id/protagonist-images/:category — returns 200 on su
   assert.equal(JSON.parse(res.body).data.storage_object_id, "so-new");
 });
 
+test("DELETE /api/audiences/:id/protagonist-images/:category — returns 400 for invalid category", async () => {
+  const app = makeApp();
+  const res = await handle(app, "DELETE", "/api/audiences/aud-1/protagonist-images/bad-cat");
+  assert.equal(res.status, 400);
+  assert.ok(JSON.parse(res.body).error.includes("Invalid category"));
+});
+
 test("DELETE /api/audiences/:id/protagonist-images/:category — returns 404 when no image set", async () => {
   const app = makeApp({
     deleteProtagonistImage: async () => false

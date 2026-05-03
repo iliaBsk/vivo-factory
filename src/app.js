@@ -8,6 +8,8 @@ import {
 } from "./tremor-dashboard.js";
 import { getSourcesForAudience } from "./sources-catalog.js";
 
+const VALID_CATEGORIES = new Set(['news','events','food','deals','tech','entertainment','health','sports','finance','fashion','travel']);
+
 export function createApp(options) {
   const repository = options.repository;
   const instanceManager = options.instanceManager ?? null;
@@ -958,7 +960,6 @@ async function handleRequest(context) {
     const parts = request.pathname.split("/");
     const audienceId = parts[3];
     const category = parts[5];
-    const VALID_CATEGORIES = new Set(['news','events','food','deals','tech','entertainment','health','sports','finance','fashion','travel']);
     if (!VALID_CATEGORIES.has(category)) return json(400, { error: "Invalid category" });
     const audience = await safeLoad(() => repository.getAudience(audienceId), null);
     if (!audience) return json(404, { error: "Audience not found" });
@@ -983,6 +984,7 @@ async function handleRequest(context) {
     const parts = request.pathname.split("/");
     const audienceId = parts[3];
     const category = parts[5];
+    if (!VALID_CATEGORIES.has(category)) return json(400, { error: "Invalid category" });
     const audience = await safeLoad(() => repository.getAudience(audienceId), null);
     if (!audience) return json(404, { error: "Audience not found" });
     const deleted = await repository.deleteProtagonistImage(audienceId, category);
