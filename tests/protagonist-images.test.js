@@ -158,3 +158,32 @@ test("POST /api/audiences/:id/photo — returns 200 on success", async () => {
   assert.equal(res.status, 200);
   assert.equal(JSON.parse(res.body).success, true);
 });
+
+test("renderAudienceDrawer includes Images tab button", async () => {
+  const repo = createRepository(SEED);
+  const app = createApp({ repository: repo, fetchImpl: async () => { throw new Error("unexpected"); } });
+  const res = await app.handle({
+    method: "GET",
+    pathname: "/",
+    query: { tab: "audiences", audience_id: "aud-1" }
+  });
+  assert.equal(res.status, 200);
+  assert.ok(res.body.includes("Images"), "drawer should include Images tab");
+  assert.ok(res.body.includes('data-tab="images"'), 'drawer tab button should have data-tab=images');
+});
+
+test("renderAudienceDrawer Images tab shows category grid with 11 categories", async () => {
+  const repo = createRepository(SEED);
+  const app = createApp({ repository: repo, fetchImpl: async () => { throw new Error("unexpected"); } });
+  const res = await app.handle({
+    method: "GET",
+    pathname: "/",
+    query: { tab: "audiences", audience_id: "aud-1" }
+  });
+  assert.equal(res.status, 200);
+  const body = res.body;
+  const categories = ['news','events','food','deals','tech','entertainment','health','sports','finance','fashion','travel'];
+  for (const cat of categories) {
+    assert.ok(body.includes(`data-upload-category="${cat}"`), `missing upload target for ${cat}`);
+  }
+});

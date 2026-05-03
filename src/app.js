@@ -922,6 +922,9 @@ async function handleRequest(context) {
           return repository.getConversationMessages(conv.id);
         })()
       : [];
+    const protagonistImages = selectedAudience && activeTab === "audiences"
+      ? await safeLoad(() => repository.getProtagonistImages(selectedAudience.id), new Map())
+      : new Map();
     return html(200, renderDashboard({
       activeTab,
       selectedAudienceId,
@@ -937,6 +940,7 @@ async function handleRequest(context) {
       analyticsItems,
       instances,
       chatHistory,
+      protagonistImages,
       merchants,
       activeMerchant,
       activeMerchantOverrides,
@@ -1736,7 +1740,8 @@ function renderDashboard(model) {
         profileState: selectedProfileState,
         deployment: selectedDeployment,
         deployments,
-        chatHistory: model.chatHistory ?? []
+        chatHistory: model.chatHistory ?? [],
+        protagonistImages: model.protagonistImages ?? new Map()
       })
     : "";
   const workspace = activeTab === "stories"
@@ -2800,7 +2805,7 @@ function renderDeploymentIndex(deployments) {
   </div>`;
 }
 
-function renderAudienceDrawer({ audience, instance, profileState = {}, deployment, deployments = [], chatHistory = [] }) {
+function renderAudienceDrawer({ audience, instance, profileState = {}, deployment, deployments = [], chatHistory = [], protagonistImages = new Map() }) {
   const closeHref = "/?tab=audiences";
   const audienceKey = audience.audience_key ?? audience.id;
   const photo = audience.photo_url ?? null;
@@ -2871,6 +2876,71 @@ function renderAudienceDrawer({ audience, instance, profileState = {}, deploymen
       ${renderOperatorConsole(audience, deployment, chatHistory)}
     </div>`;
 
+  const CATEGORY_META = {
+    news:          { icon: '📰', label: 'News' },
+    events:        { icon: '🎭', label: 'Events' },
+    food:          { icon: '🍽', label: 'Food' },
+    deals:         { icon: '🏷', label: 'Deals' },
+    tech:          { icon: '💻', label: 'Tech' },
+    entertainment: { icon: '🎬', label: 'Entertainment' },
+    health:        { icon: '🏃', label: 'Health' },
+    sports:        { icon: '⚽', label: 'Sports' },
+    finance:       { icon: '📈', label: 'Finance' },
+    fashion:       { icon: '👗', label: 'Fashion' },
+    travel:        { icon: '✈', label: 'Travel' }
+  };
+
+  const heroPhotoBlock = audience.hero_image_url
+    ? `<img src="${escapeAttribute(audience.hero_image_url)}" alt="" class="w-16 h-16 rounded-lg object-cover flex-shrink-0" />`
+    : `<div class="w-16 h-16 rounded-lg bg-gray-100 dark:bg-gray-700 flex items-center justify-center text-2xl flex-shrink-0">👤</div>`;
+
+  const protagonistCards = Object.entries(CATEGORY_META).map(([cat, meta]) => {
+    const img = protagonistImages.get(cat);
+    const thumb = img?.url
+      ? `<img src="${escapeAttribute(img.url)}" alt="" class="w-full h-full object-cover rounded-lg" />`
+      : `<div class="w-full h-full flex items-center justify-center text-2xl bg-gray-50 dark:bg-gray-800">${meta.icon}</div>`;
+    const removeBtn = img?.url
+      ? `<button type="button" class="absolute -top-1 -right-1 w-5 h-5 bg-red-500 text-white rounded-full text-xs leading-none flex items-center justify-center hover:bg-red-600 z-10" data-remove-category="${escapeAttribute(cat)}" title="Remove">×</button>`
+      : '';
+    const badge = !img?.url
+      ? `<span class="text-xs text-gray-400 dark:text-gray-500">fallback</span>`
+      : '';
+    return `<div class="flex flex-col items-center gap-1 relative">
+        <div class="relative w-16 h-16 rounded-lg border-2 ${img?.url ? 'border-gray-200 dark:border-gray-600' : 'border-dashed border-gray-300 dark:border-gray-600'} overflow-hidden cursor-pointer hover:border-indigo-400 transition-colors" data-upload-category="${escapeAttribute(cat)}" title="Upload ${escapeAttribute(meta.label)} image">
+          ${thumb}${removeBtn}
+        </div>
+        <span class="text-xs font-medium text-gray-600 dark:text-gray-400">${escapeHtml(meta.label)}</span>
+        ${badge}
+        <input type="file" accept="image/*" class="hidden" data-file-input-category="${escapeAttribute(cat)}">
+      </div>`;
+  }).join('');
+
+  const imagesTab = `
+    <div class="space-y-6 p-5">
+      <div>
+        <span class="label mb-2">Hero Image</span>
+        <div class="flex items-center gap-4 p-4 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50">
+          ${heroPhotoBlock}
+          <div class="flex-1 min-w-0">
+            <p class="text-sm font-medium text-gray-800 dark:text-gray-200 mb-0.5">Personal · Fallback</p>
+            <p class="text-xs text-gray-500 dark:text-gray-400">Used for categories without their own protagonist.</p>
+            <button type="button" id="hero-upload-btn"
+              class="mt-2 px-3 py-1.5 text-xs font-medium bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors">
+              ↑ Replace hero image
+            </button>
+            <input type="file" accept="image/*" class="hidden" id="hero-file-input">
+          </div>
+        </div>
+      </div>
+      <div>
+        <span class="label mb-1">Protagonist Images</span>
+        <p class="text-xs text-gray-500 dark:text-gray-400 mb-3">Click a card to upload. × to remove. Unset cards fall back to hero image.</p>
+        <div class="grid grid-cols-4 gap-4">
+          ${protagonistCards}
+        </div>
+      </div>
+    </div>`;
+
   const audienceKeyJs = JSON.stringify(audienceKey);
 
   return `<div class="fixed inset-0 z-40" data-tremor-component="AudienceDrawerPortal">
@@ -2903,12 +2973,14 @@ function renderAudienceDrawer({ audience, instance, profileState = {}, deploymen
         <button class="audience-drawer-tab px-5 py-3 text-sm font-medium border-b-2 border-indigo-600 text-indigo-600 dark:text-indigo-400 dark:border-indigo-400 -mb-px" data-tab="details" role="tab" aria-selected="true">Details</button>
         <button class="audience-drawer-tab px-5 py-3 text-sm font-medium border-b-2 border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 -mb-px" data-tab="links" role="tab" aria-selected="false">Links</button>
         <button class="audience-drawer-tab px-5 py-3 text-sm font-medium border-b-2 border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 -mb-px" data-tab="chat" role="tab" aria-selected="false">Chat</button>
+        <button class="audience-drawer-tab px-5 py-3 text-sm font-medium border-b-2 border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 -mb-px" data-tab="images" role="tab" aria-selected="false">Images</button>
       </div>
 
       <div class="flex-1 overflow-y-auto">
         <div data-tab-panel="details">${detailsTab}</div>
         <div data-tab-panel="links" class="hidden">${linksTab}</div>
         <div data-tab-panel="chat" class="hidden">${chatTab}</div>
+        <div data-tab-panel="images" class="hidden">${imagesTab}</div>
       </div>
 
     </aside>
@@ -2956,6 +3028,90 @@ function renderAudienceDrawer({ audience, instance, profileState = {}, deploymen
       document.addEventListener('visibilitychange', function() {
         if (document.hidden) clearInterval(drawerPoller);
         else { refreshDrawerStatus(); drawerPoller = setInterval(refreshDrawerStatus, 10000); }
+      });
+
+      // Protagonist image upload
+      var audienceIdJs = ${JSON.stringify(audience.id)};
+
+      function reloadDrawer() { window.location.href = window.location.href; }
+
+      async function uploadImage(endpoint, file) {
+        return new Promise(function(resolve, reject) {
+          var reader = new FileReader();
+          reader.onload = async function(e) {
+            var dataUrl = e.target.result;
+            var comma = dataUrl.indexOf(',');
+            var base64 = comma >= 0 ? dataUrl.slice(comma + 1) : dataUrl;
+            var mimeMatch = dataUrl.match(/^data:([^;]+);/);
+            var mimeType = mimeMatch ? mimeMatch[1] : 'image/jpeg';
+            try {
+              var res = await fetch(endpoint, {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify({ photo: {
+                  file_data_base64: base64,
+                  mime_type: mimeType,
+                  file_name: file.name,
+                  size_bytes: file.size
+                }})
+              });
+              if (!res.ok) {
+                var err = await res.json().catch(function() { return { error: 'Upload failed' }; });
+                reject(new Error(err.error ?? 'Upload failed'));
+              } else {
+                resolve();
+              }
+            } catch(err) { reject(err); }
+          };
+          reader.readAsDataURL(file);
+        });
+      }
+
+      // Hero image replace
+      document.getElementById('hero-upload-btn')?.addEventListener('click', function() {
+        document.getElementById('hero-file-input')?.click();
+      });
+      document.getElementById('hero-file-input')?.addEventListener('change', async function(e) {
+        var file = e.target.files[0];
+        if (!file) return;
+        try {
+          await uploadImage('/api/audiences/' + encodeURIComponent(audienceIdJs) + '/photo', file);
+          reloadDrawer();
+        } catch(err) { alert('Upload failed: ' + err.message); }
+      });
+
+      // Per-category upload — click card to trigger file input
+      document.querySelectorAll('[data-upload-category]').forEach(function(card) {
+        card.addEventListener('click', function(e) {
+          if (e.target.closest('[data-remove-category]')) return;
+          var cat = card.dataset.uploadCategory;
+          document.querySelector('[data-file-input-category="' + cat + '"]')?.click();
+        });
+      });
+      document.querySelectorAll('[data-file-input-category]').forEach(function(input) {
+        input.addEventListener('change', async function(e) {
+          var file = e.target.files[0];
+          if (!file) return;
+          var cat = input.dataset.fileInputCategory;
+          try {
+            await uploadImage('/api/audiences/' + encodeURIComponent(audienceIdJs) + '/protagonist-images/' + encodeURIComponent(cat), file);
+            reloadDrawer();
+          } catch(err) { alert('Upload failed: ' + err.message); }
+        });
+      });
+
+      // Per-category remove
+      document.querySelectorAll('[data-remove-category]').forEach(function(btn) {
+        btn.addEventListener('click', async function(e) {
+          e.stopPropagation();
+          var cat = btn.dataset.removeCategory;
+          if (!confirm('Remove ' + cat + ' protagonist image?')) return;
+          try {
+            var res = await fetch('/api/audiences/' + encodeURIComponent(audienceIdJs) + '/protagonist-images/' + encodeURIComponent(cat), { method: 'DELETE' });
+            if (!res.ok) throw new Error('Delete failed');
+            reloadDrawer();
+          } catch(err) { alert('Remove failed: ' + err.message); }
+        });
       });
     })();
     </script>
