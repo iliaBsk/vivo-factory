@@ -9,6 +9,19 @@ import {
 import { getSourcesForAudience } from "./sources-catalog.js";
 
 const VALID_CATEGORIES = new Set(['news','events','food','deals','tech','entertainment','health','sports','finance','fashion','travel']);
+const CATEGORY_META = {
+  news:          { icon: '📰', label: 'News' },
+  events:        { icon: '🎭', label: 'Events' },
+  food:          { icon: '🍽', label: 'Food' },
+  deals:         { icon: '🏷', label: 'Deals' },
+  tech:          { icon: '💻', label: 'Tech' },
+  entertainment: { icon: '🎬', label: 'Entertainment' },
+  health:        { icon: '🏃', label: 'Health' },
+  sports:        { icon: '⚽', label: 'Sports' },
+  finance:       { icon: '📈', label: 'Finance' },
+  fashion:       { icon: '👗', label: 'Fashion' },
+  travel:        { icon: '✈', label: 'Travel' }
+};
 
 export function createApp(options) {
   const repository = options.repository;
@@ -2876,20 +2889,6 @@ function renderAudienceDrawer({ audience, instance, profileState = {}, deploymen
       ${renderOperatorConsole(audience, deployment, chatHistory)}
     </div>`;
 
-  const CATEGORY_META = {
-    news:          { icon: '📰', label: 'News' },
-    events:        { icon: '🎭', label: 'Events' },
-    food:          { icon: '🍽', label: 'Food' },
-    deals:         { icon: '🏷', label: 'Deals' },
-    tech:          { icon: '💻', label: 'Tech' },
-    entertainment: { icon: '🎬', label: 'Entertainment' },
-    health:        { icon: '🏃', label: 'Health' },
-    sports:        { icon: '⚽', label: 'Sports' },
-    finance:       { icon: '📈', label: 'Finance' },
-    fashion:       { icon: '👗', label: 'Fashion' },
-    travel:        { icon: '✈', label: 'Travel' }
-  };
-
   const heroPhotoBlock = audience.hero_image_url
     ? `<img src="${escapeAttribute(audience.hero_image_url)}" alt="" class="w-16 h-16 rounded-lg object-cover flex-shrink-0" />`
     : `<div class="w-16 h-16 rounded-lg bg-gray-100 dark:bg-gray-700 flex items-center justify-center text-2xl flex-shrink-0">👤</div>`;
@@ -3033,7 +3032,7 @@ function renderAudienceDrawer({ audience, instance, profileState = {}, deploymen
       // Protagonist image upload
       var audienceIdJs = ${JSON.stringify(audience.id)};
 
-      function reloadDrawer() { window.location.href = window.location.href; }
+      function reloadDrawer() { window.location.reload(); }
 
       async function uploadImage(endpoint, file) {
         return new Promise(function(resolve, reject) {
