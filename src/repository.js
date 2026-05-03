@@ -1007,6 +1007,85 @@ export function createSupabaseRepository(options) {
       });
       return rows[0];
     },
+    async getProtagonistImages(audienceId) {
+      const rows = await client.select("vivo_audience_protagonist_images", {
+        audience_id: `eq.${audienceId}`
+      });
+      if (rows.length === 0) return new Map();
+      const storageIds = rows.map(r => r.storage_object_id).filter(Boolean);
+      const storageObjects = storageIds.length > 0
+        ? await client.select("vivo_storage_objects", { id: `in.(${storageIds.join(",")})` })
+        : [];
+      const urlById = new Map(
+        await Promise.all(storageObjects.map(async obj => {
+          const url = await client.signObjectUrl(obj.bucket_name ?? DEFAULT_STORAGE_BUCKET, obj.object_path);
+          return [obj.id, url];
+        }))
+      );
+      const result = new Map();
+      for (const row of rows) {
+        result.set(row.category, {
+          storage_object_id: row.storage_object_id,
+          url: urlById.get(row.storage_object_id) ?? null
+        });
+      }
+      return result;
+    },
+    async upsertProtagonistImage(audienceId, category, photo) {
+      const VALID = new Set(['news','events','food','deals','tech','entertainment','health','sports','finance','fashion','travel']);
+      if (!VALID.has(category)) throw new Error(`Invalid category: ${category}`);
+      const buffer = Buffer.from(photo.file_data_base64, "base64");
+      const ext = photo.mime_type?.split("/")[1] ?? "jpg";
+      const bucket = "vivo-audiences";
+      const storagePath = `${audienceId}/protagonist/${category}.${ext}`;
+      const objectPath = `${bucket}/${storagePath}`;
+      await client.uploadObject(bucket, storagePath, buffer, {
+        contentType: photo.mime_type ?? "image/jpeg"
+      });
+      const storageRows = await client.upsert("vivo_storage_objects", {
+        bucket_name: bucket,
+        object_path: objectPath,
+        file_name: photo.file_name ?? `${category}.${ext}`,
+        mime_type: photo.mime_type ?? "image/jpeg",
+        size_bytes: buffer.length,
+        storage_metadata: {}
+      });
+      const storageObject = Array.isArray(storageRows) ? storageRows[0] : storageRows;
+      if (!storageObject?.id) throw new Error("Failed to create storage object record");
+      await client.upsert("vivo_audience_protagonist_images", {
+        audience_id: audienceId,
+        category,
+        storage_object_id: storageObject.id,
+        updated_at: new Date().toISOString()
+      });
+      return storageObject.id;
+    },
+    async deleteProtagonistImage(audienceId, category) {
+      const existing = await client.select("vivo_audience_protagonist_images", {
+        audience_id: `eq.${audienceId}`,
+        category: `eq.${category}`,
+        limit: "1"
+      });
+      if (existing.length === 0) return false;
+      await client.delete("vivo_audience_protagonist_images", {
+        audience_id: `eq.${audienceId}`,
+        category: `eq.${category}`
+      });
+      return true;
+    },
+    async getEffectiveProtagonistStorageId(audienceId, category) {
+      const rows = await client.select("vivo_audience_protagonist_images", {
+        audience_id: `eq.${audienceId}`,
+        category: `eq.${category}`,
+        limit: "1"
+      });
+      if (rows.length > 0) return rows[0].storage_object_id;
+      const audiences = await client.select("vivo_audiences", {
+        id: `eq.${audienceId}`,
+        limit: "1"
+      });
+      return audiences[0]?.hero_image_asset_storage_id ?? null;
+    },
     async listFeedbackEvents() {
       const items = await client.select("vivo_feedback_events", {
         order: "snapshot_time.desc"
@@ -1469,6 +1548,20 @@ function createSupabaseClient(options) {
           prefer: "return=representation,resolution=merge-duplicates"
         },
         body: JSON.stringify(body)
+      });
+      return parseSupabaseResponse(response);
+    },
+    async delete(table, filters) {
+      const url = new URL(`${baseUrl}/rest/v1/${table}`);
+      for (const [key, value] of Object.entries(filters)) {
+        url.searchParams.set(key, value);
+      }
+      const response = await fetchImpl(url, {
+        method: "DELETE",
+        headers: {
+          ...createSupabaseHeaders(serviceRoleKey),
+          prefer: "return=representation"
+        }
       });
       return parseSupabaseResponse(response);
     },
