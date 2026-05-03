@@ -73,6 +73,19 @@ export function createRepository(seed = {}) {
       state.audiences.set(audienceId, updated);
       return dataUrl;
     },
+    async getProtagonistImages(_audienceId) {
+      return new Map();
+    },
+    async upsertProtagonistImage(_audienceId, _category, _photo) {
+      return null;
+    },
+    async deleteProtagonistImage(_audienceId, _category) {
+      return false;
+    },
+    async getEffectiveProtagonistStorageId(audienceId, _category) {
+      const audience = state.audiences.get(audienceId);
+      return audience?.hero_image_asset_storage_id ?? null;
+    },
     listInstances() {
       return [...state.instances.values()].sort(compareByUpdatedDesc);
     },

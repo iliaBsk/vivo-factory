@@ -1410,3 +1410,18 @@ test("PUT /api/merchants/:id/overrides/:audienceId upserts override", async () =
   const body = JSON.parse(response.body);
   assert.equal(body.enabled, false);
 });
+
+test("file repository getProtagonistImages returns empty Map", async () => {
+  const { createRepository } = await loadModules();
+  const repo = createRepository(createSeed());
+  const images = await repo.getProtagonistImages("aud-1");
+  assert.ok(images instanceof Map);
+  assert.equal(images.size, 0);
+});
+
+test("file repository getEffectiveProtagonistStorageId returns null when no hero", async () => {
+  const { createRepository } = await loadModules();
+  const repo = createRepository(createSeed());
+  const id = await repo.getEffectiveProtagonistStorageId("aud-1", "tech");
+  assert.equal(id, null);
+});
