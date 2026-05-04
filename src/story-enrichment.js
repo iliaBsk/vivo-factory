@@ -63,6 +63,43 @@ Return JSON only:
   "products": "<one precise question about tools, products, or resources that would genuinely benefit them right now given what they're working on>"
 }`;
 
+function buildIntentContextFromMatrix(cells, diffs) {
+  if (!cells?.length) return "";
+  const ORDERED_DOMAINS = ["topics", "personal", "health", "career", "family", "social", "heritage", "wealth"];
+  const byKey = new Map(cells.map(c => [`${c.domain}/${c.horizon}`, c]));
+  const lines = ["\n=== INTENT MATRIX ==="];
+
+  for (const domain of ORDERED_DOMAINS) {
+    const todayCell = byKey.get(`${domain}/today`);
+    if (!todayCell || todayCell.status === "data_sparse") continue;
+    const topGoal = todayCell.goals?.[0]?.text;
+    if (!topGoal) continue;
+    lines.push(`\n[${domain.toUpperCase()}]`);
+    lines.push(`  Goal today: ${topGoal}`);
+    const topAnti = todayCell.anti_goals?.[0]?.text;
+    if (topAnti) lines.push(`  Anti-goal: ${topAnti}`);
+    const topFear = todayCell.fears?.[0]?.text;
+    if (topFear) lines.push(`  Fear: ${topFear}`);
+    const weekGoal = byKey.get(`${domain}/this_week`)?.goals?.[0]?.text;
+    if (weekGoal) lines.push(`  This week: ${weekGoal}`);
+    const relevant = todayCell.relevant_to_know?.[0]?.text;
+    if (relevant) lines.push(`  Relevant today: ${relevant}`);
+  }
+
+  if (diffs?.length > 0) {
+    lines.push("\n=== PRIORITY SIGNALS (recent high-significance shifts) ===");
+    for (const diff of diffs.slice(0, 5)) {
+      const entries = Object.entries(diff.diff ?? {});
+      if (entries.length === 0) continue;
+      const [field, change] = entries[0];
+      const added = change.added?.[0] ?? "";
+      if (added) lines.push(`  ${diff.domain}/${diff.horizon} — new ${field}: "${added}"`);
+    }
+  }
+
+  return lines.join("\n");
+}
+
 function candidateList(stories) {
   return stories.map(s =>
     `id=${s.id}\ntitle: ${s.title}\nsummary: ${(s.story_text ?? s.summary ?? "").slice(0, 300)}\nsource: ${s.source_name ?? ""}`
@@ -140,7 +177,57 @@ Return JSON only:
   };
 }
 
-export function createStoryEnrichmentService({ repository, fetchImpl, envConfig, clock }) {
+// ── Exported pure helpers (also used by tests) ───────────────────────────────
+
+export const REGISTER_VOICE = {
+  informative: "Dry, factual, insider-level. One weirdly specific detail that earns trust. No adjectives that don't carry weight.",
+  inspiring:   "Prove that a trend this person cares about is accelerating. End on momentum, not a recap.",
+  alert:       "Name the specific threat or risk. Concrete implications only. No hedging, no reassurance.",
+  entertaining:"Find the genuinely unexpected or absurd angle. One observation that earns a raised eyebrow.",
+  reflective:  "Connect this to a bigger pattern. Raise the implicit question. Don't answer it.",
+  actionable:  "Give the single most important next action. Specifics: date, place, what to do. Nothing else.",
+  comforting:  "Validate the reader's existing thesis. Confirm the signal they've been watching for.",
+  curious:     "Drop one fact that opens a bigger question. End on the open thread, not the answer.",
+};
+
+export function assignRegister(storyType, marbleMeta) {
+  if (storyType === "local_event") return "actionable";
+  if (storyType === "product") {
+    return (marbleMeta?.dimension_scores?.surprise_score ?? 0) > 0.5 ? "curious" : "actionable";
+  }
+  const ds = marbleMeta?.dimension_scores ?? {};
+  const surprise = ds.surprise_score ?? 0;
+  const insight  = ds.insight_density ?? 0;
+  const depth    = ds.personalization_depth ?? 0;
+  const temporal = ds.temporal_relevance ?? 0;
+  if (surprise > 0.55)               return "curious";
+  if (temporal > 0.65 && depth > 0.45) return "alert";
+  if (insight > 0.55)                return "reflective";
+  if (depth > 0.65)                  return "inspiring";
+  return "informative";
+}
+
+const GUARDRAIL_PATTERNS = [
+  { pattern: /\b(you should (invest|buy|sell|short|long))\b/i, flag: "financial_advice" },
+  { pattern: /\b(guaranteed|risk-free|100% safe)\b/i,          flag: "false_claim" },
+  { pattern: /\b(vote for|elect|support [A-Z][a-z]+ for)\b/i,  flag: "political_opinion" },
+  { pattern: /\b(cure[sd]?|treats?|heals?|eliminates? [a-z]+ disease)\b/i, flag: "medical_claim" },
+];
+
+export function runGuardrails(text, excludedTopics = []) {
+  const flags = [];
+  for (const { pattern, flag } of GUARDRAIL_PATTERNS) {
+    if (pattern.test(text)) flags.push(flag);
+  }
+  for (const topic of excludedTopics) {
+    if (topic && text.toLowerCase().includes(topic.toLowerCase())) {
+      flags.push(`excluded_topic:${topic}`);
+    }
+  }
+  return flags;
+}
+
+export function createStoryEnrichmentService({ repository, fetchImpl, envConfig, clock, userIntentService }) {
   const apiKey = envConfig?.OPENAI_API_KEY ?? "";
   const model = envConfig?.OPENAI_MODEL ?? envConfig?.LLM_MODEL ?? "gpt-4o-mini";
   const baseUrl = String(envConfig?.OPENAI_BASE_URL ?? envConfig?.LLM_BASE_URL ?? "https://api.openai.com/v1").replace(/\/+$/, "");
@@ -195,15 +282,20 @@ export function createStoryEnrichmentService({ repository, fetchImpl, envConfig,
         topics: story.metadata?.topics ?? story.metadata?.tags ?? [],
         source: story.source_name ?? ""
       }));
-      const result = await profileClient.selectItems(items, { category });
-      const scoredItems = result?.data?.items ?? result?.items ?? [];
+      const result = await profileClient.selectItems(items, { category, use_case: 'daily_briefing' });
+      const scoredItems = result?.data?.selected ?? result?.data?.items ?? result?.items ?? [];
       if (scoredItems.length === 0) return gptStories;
-      const marbleScores = new Map(scoredItems.map(i => [i.id, i.score ?? i.marble_score ?? 0]));
+      const marbleMeta = new Map(scoredItems.map(i => [i.id, i]));
       return gptStories
-        .map(entry => ({
-          ...entry,
-          combinedScore: (entry.gptScore * 0.5) + ((marbleScores.get(entry.story.id) ?? 0) * 0.5)
-        }))
+        .map(entry => {
+          const meta = marbleMeta.get(entry.story.id);
+          const marbleScore = meta?.score ?? 0;
+          return {
+            ...entry,
+            combinedScore: (entry.gptScore * 0.5) + (marbleScore * 0.5),
+            marbleMeta: meta ?? null,
+          };
+        })
         .sort((a, b) => b.combinedScore - a.combinedScore);
     } catch (err) {
       console.error(`[enrichment] Marble selectItems error (${category}):`, err.message);
@@ -256,7 +348,81 @@ export function createStoryEnrichmentService({ repository, fetchImpl, envConfig,
     return filtered.slice(0, targetCount);
   }
 
-  async function generateNarration(story, whyToday, storyType) {
+  // ── Editor pipeline ───────────────────────────────────────────────────────
+
+  async function runAdversarialPass(narration, register, audienceSummary) {
+    if (!apiKey) return { approved: true, quality_score: 0.8, flags: [] };
+    const system = `You are a ruthless quality-control editor for a personal daily briefing.
+Audience: ${audienceSummary}
+Assigned register: ${register}
+
+Review the narration below for:
+1. Sensationalism or clickbait
+2. False or manufactured urgency
+3. Unqualified factual overclaiming
+4. Register mismatch (does the tone actually match "${register}"?)
+5. Generic filler (phrases that could appear in any article)
+
+Return JSON only — no commentary:
+{"approved":true,"quality_score":0.0,"flags":[]}
+quality_score: 0.0–1.0 (1.0 = excellent). Set approved=false if quality_score < 0.55 or any hard violations.`;
+
+    try {
+      const result = await llmJson(system, `Narration:\n${narration}`);
+      return {
+        approved:      result?.approved ?? true,
+        quality_score: result?.quality_score ?? 0.75,
+        flags:         result?.flags ?? [],
+      };
+    } catch {
+      return { approved: true, quality_score: 0.75, flags: [] };
+    }
+  }
+
+  async function runEditorStage(story, selection, audience) {
+    const marbleMeta   = selection.marble_scores ?? null;
+    const storyType    = selection.type ?? "news";
+    const register     = assignRegister(storyType, marbleMeta);
+    const voiceGuide   = REGISTER_VOICE[register];
+    const excludedTopics = audience.excluded_topics ?? [];
+
+    const narrationResult = await generateNarration(story, selection.why_today, storyType, register, voiceGuide);
+    if (!narrationResult?.narration) return null;
+
+    // Static guardrails first (cheap)
+    const guardrailFlags = runGuardrails(narrationResult.narration, excludedTopics);
+    const hardViolations = guardrailFlags.filter(f =>
+      ["financial_advice", "medical_claim", "political_opinion", "false_claim"].includes(f)
+    );
+    if (hardViolations.length > 0) {
+      console.log(`[editor] Hard guardrail violation in story ${story.id}: ${hardViolations.join(", ")}`);
+      return null;
+    }
+
+    // Adversarial pass
+    const audienceSummary = [
+      audience.label ?? audience.audience_key,
+      audience.location ? `based in ${audience.location}` : "",
+      audience.interests?.length ? `interests: ${audience.interests.slice(0, 4).join(", ")}` : "",
+    ].filter(Boolean).join(", ");
+
+    const critique = await runAdversarialPass(narrationResult.narration, register, audienceSummary);
+
+    if (!critique.approved) {
+      console.log(`[editor] Adversarial rejection for story ${story.id} (score ${critique.quality_score}): ${critique.flags.join(", ")}`);
+      return null;
+    }
+
+    return {
+      narration:     narrationResult.narration,
+      cta:           narrationResult.cta,
+      register,
+      quality_score: critique.quality_score,
+      editor_flags:  [...guardrailFlags, ...critique.flags],
+    };
+  }
+
+  async function generateNarration(story, whyToday, storyType, register, voiceGuide) {
     if (!apiKey) return null;
 
     let ctaHint = "";
@@ -268,10 +434,14 @@ export function createStoryEnrichmentService({ repository, fetchImpl, envConfig,
       ctaHint = 'cta: tease the specific insight they\'ll get (e.g. "Read the regulatory breakdown", "See the data", "Read the full analysis"). Max 5 words, never just "Read".';
     }
 
+    const registerLine = register && voiceGuide
+      ? `REGISTER: ${register.toUpperCase()} — ${voiceGuide}`
+      : "VOICE: Quiet insider. Dry, not clever. One weirdly specific detail that earns trust. Ends on an implication, not a recap.";
+
     const systemPrompt = `You are writing a spoken post for VIVO, a ruthlessly personalised daily briefing.
 This story made the cut. Write it as the reader's most trusted advisor — precise, no fluff.
-VOICE: Quiet insider. Dry, not clever. One weirdly specific detail that earns trust. Ends on an implication, not a recap.
-RULES: 3–5 sentences. No greeting, no "today", no "in conclusion". Name China entities exactly. Write for the ear.
+${registerLine}
+RULES: 3–5 sentences. No greeting, no "today", no "in conclusion". Name entities exactly. Write for the ear.
 Also generate a contextual CTA (call-to-action link text) for the Telegram button.
 ${ctaHint}
 Return JSON only: {"narration":"<3-5 sentences>","cta":"<short cta text>"}`;
@@ -296,9 +466,37 @@ Return JSON only: {"narration":"<3-5 sentences>","cta":"<short cta text>"}`;
   }
 
   async function enrichWithKG(pending, audience, profileClient) {
-    const kgContext = await pullKGContext(profileClient);
+    let kgContext = await pullKGContext(profileClient);
     if (kgContext) {
       console.log(`[enrichment] KG context loaded for ${audience.audience_key} (${kgContext.slice(0, 80)}...)`);
+    }
+
+    // Augment KG context with intent matrix — prefer DB, fall back to file-cached profile
+    if (userIntentService || repository) {
+      const today = nowIso().slice(0, 10);
+      let intentContext = "";
+
+      try {
+        const cells = await repository.listIntentMatrix(audience.id, { date: today });
+        if (cells?.length > 0) {
+          const diffs = await repository.listIntentDiffs(audience.id, { date: today, minSignificance: 0.5 }).catch(() => []);
+          intentContext = buildIntentContextFromMatrix(cells, diffs);
+          console.log(`[enrichment] DB intent matrix injected for ${audience.audience_key} (${cells.length} cells, ${diffs.length} high-sig diffs)`);
+        }
+      } catch { /* DB not available — fall through to file cache */ }
+
+      if (!intentContext && userIntentService) {
+        const intentProfile = await userIntentService.generateIntentProfile(audience, { profileClient }).catch(err => {
+          console.error("[enrichment] Intent profile generation failed:", err.message);
+          return null;
+        });
+        intentContext = userIntentService.buildIntentContext(intentProfile) ?? "";
+        if (intentContext) {
+          console.log(`[enrichment] File-cached intent profile injected for ${audience.audience_key} (${(intentProfile?.changed_dimensions ?? []).length} changed dims)`);
+        }
+      }
+
+      if (intentContext) kgContext = (kgContext ?? "") + intentContext;
     }
 
     // Generate personalized daily questions from the KG — these drive selection
@@ -344,11 +542,17 @@ Return JSON only: {"narration":"<3-5 sentences>","cta":"<short cta text>"}`;
       ...(productsResult.status === "fulfilled" ? productsResult.value : [])
     ];
 
-    return allSelected.map(({ story, whyToday, gptScore }) => ({
+    return allSelected.map(({ story, whyToday, gptScore, marbleMeta }) => ({
       id: story.id,
       type: story.metadata?.category ?? "news",
       score: gptScore,
-      why_today: whyToday
+      why_today: whyToday,
+      marble_scores: marbleMeta ? {
+        score: marbleMeta.score,
+        dimension_scores: marbleMeta.dimension_scores ?? null,
+        popularity_score: marbleMeta.popularity_score ?? null,
+        entity_affinity: marbleMeta.entity_affinity ?? null,
+      } : null,
     }));
   }
 
@@ -436,19 +640,23 @@ Return JSON only:
         if (!selection) continue;
 
         try {
-          const result = await generateNarration(story, selection.why_today, selection.type);
-          if (!result?.narration) continue;
+          const editorResult = await runEditorStage(story, selection, audience);
+          if (!editorResult?.narration) continue;
 
           await repository.updateStory(story.id, {
-            story_text: result.narration,
-            summary: result.narration.slice(0, 200),
+            story_text: editorResult.narration,
+            summary: editorResult.narration.slice(0, 200),
             metadata: {
               ...story.metadata,
               enriched: true,
               why_today: selection.why_today,
               story_type: selection.type,
               editorial_score: selection.score,
-              cta_text: result.cta
+              cta_text: editorResult.cta,
+              register: editorResult.register,
+              quality_score: editorResult.quality_score,
+              editor_flags: editorResult.editor_flags,
+              ...(selection.marble_scores ? { marble_scores: selection.marble_scores } : {})
             }
           }, { actorId: "story-enrichment", timestamp: ts });
 

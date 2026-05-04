@@ -24,15 +24,19 @@ export function createContentFetcher(options = {}) {
       const audienceGeo = parseAudienceGeo(audience.location ?? "");
 
       const customSources = instance?.runtime_config?.custom_sources ?? [];
-      const allSources = [...sourcesConfig.sources, ...customSources];
+      // Custom sources take priority — put them first so they aren't crowded out by static sources
+      const allSources = [...customSources, ...sourcesConfig.sources];
       const localSources = allSources.filter(
         (s) => isLocalSource(s.location ?? "", audienceGeo)
       );
       const globalSources = allSources.filter((s) => !s.location || s.location === "global");
 
+      // Per-source cap: at most 3 items per source, then take up to globalCap total.
+      // This ensures no single source (e.g. HN) monopolises the global slot.
+      const globalCap = Math.max(40, globalSources.length * 3);
       const [localCandidates, globalCandidates] = await Promise.all([
-        fetchSources(localSources, fetchImpl, activeMerchantRegistry, 40),
-        fetchSources(globalSources, fetchImpl, activeMerchantRegistry, 10)
+        fetchSources(localSources, fetchImpl, activeMerchantRegistry, 40, 5),
+        fetchSources(globalSources, fetchImpl, activeMerchantRegistry, globalCap, 3)
       ]);
       const allCandidates = [...localCandidates, ...globalCandidates];
 
@@ -109,16 +113,17 @@ export function createContentFetcher(options = {}) {
   };
 }
 
-async function fetchSources(sources, fetchImpl, merchantRegistry, maxItems) {
+async function fetchSources(sources, fetchImpl, merchantRegistry, maxItems, perSourceMax = 10) {
   const results = [];
   for (const source of sources) {
     if (results.length >= maxItems) break;
     try {
+      const cap = Math.min(perSourceMax, maxItems - results.length);
       if (source.type === "rss") {
-        const items = await fetchRss(source, fetchImpl, maxItems - results.length);
+        const items = await fetchRss(source, fetchImpl, cap);
         results.push(...items);
       } else if (source.type === "merchant") {
-        const items = fetchMerchantItems(source, merchantRegistry, maxItems - results.length);
+        const items = fetchMerchantItems(source, merchantRegistry, cap);
         results.push(...items);
       }
     } catch {

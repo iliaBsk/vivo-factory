@@ -19,6 +19,7 @@ import { createRuntimeStatusService } from "./runtime-status-service.js";
 import { createTwitterClient } from "./twitter-client.js";
 import { createPublishService } from "./publish-service.js";
 import { createStoryEnrichmentService } from "./story-enrichment.js";
+import { createUserIntentService } from "./user-intent.js";
 import { createOnboardingRelay } from "./onboarding-relay.js";
 
 const execFileAsync = promisify(execFile);
@@ -63,7 +64,7 @@ const audienceImportService = createAudienceImportService({
 const llmDefaults = resolveLlmDefaults(envConfig);
 const vivoFactoryUrl = runtimeConfig.vivo_factory_base_url ?? `http://host.docker.internal:${serverPort}`;
 const audienceManagerLauncher = createAudienceManagerLauncher({
-  cwd: process.cwd(),
+  cwd: process.env.HOST_CWD ?? runtimeConfig.host_cwd ?? process.cwd(),
   runtimeConfig,
   llmDefaults,
   vivoFactoryUrl,
@@ -97,11 +98,17 @@ const contentFetcher = createContentFetcher({
   factoryId: runtimeConfig.factory_id ?? null,
   clock: () => new Date().toISOString()
 });
+const userIntentService = createUserIntentService({
+  fetchImpl: globalThis.fetch,
+  envConfig,
+  clock: () => new Date().toISOString()
+});
 const storyEnrichmentService = createStoryEnrichmentService({
   repository,
   fetchImpl: globalThis.fetch,
   envConfig,
-  clock: () => new Date().toISOString()
+  clock: () => new Date().toISOString(),
+  userIntentService
 });
 const onboardingRelay = createOnboardingRelay();
 
@@ -144,16 +151,19 @@ async function dispatchFetch(audience, instance, jobId, fetchOptions = {}) {
     : (instanceRC.custom_sources ?? []);
   const instanceWithSources = {
     ...(instance ?? {}),
-    runtime_config: { ...instanceRC, ...audienceRC, custom_sources: mergedCustomSources }
+    runtime_config: { ...instanceRC, ...audienceRC, custom_sources: mergedCustomSources },
+    ...(audienceRC.plugin_base_url ? { profile_base_url: audienceRC.plugin_base_url } : {})
   };
   try {
     const result = await contentFetcher.fetchForAudience(audience, instanceWithSources, fetchOptions);
     console.log(`[fetch] Done for ${audience.audience_key}: ${result.stories_created} stories`);
     if (jobId) await repository.updateJob(jobId, { status: "done", stories_created: result.stories_created }).catch(() => {});
-    await storyEnrichmentService.enrichPending(audience).catch((err) => {
+    const profileClient = profileClientFactory
+      ? profileClientFactory({ audience, instance: instanceWithSources })
+      : null;
+    await storyEnrichmentService.enrichPending(audience, { profileClient }).catch((err) => {
       console.error(`[fetch] Enrichment error for ${audience.audience_key}:`, err.message);
     });
-    await publishReadyStories(audience.id);
   } catch (err) {
     console.error(`[fetch] Error for ${audience.audience_key}:`, err.message);
     if (jobId) await repository.updateJob(jobId, { status: "failed", error: String(err.message ?? err).slice(0, 500) }).catch(() => {});
@@ -191,7 +201,9 @@ const app = createApp({
   onboardingRelay,
   n8nConfig: runtimeConfig.n8n ?? {},
   vivoFactoryUrl,
+  readerBaseUrl: runtimeConfig.reader_base_url ?? `http://localhost:${serverPort}`,
   saveRuntimeAudienceConfig,
+  userIntentService,
 });
 
 const server = http.createServer(async (request, response) => {
@@ -316,14 +328,15 @@ function createDashboardProfileClientFactory(runtimeConfig) {
   return ({ audience, instance }) => {
     const audienceKey = audience?.audience_key ?? audience?.audience_id ?? audience?.id ?? "";
     const configuredAudience = audienceKey ? runtimeConfig.audiences?.[audienceKey] ?? {} : {};
+    // Use || instead of ?? so empty strings fall through to the next candidate
     const baseUrl = instance?.profile_base_url
-      ?? instance?.runtime_config?.profile_base_url
-      ?? instance?.runtime_config?.plugin_base_url
-      ?? configuredAudience.profile_base_url
-      ?? configuredAudience.plugin_base_url
-      ?? runtimeConfig.profile_base_url_default
-      ?? runtimeConfig.plugin_base_url_default
-      ?? "";
+      || instance?.runtime_config?.profile_base_url
+      || instance?.runtime_config?.plugin_base_url
+      || configuredAudience.profile_base_url
+      || configuredAudience.plugin_base_url
+      || runtimeConfig.profile_base_url_default
+      || runtimeConfig.plugin_base_url_default
+      || "";
 
     if (!String(baseUrl).trim()) {
       return null;

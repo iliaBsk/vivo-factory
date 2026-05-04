@@ -66,18 +66,16 @@ async function defaultExec(command, args) {
 
 function validateRuntimeConfig(runtimeConfig) {
   const audiences = runtimeConfig.audiences ?? {};
-  for (const [audienceId, config] of Object.entries(audiences)) {
-    if (!config.openclaw_admin_url) {
-      throw new Error(`Audience ${audienceId} must define openclaw_admin_url`);
-    }
-  }
+  const validAudiences = Object.fromEntries(
+    Object.entries(audiences).filter(([, config]) => config.openclaw_admin_url)
+  );
   return {
     compose_file: runtimeConfig.compose_file ?? "generated/docker-compose.yml",
     profile_engine_image: runtimeConfig.profile_engine_image ?? runtimeConfig.openclaw_image ?? "",
     profile_engine_command: runtimeConfig.profile_engine_command ?? "profile-engine",
     profile_engine_health_path: runtimeConfig.profile_engine_health_path ?? "/healthz",
     profile_storage_path: runtimeConfig.profile_storage_path ?? "/data/user-profile",
-    audiences
+    audiences: validAudiences
   };
 }
 
@@ -97,7 +95,7 @@ function getInstanceConfig(runtimeConfig, audienceId) {
     service_name: `${audienceId}-openclaw`,
     profile_service_name: `${audienceId}-profile`,
     plugin_base_url: audienceConfig.plugin_base_url,
-    openclaw_admin_url: audienceConfig.openclaw_admin_url.replace(/\/$/, ""),
+    openclaw_admin_url: String(audienceConfig.openclaw_admin_url ?? "").replace(/\/$/, ""),
     openclaw_chat_path: audienceConfig.openclaw_chat_path ?? "/operator/chat",
     openclaw_report_path: audienceConfig.openclaw_report_path ?? "/operator/report",
     openclaw_health_path: audienceConfig.openclaw_health_path ?? "/healthz",
@@ -147,10 +145,11 @@ function buildInstanceCommands(composeFile, instance) {
 }
 
 function maskToken(value) {
-  if (value.length <= 10) {
-    return `${value.slice(0, 2)}...${value.slice(-2)}`;
+  const s = String(value ?? "");
+  if (s.length <= 10) {
+    return `${s.slice(0, 2)}...${s.slice(-2)}`;
   }
-  return `${value.slice(0, 11)}...${value.slice(-4)}`;
+  return `${s.slice(0, 11)}...${s.slice(-4)}`;
 }
 
 async function fetchJson(fetchImpl, url, options) {

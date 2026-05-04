@@ -14,6 +14,17 @@ export function createRuntimeStatusService({ fetchImpl = globalThis.fetch, runti
     }
   }
 
+  function toProbeUrl(displayUrl, probeHostOverride) {
+    if (!displayUrl || !probeHostOverride) return displayUrl;
+    try {
+      const u = new URL(displayUrl);
+      u.hostname = probeHostOverride;
+      return u.toString();
+    } catch {
+      return displayUrl;
+    }
+  }
+
   return {
     async getStatus(audienceKey) {
       const now = Date.now();
@@ -21,11 +32,15 @@ export function createRuntimeStatusService({ fetchImpl = globalThis.fetch, runti
       if (cached && now < cached.expiresAt) return cached.value;
 
       const audConf = runtimeConfig.audiences?.[audienceKey] ?? {};
+      const probeHostOverride = runtimeConfig.internal_probe_host ?? null;
       const openclawHealthUrl = audConf.openclaw_admin_url
-        ? `${audConf.openclaw_admin_url}${audConf.openclaw_health_path ?? "/healthz"}`
+        ? toProbeUrl(`${audConf.openclaw_admin_url}${audConf.openclaw_health_path ?? "/healthz"}`, probeHostOverride)
         : null;
-      const marbleHealthUrl = audConf.plugin_base_url
-        ? `${audConf.plugin_base_url}/healthz`
+      const marbleProbeBase = audConf.profile_public_url ?? audConf.plugin_base_url ?? null;
+      const marbleHealthUrl = marbleProbeBase
+        ? (audConf.profile_public_url
+            ? `${audConf.profile_public_url}/healthz`
+            : toProbeUrl(`${audConf.plugin_base_url}/healthz`, probeHostOverride))
         : null;
 
       const [openclaw, marble] = await Promise.all([

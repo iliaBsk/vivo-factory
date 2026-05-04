@@ -94,7 +94,7 @@ test("createSupabaseRepository hydrates instance summaries and signed asset URLs
 
       if (url.pathname === "/storage/v1/object/sign/vivo-content/stories/story-1/hero.png") {
         return jsonResponse({
-          signedURL: "/storage/v1/object/sign/vivo-content/stories/story-1/hero.png?token=abc123"
+          signedURL: "/object/sign/vivo-content/stories/story-1/hero.png?token=abc123"
         });
       }
 

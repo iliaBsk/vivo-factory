@@ -44,7 +44,7 @@ export function loadEnvConfig(filePath = ".env") {
 
 export function writeTextFile(filePath, contents) {
   const absolutePath = path.resolve(filePath);
-  fs.mkdirSync(path.dirname(absolutePath), { recursive: true });
+  fs.mkdirSync(path.dirname(absolutePath), { recursive: true, mode: 0o777 });
   fs.writeFileSync(absolutePath, contents);
 }
 

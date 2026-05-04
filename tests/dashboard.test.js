@@ -1425,3 +1425,544 @@ test("file repository getEffectiveProtagonistStorageId returns null when no hero
   const id = await repo.getEffectiveProtagonistStorageId("aud-1", "tech");
   assert.equal(id, null);
 });
+
+test("POST /api/audiences/:id/archive-daily-remainder archives ready_to_publish stories", async () => {
+  const { createRepository, createApp } = await loadModules();
+  const seed = createSeed();
+  const repo = createRepository({ audiences: seed.audiences, instances: seed.instances });
+
+  const makeStory = (key, status) => repo.createStory({
+    factory_id: "factory-1", audience_id: "aud-1", instance_id: "inst-1",
+    story_key: key, title: key, story_text: "text", summary: "sum", source_kind: "rss"
+  });
+
+  const s1 = makeStory("s1");
+  const s2 = makeStory("s2");
+  const s3 = makeStory("s3");
+  repo.transitionStoryStatus(s1.id, "ready_to_publish");
+  repo.transitionStoryStatus(s2.id, "ready_to_publish");
+  // s3 stays in "new" — should not be archived
+
+  const app = createApp({ repository: repo, clock: () => "2026-05-01T15:30:00.000Z" });
+  const response = await app.handle({
+    method: "POST",
+    pathname: "/api/audiences/aud-1/archive-daily-remainder",
+    query: {},
+    body: "",
+    headers: {}
+  });
+
+  assert.equal(response.status, 200);
+  const body = JSON.parse(response.body);
+  assert.equal(body.success, true);
+  assert.equal(body.archived, 2);
+  assert.equal(repo.getStory(s1.id).status, "archived");
+  assert.equal(repo.getStory(s2.id).status, "archived");
+  assert.equal(repo.getStory(s3.id).status, "new");
+});
+
+test("POST /api/audiences/:id/archive-daily-remainder resolves audience by key", async () => {
+  const { createRepository, createApp } = await loadModules();
+  const seed = createSeed();
+  const repo = createRepository({ audiences: seed.audiences, instances: seed.instances });
+  const s = repo.createStory({
+    factory_id: "factory-1", audience_id: "aud-1", instance_id: "inst-1",
+    story_key: "s-key", title: "t", story_text: "text", summary: "sum", source_kind: "rss"
+  });
+  repo.transitionStoryStatus(s.id, "ready_to_publish");
+
+  const app = createApp({ repository: repo, clock: () => "2026-05-01T15:30:00.000Z" });
+  const response = await app.handle({
+    method: "POST",
+    pathname: "/api/audiences/barcelona-family/archive-daily-remainder",
+    query: {},
+    body: "",
+    headers: {}
+  });
+
+  assert.equal(response.status, 200);
+  const body = JSON.parse(response.body);
+  assert.equal(body.archived, 1);
+  assert.equal(repo.getStory(s.id).status, "archived");
+});
+
+test("POST /api/audiences/:id/post-telegram returns 503 when story has no ready video asset", async () => {
+  const { createRepository, createApp } = await loadModules();
+  const seed = createSeed();
+  const repo = createRepository({ audiences: seed.audiences, instances: seed.instances });
+
+  const story = repo.createStory({
+    factory_id: "factory-1", audience_id: "aud-1", instance_id: "inst-1",
+    story_key: "tg-story", title: "Big Tech News",
+    story_text: "Something important happened in China tech today.",
+    summary: "China tech", source_kind: "rss",
+    primary_source_url: "https://example.com/news"
+  });
+
+  const tgRequests = [];
+  const fakeFetch = async (url, opts = {}) => {
+    tgRequests.push({ url: String(url), body: JSON.parse(opts.body ?? "{}") });
+    return { ok: true, async json() { return { ok: true }; }, async text() { return '{"ok":true}'; } };
+  };
+
+  const audienceRuntimeConfig = {
+    "barcelona-family": {
+      telegram_bot_token: "bot123:TOKEN",
+      telegram_chat_id: "@test_channel"
+    }
+  };
+
+  const app = createApp({ repository: repo, fetchImpl: fakeFetch, audienceRuntimeConfig });
+  const response = await app.handle({
+    method: "POST",
+    pathname: "/api/audiences/aud-1/post-telegram",
+    query: {},
+    body: JSON.stringify({ story_id: story.id }),
+    headers: {}
+  });
+
+  assert.equal(response.status, 503);
+  assert.equal(tgRequests.length, 0);
+  const body = JSON.parse(response.body);
+  assert.ok(body.error.includes("No ready video asset"));
+});
+
+test("POST /api/audiences/:id/post-telegram uses sendVideo when a ready video asset is present", async () => {
+  const { createRepository, createApp } = await loadModules();
+  const seed = createSeed();
+  const repo = createRepository({ audiences: seed.audiences, instances: seed.instances });
+
+  const story = repo.createStory({
+    factory_id: "factory-1", audience_id: "aud-1", instance_id: "inst-1",
+    story_key: "tg-video", title: "Video Story",
+    story_text: "Something with a video.", summary: "video", source_kind: "rss"
+  });
+  repo.transitionStoryStatus(story.id, "ready_to_publish");
+
+  const tgRequests = [];
+  const fakeFetch = async (url, opts = {}) => {
+    tgRequests.push({ url: String(url), body: JSON.parse(opts.body ?? "{}") });
+    return { ok: true, async json() { return { ok: true, result: { message_id: 99 } }; }, async text() { return '{"ok":true}'; } };
+  };
+
+  const audienceRuntimeConfig = {
+    "barcelona-family": { telegram_bot_token: "bot123:TOKEN", telegram_chat_id: "@test_channel" }
+  };
+
+  const videoDownloadUrl = "https://storage.example.com/reel.mp4";
+  const repoWithVideo = {
+    ...repo,
+    getStory(id) {
+      const s = repo.getStory(id);
+      if (!s) return null;
+      return {
+        ...s,
+        assets: [{ asset_type: "video", status: "ready", is_selected: true, download_url: videoDownloadUrl }]
+      };
+    }
+  };
+
+  const app = createApp({ repository: repoWithVideo, fetchImpl: fakeFetch, audienceRuntimeConfig });
+  const response = await app.handle({
+    method: "POST",
+    pathname: "/api/audiences/aud-1/post-telegram",
+    query: {},
+    body: JSON.stringify({ story_id: story.id }),
+    headers: {}
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(tgRequests.length, 1);
+  assert.ok(tgRequests[0].url.includes("sendVideo"));
+  assert.equal(tgRequests[0].body.video, videoDownloadUrl);
+  assert.ok(tgRequests[0].body.caption.includes("Video Story"));
+});
+
+test("POST /api/audiences/:id/post-telegram returns 503 when Telegram not configured", async () => {
+  const { createRepository, createApp } = await loadModules();
+  const seed = createSeed();
+  const repo = createRepository({ audiences: seed.audiences, instances: seed.instances });
+  const story = repo.createStory({
+    factory_id: "factory-1", audience_id: "aud-1", instance_id: "inst-1",
+    story_key: "tg-nocred", title: "Test", story_text: "text", summary: "s", source_kind: "rss"
+  });
+
+  const app = createApp({ repository: repo });
+  const response = await app.handle({
+    method: "POST",
+    pathname: "/api/audiences/aud-1/post-telegram",
+    query: {},
+    body: JSON.stringify({ story_id: story.id }),
+    headers: {}
+  });
+
+  assert.equal(response.status, 503);
+});
+
+test("POST /api/audiences/:id/flush-marble-feedback sends storeDecision for engaged published stories", async () => {
+  const { createRepository, createApp } = await loadModules();
+  const seed = createSeed();
+  const repo = createRepository({ audiences: seed.audiences, instances: seed.instances });
+
+  const now = new Date();
+  const recentTs = new Date(now.getTime() - 60 * 60 * 1000).toISOString(); // 1h ago
+
+  const storyA = repo.createStory({
+    factory_id: "factory-1", audience_id: "aud-1", instance_id: "inst-1",
+    story_key: "fb-a", title: "Story A", story_text: "A", summary: "A", source_kind: "rss"
+  });
+  const storyB = repo.createStory({
+    factory_id: "factory-1", audience_id: "aud-1", instance_id: "inst-1",
+    story_key: "fb-b", title: "Story B", story_text: "B", summary: "B", source_kind: "rss"
+  });
+  const storyC = repo.createStory({
+    factory_id: "factory-1", audience_id: "aud-1", instance_id: "inst-1",
+    story_key: "fb-c", title: "Story C", story_text: "C", summary: "C", source_kind: "rss"
+  });
+
+  // Transition all to published with recent timestamps
+  for (const s of [storyA, storyB, storyC]) {
+    repo.transitionStoryStatus(s.id, "ready_to_publish");
+    repo.transitionStoryStatus(s.id, "published");
+    repo.updateStory(s.id, { metadata: { published_at: recentTs } });
+  }
+  // A: clicked tracking link → "up"
+  repo.updateStory(storyA.id, { metadata: { published_at: recentTs, chon_clicked_at: recentTs } });
+  // B: high read depth → "up"
+  repo.updateStory(storyB.id, { metadata: { published_at: recentTs, chon_read_pct: 90, chon_read_seconds: 60 } });
+  // C: no engagement at all → skip
+
+  const storeDecisionCalls = [];
+  const profileClientFactory = () => ({
+    async storeDecision(d) { storeDecisionCalls.push(d); }
+  });
+
+  const app = createApp({ repository: repo, profileClientFactory, clock: () => new Date().toISOString() });
+  const response = await app.handle({
+    method: "POST",
+    pathname: "/api/audiences/aud-1/flush-marble-feedback",
+    query: {},
+    body: "",
+    headers: {}
+  });
+
+  assert.equal(response.status, 200);
+  const body = JSON.parse(response.body);
+  assert.equal(body.success, true);
+  assert.equal(body.fed, 2);
+  assert.equal(storeDecisionCalls.length, 2);
+  assert.equal(storeDecisionCalls.find(d => d.content.id === storyA.id)?.reaction, "up");
+  assert.equal(storeDecisionCalls.find(d => d.content.id === storyB.id)?.reaction, "up");
+});
+
+test("POST /api/audiences/:id/flush-marble-feedback returns 400 when no profile client configured", async () => {
+  const { createRepository, createApp } = await loadModules();
+  const seed = createSeed();
+  const repo = createRepository({ audiences: seed.audiences, instances: seed.instances });
+
+  const app = createApp({ repository: repo });
+  const response = await app.handle({
+    method: "POST",
+    pathname: "/api/audiences/aud-1/flush-marble-feedback",
+    query: {},
+    body: "",
+    headers: {}
+  });
+
+  assert.equal(response.status, 400);
+  assert.match(response.body, /profile client/i);
+});
+
+test("POST /api/audiences/:id/telegram-webhook stores reaction emoji in metadata without calling storeDecision", async () => {
+  const { createRepository, createApp } = await loadModules();
+  const seed = createSeed();
+  const repo = createRepository({ audiences: seed.audiences, instances: seed.instances });
+
+  const story = repo.createStory({
+    factory_id: "factory-1", audience_id: "aud-1", instance_id: "inst-1",
+    story_key: "tg-react", title: "Reaction Story", story_text: "text", summary: "s", source_kind: "rss"
+  });
+  repo.updateStory(story.id, { metadata: { telegram_message_id: 42 } });
+
+  const storeDecisionCalls = [];
+  const profileClientFactory = () => ({
+    async storeDecision(d) { storeDecisionCalls.push(d); }
+  });
+
+  const audienceRuntimeConfig = {
+    "barcelona-family": { chon_telegram_user_id: "99" }
+  };
+
+  const app = createApp({ repository: repo, profileClientFactory, audienceRuntimeConfig, clock: () => "2026-05-01T10:00:00.000Z" });
+  const response = await app.handle({
+    method: "POST",
+    pathname: "/api/audiences/aud-1/telegram-webhook",
+    query: {},
+    body: JSON.stringify({
+      message_reaction: {
+        user: { id: 99 },
+        message_id: 42,
+        new_reaction: [{ emoji: "👍" }]
+      }
+    }),
+    headers: {}
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(storeDecisionCalls.length, 0);
+  assert.equal(repo.getStory(story.id).metadata.chon_reaction, "👍");
+});
+
+test("GET /api/audiences/:id/daily-readiness counts ready-with-video stories by type and sets needs_fetch", async () => {
+  const { createRepository, createApp } = await loadModules();
+  const seed = createSeed();
+  const repo = createRepository({ audiences: seed.audiences, instances: seed.instances });
+
+  const mockStories = [
+    { id: "dr-1", audience_id: "aud-1", status: "ready_to_publish", metadata: { story_type: "news" },
+      assets: [{ asset_type: "video", status: "ready" }] },
+    { id: "dr-2", audience_id: "aud-1", status: "ready_to_publish", metadata: { story_type: "news" },
+      assets: [] },
+    { id: "dr-3", audience_id: "aud-1", status: "ready_to_publish", metadata: { story_type: "local_event" },
+      assets: [{ asset_type: "video", status: "ready" }] },
+    { id: "dr-4", audience_id: "aud-1", status: "asset_generating", metadata: { story_type: "news" },
+      assets: [] }
+  ];
+  const repoWithMock = { ...repo, listStories: () => mockStories };
+
+  const app = createApp({ repository: repoWithMock });
+  const response = await app.handle({
+    method: "GET",
+    pathname: "/api/audiences/aud-1/daily-readiness",
+    query: {},
+    body: "",
+    headers: {}
+  });
+
+  assert.equal(response.status, 200);
+  const body = JSON.parse(response.body);
+  assert.deepEqual(body.ready, { news: 1, local_event: 1, product: 0 });
+  assert.equal(body.in_pipeline, 1);
+  assert.deepEqual(body.target, { news: 5, local_event: 3, product: 2 });
+  assert.deepEqual(body.gaps, { news: 4, local_event: 2, product: 2 });
+  assert.equal(body.total_ready, 2);
+  assert.equal(body.total_target, 10);
+  assert.equal(body.needs_fetch, true);
+});
+
+const DOMAINS = ["topics", "personal", "health", "career", "family", "social", "heritage", "wealth"];
+const HORIZONS = ["today", "this_week", "this_month", "this_year", "lifetime"];
+
+function makeCell(domain, horizon, opts = {}) {
+  return {
+    horizon,
+    domain,
+    goals: [{ text: `goal for ${domain}/${horizon}`, confidence: 0.8, synthesis_basis: "test" }],
+    desires: [],
+    fears: [],
+    anti_goals: [],
+    needs: [],
+    relevant_to_know: [],
+    status: opts.status ?? "normal"
+  };
+}
+
+test("POST /api/audiences/:id/extract-intent writes 40 cells and diffs to repository", async () => {
+  const { createRepository, createApp } = await loadModules();
+  const seed = createSeed();
+  const repo = createRepository({ audiences: seed.audiences, instances: seed.instances });
+
+  const extractedAt = "2026-05-04T03:00:00.000Z";
+  const fakeCells = DOMAINS.flatMap(d => HORIZONS.map(h => makeCell(d, h)));
+
+  const userIntentService = {
+    async extractFullMatrix(audience, profileClient, repository) {
+      const date = extractedAt.slice(0, 10);
+      for (const cell of fakeCells) {
+        repository.createIntentCell(audience.id, { ...cell, extracted_at: extractedAt });
+      }
+      repository.createIntentDiff(audience.id, {
+        computed_at: extractedAt,
+        horizon: "today",
+        domain: "career",
+        diff: { goals: { added: ["new goal"] } },
+        significance_score: 0.7
+      });
+      return { cells: 40, data_sparse: 0, diffs: 1, elapsed_ms: 120 };
+    }
+  };
+
+  const app = createApp({
+    repository: repo,
+    userIntentService,
+    profileClientFactory: () => ({})
+  });
+
+  const response = await app.handle({
+    method: "POST",
+    pathname: "/api/audiences/aud-1/extract-intent",
+    query: {},
+    body: "",
+    headers: {}
+  });
+
+  assert.equal(response.status, 200);
+  const body = JSON.parse(response.body);
+  assert.equal(body.success, true);
+  assert.equal(body.cells, 40);
+  assert.equal(body.diffs, 1);
+
+  const stored = repo.listIntentMatrix("aud-1", { date: "2026-05-04" });
+  assert.equal(stored.length, 40);
+  assert.ok(stored.every(c => c.audience_id === "aud-1"));
+
+  const diffs = repo.listIntentDiffs("aud-1", {});
+  assert.equal(diffs.length, 1);
+  assert.equal(diffs[0].significance_score, 0.7);
+});
+
+test("GET /api/audiences/:id/intent-matrix returns all cells for given date", async () => {
+  const { createRepository, createApp } = await loadModules();
+  const seed = createSeed();
+  const repo = createRepository({ audiences: seed.audiences, instances: seed.instances });
+
+  const extractedAt = "2026-05-04T03:00:00.000Z";
+  for (const domain of DOMAINS) {
+    for (const horizon of HORIZONS) {
+      repo.createIntentCell("aud-1", {
+        extracted_at: extractedAt,
+        horizon,
+        domain,
+        goals: [{ text: `${domain}/${horizon} goal`, confidence: 0.9, synthesis_basis: "test" }],
+        desires: [],
+        fears: [],
+        anti_goals: [],
+        needs: [],
+        relevant_to_know: [],
+        status: "normal"
+      });
+    }
+  }
+
+  const app = createApp({ repository: repo });
+  const response = await app.handle({
+    method: "GET",
+    pathname: "/api/audiences/aud-1/intent-matrix",
+    query: { date: "2026-05-04" },
+    body: "",
+    headers: {}
+  });
+
+  assert.equal(response.status, 200);
+  const body = JSON.parse(response.body);
+  assert.equal(body.success, true);
+  assert.equal(body.cells.length, 40);
+  assert.ok(body.cells.every(c => c.audience_id === "aud-1"));
+  assert.ok(body.cells.every(c => DOMAINS.includes(c.domain)));
+  assert.ok(body.cells.every(c => HORIZONS.includes(c.horizon)));
+});
+
+test("POST /api/audiences/:id/extract-intent records data-sparse cells to vivo_data_gaps", async () => {
+  const { createRepository, createApp } = await loadModules();
+  const seed = createSeed();
+  const repo = createRepository({ audiences: seed.audiences, instances: seed.instances });
+
+  const extractedAt = "2026-05-04T03:00:00.000Z";
+
+  const userIntentService = {
+    async extractFullMatrix(audience, profileClient, repository) {
+      for (const domain of DOMAINS) {
+        for (const horizon of HORIZONS) {
+          const isSparse = domain === "wealth" && horizon === "lifetime";
+          repository.createIntentCell(audience.id, {
+            extracted_at: extractedAt,
+            horizon,
+            domain,
+            goals: [],
+            desires: [],
+            fears: [],
+            anti_goals: [],
+            needs: [],
+            relevant_to_know: [],
+            status: isSparse ? "data_sparse" : "normal"
+          });
+          if (isSparse) {
+            repository.createDataGap(audience.id, {
+              field_path: `${domain}/${horizon}`,
+              gap_description: "No KG signal for this cell"
+            });
+          }
+        }
+      }
+      return { cells: 40, data_sparse: 1, diffs: 0, elapsed_ms: 95 };
+    }
+  };
+
+  const app = createApp({
+    repository: repo,
+    userIntentService,
+    profileClientFactory: () => ({})
+  });
+
+  const response = await app.handle({
+    method: "POST",
+    pathname: "/api/audiences/aud-1/extract-intent",
+    query: {},
+    body: "",
+    headers: {}
+  });
+
+  assert.equal(response.status, 200);
+  const body = JSON.parse(response.body);
+  assert.equal(body.data_sparse, 1);
+
+  const sparseCell = repo.listIntentMatrix("aud-1", { date: "2026-05-04" })
+    .find(c => c.domain === "wealth" && c.horizon === "lifetime");
+  assert.ok(sparseCell, "data_sparse cell should be stored");
+  assert.equal(sparseCell.status, "data_sparse");
+
+  const gaps = repo.state ? repo.state.dataGaps : null;
+  const allCells = repo.listIntentMatrix("aud-1", {});
+  assert.equal(allCells.length, 40);
+
+  // Verify data gap was recorded by re-seeding from exported state
+  const exported = repo.exportState();
+  assert.equal(exported.dataGaps.length, 1);
+  assert.equal(exported.dataGaps[0].field_path, "wealth/lifetime");
+  assert.equal(exported.dataGaps[0].resolution_status, "open");
+});
+
+// ── Phase 4: Editor pipeline tests ──────────────────────────────────────────
+
+test("assignRegister — rule-based register from marble dimension scores", async () => {
+  const { assignRegister } = await import("../src/story-enrichment.js");
+
+  assert.equal(assignRegister("local_event", null), "actionable");
+  assert.equal(assignRegister("product", null), "actionable");
+  assert.equal(assignRegister("product", { dimension_scores: { surprise_score: 0.8 } }), "curious");
+
+  // High surprise → curious
+  assert.equal(assignRegister("news", { dimension_scores: { surprise_score: 0.7, personalization_depth: 0.3 } }), "curious");
+
+  // High temporal + depth → alert
+  assert.equal(assignRegister("news", { dimension_scores: { surprise_score: 0.1, temporal_relevance: 0.8, personalization_depth: 0.6 } }), "alert");
+
+  // High insight → reflective
+  assert.equal(assignRegister("news", { dimension_scores: { surprise_score: 0.1, temporal_relevance: 0.3, insight_density: 0.7, personalization_depth: 0.3 } }), "reflective");
+
+  // High depth → inspiring
+  assert.equal(assignRegister("news", { dimension_scores: { surprise_score: 0.1, temporal_relevance: 0.3, insight_density: 0.3, personalization_depth: 0.8 } }), "inspiring");
+
+  // Default → informative
+  assert.equal(assignRegister("news", { dimension_scores: {} }), "informative");
+});
+
+test("runGuardrails — hard violations are detected, excluded topics flagged", async () => {
+  const { runGuardrails } = await import("../src/story-enrichment.js");
+
+  assert.deepEqual(runGuardrails("You should invest in NVDA right now"), ["financial_advice"]);
+  assert.deepEqual(runGuardrails("This supplement cures diabetes"), ["medical_claim"]);
+  assert.deepEqual(runGuardrails("Clean content with no violations"), []);
+  assert.deepEqual(runGuardrails("This is about cycling in the park", ["cycling"]), ["excluded_topic:cycling"]);
+  assert.deepEqual(runGuardrails("results are guaranteed and risk-free"), ["false_claim"]);
+});

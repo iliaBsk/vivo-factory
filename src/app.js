@@ -42,6 +42,7 @@ export function createApp(options) {
   const vivoFactoryUrl = options.vivoFactoryUrl ?? "http://localhost:4310";
   const readerBaseUrl = String(options.readerBaseUrl ?? "http://localhost:4310").replace(/\/+$/, "");
   const saveRuntimeAudienceConfig = options.saveRuntimeAudienceConfig ?? null;
+  const userIntentService = options.userIntentService ?? null;
 
   return {
     async handle(request) {
@@ -65,6 +66,7 @@ export function createApp(options) {
           vivoFactoryUrl,
           saveRuntimeAudienceConfig,
           readerBaseUrl,
+          userIntentService,
           request
         });
       } catch (error) {
@@ -76,9 +78,19 @@ export function createApp(options) {
 }
 
 function deriveMarbleReaction(metadata) {
-  if ((metadata.chon_read_pct ?? 0) >= 80 && (metadata.chon_read_seconds ?? 0) >= 30) return "up";
-  if (metadata.chon_clicked_at) return "up";
-  if (metadata.chon_opened_at) return "skip";
+  const readPct     = metadata.chon_read_pct ?? 0;
+  const readSeconds = metadata.chon_read_seconds ?? 0;
+  const clicked     = !!metadata.chon_clicked_at;
+  const opened      = !!metadata.chon_opened_at;
+
+  // Tier 1 — strong positive: click-through or deep read
+  if (clicked || (readPct >= 80 && readSeconds >= 30)) return "up";
+  // Tier 2 — medium positive: opened and spent meaningful time
+  if (opened && readSeconds >= 15) return "up";
+  // Active dismissal: opened but bounced in < 5s
+  if (opened && readSeconds > 0 && readSeconds < 5) return "down";
+  // Weak disengagement: opened but no meaningful dwell
+  if (opened) return "skip";
   return null;
 }
 
@@ -108,6 +120,7 @@ async function handleRequest(context) {
     vivoFactoryUrl,
     saveRuntimeAudienceConfig,
     readerBaseUrl,
+    userIntentService,
     request
   } = context;
 
@@ -629,7 +642,7 @@ async function handleRequest(context) {
       return json(404, { error: "Audience Marble profile is not configured." });
     }
     const summary = await profileClient.getSummary();
-    return json(200, summary.data ?? {});
+    return json(200, summary.data ?? summary);
   }
 
   if (request.method === "GET" && matchPath(request.pathname, /^\/api\/audiences\/([^/]+)\/profile-debug$/)) {
@@ -639,7 +652,7 @@ async function handleRequest(context) {
       return json(404, { error: "Audience Marble debug view is not configured." });
     }
     const debug = await profileClient.getDebug();
-    return json(200, debug.data ?? {});
+    return json(200, debug.data ?? debug);
   }
 
   if (request.method === "POST" && matchPath(request.pathname, /^\/api\/audiences\/([^/]+)\/profile-facts$/)) {
@@ -655,12 +668,16 @@ async function handleRequest(context) {
     }
 
     const facts = normalizeAudienceProfileFacts(audience, body.facts ?? body);
-    await repository.updateAudience(audienceId, buildAudienceChangesFromFacts(facts), {
-      actorId: body.actor_id ?? body.operator ?? "unknown",
-      timestamp: clock()
-    });
+    try {
+      await repository.updateAudience(audienceId, buildAudienceChangesFromFacts(facts), {
+        actorId: body.actor_id ?? body.operator ?? "unknown",
+        timestamp: clock()
+      });
+    } catch (err) {
+      console.warn("[profile-facts] updateAudience skipped:", err.message);
+    }
     const summary = await profileClient.updateFacts(facts);
-    return json(200, summary.data ?? {});
+    return json(200, summary.data ?? summary);
   }
 
   if (request.method === "POST" && matchPath(request.pathname, /^\/api\/audiences\/([^/]+)\/profile-decisions$/)) {
@@ -927,7 +944,7 @@ async function handleRequest(context) {
     const auditItems = shouldSkipStoryData || activeTab !== "stories" ? [] : (await safeLoad(() => repository.listAuditLog(), [])).slice(0, 10);
     const analyticsItems = shouldSkipStoryData || activeTab !== "stories" ? [] : (await safeLoad(() => repository.listFeedbackEvents(), [])).slice(0, 10);
     const instances = instanceManager && activeTab === "audiences" ? instanceManager.listInstances() : [];
-    const selectedAudienceId = request.query?.audience_id ?? "";
+    const selectedAudienceId = request.query?.audience_id || (activeTab === "audiences" && audiences.length > 0 ? audiences[0].id : "");
     const selectedAudience = selectAudience(audiences, selectedAudienceId);
     const chatHistory = selectedAudience && activeTab === "audiences"
       ? await (async () => {
@@ -938,6 +955,9 @@ async function handleRequest(context) {
     const protagonistImages = selectedAudience && activeTab === "audiences"
       ? await safeLoad(() => repository.getProtagonistImages(selectedAudience.id), new Map())
       : new Map();
+    const heroImageUrl = selectedAudience && activeTab === "audiences"
+      ? await safeLoad(() => repository.getHeroImageUrl(selectedAudience.id), null)
+      : null;
     return html(200, renderDashboard({
       activeTab,
       selectedAudienceId,
@@ -954,6 +974,7 @@ async function handleRequest(context) {
       instances,
       chatHistory,
       protagonistImages,
+      heroImageUrl,
       merchants,
       activeMerchant,
       activeMerchantOverrides,
@@ -1230,6 +1251,38 @@ ${sourceUrl ? `<a class="read-btn" href="${sourceUrl}" target="_blank" rel="noop
     return { status: 200, headers: { "content-type": "text/html; charset=utf-8" }, body: html };
   }
 
+  // GET /r/:storyId — tracked redirect: records click signal immediately, then redirects to source URL
+  if (request.method === "GET" && matchPath(request.pathname, /^\/r\/([^/]+)$/)) {
+    const storyId = request.pathname.split("/")[2];
+    const story = await safeLoad(() => repository.getStory(storyId), null);
+    if (!story || !story.primary_source_url) return json(404, { error: "Not found" });
+
+    const now = clock();
+    await repository.updateStory(storyId, {
+      metadata: { ...story.metadata, chon_clicked_at: now }
+    }, { actorId: "redirect-tracker" }).catch(() => {});
+
+    // Fire-and-forget Marble `up` signal
+    if (profileClientFactory) {
+      const instance = typeof repository.getInstanceByAudience === "function"
+        ? await safeLoad(() => repository.getInstanceByAudience(story.audience_id), null)
+        : null;
+      const audience = await safeLoad(() => repository.getAudience(story.audience_id), null);
+      if (audience) {
+        const profileClient = profileClientFactory({ audience, instance });
+        profileClient?.storeDecision({
+          decisionType: "feedback",
+          source: "redirect_click",
+          content: { id: story.id, title: story.title ?? "", topics: story.metadata?.topics ?? [], source: story.source_name ?? "" },
+          reaction: "up",
+          recorded_at: now
+        }).catch(() => {});
+      }
+    }
+
+    return { status: 302, headers: { location: story.primary_source_url }, body: "" };
+  }
+
   // POST /track/:storyId/:event — record reader engagement event
   if (request.method === "POST" && matchPath(request.pathname, /^\/track\/([^/]+)\/(open|read|click|close)$/)) {
     const parts = request.pathname.split("/");
@@ -1317,6 +1370,182 @@ ${sourceUrl ? `<a class="read-btn" href="${sourceUrl}" target="_blank" rel="noop
     return json(200, { success: true, telegram_message_id: telegramMessageId });
   }
 
+  // POST /api/audiences/:audienceId/generate-intent-profile — derive achievement goals from KG and cache intent profile
+  if (request.method === "POST" && matchPath(request.pathname, /^\/api\/audiences\/([^/]+)\/generate-intent-profile$/)) {
+    if (!userIntentService) return json(503, { error: "User intent service not configured" });
+    const rawAudienceId = request.pathname.split("/")[3];
+    let audience = await safeLoad(() => repository.getAudience(rawAudienceId), null);
+    if (!audience) {
+      const all = await safeLoad(() => repository.listAudiences(), []);
+      audience = all.find(a => a.audience_key === rawAudienceId) ?? null;
+    }
+    if (!audience) return json(404, { error: "Audience not found" });
+
+    const instance = typeof repository.getInstanceByAudience === "function"
+      ? await safeLoad(() => repository.getInstanceByAudience(audience.id), null)
+      : null;
+    const profileClient = profileClientFactory ? profileClientFactory({ audience, instance }) : null;
+
+    const profile = await userIntentService.generateIntentProfile(audience, { profileClient });
+    if (!profile) return json(503, { error: "Could not generate intent profile — check KG and LLM config" });
+
+    return json(200, { success: true, profile });
+  }
+
+  // GET /api/audiences/:audienceId/intent-profile — return current cached intent profile
+  if (request.method === "GET" && matchPath(request.pathname, /^\/api\/audiences\/([^/]+)\/intent-profile$/)) {
+    if (!userIntentService) return json(503, { error: "User intent service not configured" });
+    const rawAudienceId = request.pathname.split("/")[3];
+    let audience = await safeLoad(() => repository.getAudience(rawAudienceId), null);
+    if (!audience) {
+      const all = await safeLoad(() => repository.listAudiences(), []);
+      audience = all.find(a => a.audience_key === rawAudienceId) ?? null;
+    }
+    if (!audience) return json(404, { error: "Audience not found" });
+
+    const instance = typeof repository.getInstanceByAudience === "function"
+      ? await safeLoad(() => repository.getInstanceByAudience(audience.id), null)
+      : null;
+    const profileClient = profileClientFactory ? profileClientFactory({ audience, instance }) : null;
+
+    const profile = await userIntentService.generateIntentProfile(audience, { profileClient });
+    if (!profile) return json(404, { error: "No intent profile available" });
+
+    return json(200, { success: true, profile });
+  }
+
+  // POST /api/audiences/:audienceId/extract-intent — run full 40-cell intent matrix extraction
+  if (request.method === "POST" && matchPath(request.pathname, /^\/api\/audiences\/([^/]+)\/extract-intent$/)) {
+    if (!userIntentService?.extractFullMatrix) return json(503, { error: "User intent service not configured" });
+    const rawAudienceId = request.pathname.split("/")[3];
+    let audience = await safeLoad(() => repository.getAudience(rawAudienceId), null);
+    if (!audience) {
+      const all = await safeLoad(() => repository.listAudiences(), []);
+      audience = all.find(a => a.audience_key === rawAudienceId) ?? null;
+    }
+    if (!audience) return json(404, { error: "Audience not found" });
+
+    const instance = typeof repository.getInstanceByAudience === "function"
+      ? await safeLoad(() => repository.getInstanceByAudience(audience.id), null)
+      : null;
+    const profileClient = profileClientFactory ? profileClientFactory({ audience, instance }) : null;
+
+    const stats = await userIntentService.extractFullMatrix(audience, profileClient, repository);
+    return json(200, { success: true, ...stats });
+  }
+
+  // GET /api/audiences/:audienceId/intent-matrix — return all 40 cells for given date (default: today)
+  if (request.method === "GET" && matchPath(request.pathname, /^\/api\/audiences\/([^/]+)\/intent-matrix$/)) {
+    const rawAudienceId = request.pathname.split("/")[3];
+    let audience = await safeLoad(() => repository.getAudience(rawAudienceId), null);
+    if (!audience) {
+      const all = await safeLoad(() => repository.listAudiences(), []);
+      audience = all.find(a => a.audience_key === rawAudienceId) ?? null;
+    }
+    if (!audience) return json(404, { error: "Audience not found" });
+
+    const date = request.query?.date ?? clock().slice(0, 10);
+    const cells = await safeLoad(() => repository.listIntentMatrix(audience.id, { date }), []);
+    return json(200, { success: true, cells, date });
+  }
+
+  // GET /api/audiences/:audienceId/daily-readiness — count ready_to_publish stories with video by type vs 5/3/2 target
+  if (request.method === "GET" && matchPath(request.pathname, /^\/api\/audiences\/([^/]+)\/daily-readiness$/)) {
+    const rawAudienceId = request.pathname.split("/")[3];
+    let audience = await safeLoad(() => repository.getAudience(rawAudienceId), null);
+    if (!audience) {
+      const all = await safeLoad(() => repository.listAudiences(), []);
+      audience = all.find(a => a.audience_key === rawAudienceId) ?? null;
+    }
+    if (!audience) return json(404, { error: "Audience not found" });
+
+    const TARGET = { news: 5, local_event: 3, product: 2 };
+    const IN_PIPELINE = ["new", "classifying", "classified", "media_decided", "asset_generating"];
+
+    const allStories = await safeLoad(() => repository.listStories({ audience_id: audience.id }), []);
+
+    const ready = { news: 0, local_event: 0, product: 0 };
+    for (const story of allStories.filter(s => s.status === "ready_to_publish")) {
+      const hasVideo = story.assets?.some(a => a.asset_type === "video" && a.status === "ready");
+      if (!hasVideo) continue;
+      const t = story.metadata?.story_type ?? "news";
+      if (ready[t] !== undefined) ready[t]++;
+    }
+
+    const in_pipeline = allStories.filter(s => IN_PIPELINE.includes(s.status)).length;
+    const gaps = Object.fromEntries(Object.entries(TARGET).map(([t, n]) => [t, Math.max(0, n - ready[t])]));
+    const total_ready = ready.news + ready.local_event + ready.product;
+    const total_target = TARGET.news + TARGET.local_event + TARGET.product;
+    const needs_fetch = total_ready < total_target - 2 || (in_pipeline === 0 && total_ready < total_target);
+
+    return json(200, { ready, in_pipeline, target: TARGET, gaps, total_ready, total_target, needs_fetch });
+  }
+
+  // POST /api/audiences/:audienceId/publish-batch — post all ready_to_publish stories that have a video asset
+  if (request.method === "POST" && matchPath(request.pathname, /^\/api\/audiences\/([^/]+)\/publish-batch$/)) {
+    const rawAudienceId = request.pathname.split("/")[3];
+    let audience = await safeLoad(() => repository.getAudience(rawAudienceId), null);
+    if (!audience) {
+      const all = await safeLoad(() => repository.listAudiences(), []);
+      audience = all.find(a => a.audience_key === rawAudienceId) ?? null;
+    }
+    if (!audience) return json(404, { error: "Audience not found" });
+
+    const instance = typeof repository.getInstanceByAudience === "function"
+      ? await safeLoad(() => repository.getInstanceByAudience(audience.id), null)
+      : null;
+    const instanceRC = instance?.runtime_config ?? {};
+    const runtimeRC = audienceRuntimeConfig?.[audience.audience_key] ?? {};
+    const botToken = instanceRC.telegram_bot_token || runtimeRC.telegram_bot_token || "";
+    const chatId = instanceRC.telegram_chat_id || runtimeRC.telegram_chat_id || "";
+    if (!botToken || !chatId) return json(503, { error: "Telegram not configured for this audience" });
+
+    const stories = await safeLoad(() => repository.listStories({ audience_id: audience.id, status: "ready_to_publish" }), []);
+    let published = 0;
+    let skipped = 0;
+    const results = [];
+
+    for (const story of stories) {
+      const videoAsset = story.assets?.find(a => a.asset_type === "video" && a.status === "ready" && a.is_selected)
+        ?? story.assets?.find(a => a.asset_type === "video" && a.status === "ready");
+      if (!videoAsset?.download_url) { skipped++; continue; }
+
+      const why = story.metadata?.why_today ?? "";
+      const fallback = (story.story_text ?? story.summary ?? "").slice(0, 600);
+      const caption = [
+        `<b>${story.title}</b>`,
+        (why || fallback).slice(0, 800),
+        story.primary_source_url ? `<a href="${story.primary_source_url}">${deriveCta(story.metadata?.story_type ?? "news")} →</a>` : null
+      ].filter(Boolean).join("\n\n");
+
+      try {
+        const tgRes = await fetchImpl(`https://api.telegram.org/bot${botToken}/sendVideo`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ chat_id: chatId, video: videoAsset.download_url, caption, parse_mode: "HTML", supports_streaming: true })
+        });
+        if (!tgRes.ok) {
+          const err = await tgRes.text().catch(() => "");
+          results.push({ id: story.id, status: "failed", error: `${tgRes.status} ${err.slice(0, 150)}` });
+          continue;
+        }
+        const tgData = await tgRes.json().catch(() => ({}));
+        const telegramMessageId = tgData.result?.message_id ?? null;
+        const now = clock();
+        await repository.updateStory(story.id, {
+          metadata: { ...story.metadata, telegram_message_id: telegramMessageId, telegram_chat_id: chatId, published_at: now }
+        }, { actorId: "publish-batch" }).catch(() => {});
+        await repository.transitionStoryStatus(story.id, "published", { actorId: "publish-batch" }).catch(() => {});
+        published++;
+        results.push({ id: story.id, status: "published", telegram_message_id: telegramMessageId });
+      } catch (err) {
+        results.push({ id: story.id, status: "failed", error: err.message });
+      }
+    }
+
+    return json(200, { success: true, published, skipped_no_video: skipped, results });
+  }
+
   // POST /api/audiences/:audienceId/telegram-webhook — receive reaction updates from Telegram bot webhook
   if (request.method === "POST" && matchPath(request.pathname, /^\/api\/audiences\/([^/]+)\/telegram-webhook$/)) {
     const rawAudienceId = request.pathname.split("/")[3];
@@ -1399,6 +1628,28 @@ ${sourceUrl ? `<a class="read-btn" href="${sourceUrl}" target="_blank" rel="noop
     return json(200, { success: true });
   }
 
+  // POST /api/audiences/:audienceId/clear-pipeline — archive all in-flight stories (any non-terminal status) for a fresh start
+  if (request.method === "POST" && matchPath(request.pathname, /^\/api\/audiences\/([^/]+)\/clear-pipeline$/)) {
+    const rawAudienceId = request.pathname.split("/")[3];
+    let audience = await safeLoad(() => repository.getAudience(rawAudienceId), null);
+    if (!audience) {
+      const all = await safeLoad(() => repository.listAudiences(), []);
+      audience = all.find(a => a.audience_key === rawAudienceId) ?? null;
+    }
+    if (!audience) return json(404, { error: "Audience not found" });
+
+    const TERMINAL = new Set(["published", "archived"]);
+    const allStories = await safeLoad(() => repository.listStories({ audience_id: audience.id }), []);
+    const toArchive = allStories.filter(s => !TERMINAL.has(s.status));
+    const now = clock();
+    await Promise.all(
+      toArchive.map(s =>
+        repository.transitionStoryStatus(s.id, "archived", { actorId: "clear-pipeline", timestamp: now }).catch(() => {})
+      )
+    );
+    return json(200, { success: true, archived: toArchive.length, statuses: [...new Set(toArchive.map(s => s.status))] });
+  }
+
   // POST /api/audiences/:audienceId/archive-daily-remainder — archive all remaining ready_to_publish stories (end-of-day cleanup)
   if (request.method === "POST" && matchPath(request.pathname, /^\/api\/audiences\/([^/]+)\/archive-daily-remainder$/)) {
     const rawAudienceId = request.pathname.split("/")[3];
@@ -1458,6 +1709,29 @@ ${sourceUrl ? `<a class="read-btn" href="${sourceUrl}" target="_blank" rel="noop
       fed++;
     }
     return json(200, { success: true, fed });
+  }
+
+  // POST /api/audiences/:audienceId/run-decay — trigger KG decay pass on the Marble profile
+  if (request.method === "POST" && matchPath(request.pathname, /^\/api\/audiences\/([^/]+)\/run-decay$/)) {
+    const rawAudienceId = request.pathname.split("/")[3];
+    let audience = await safeLoad(() => repository.getAudience(rawAudienceId), null);
+    if (!audience) {
+      const all = await safeLoad(() => repository.listAudiences(), []);
+      audience = all.find(a => a.audience_key === rawAudienceId) ?? null;
+    }
+    if (!audience) return json(404, { error: "Audience not found" });
+    if (!profileClientFactory) return json(400, { error: "No profile client configured" });
+    const instance = typeof repository.getInstanceByAudience === "function"
+      ? await safeLoad(() => repository.getInstanceByAudience(audience.id), null)
+      : null;
+    const profileClient = profileClientFactory({ audience, instance });
+    if (!profileClient) return json(400, { error: "No profile client configured" });
+    try {
+      const result = await profileClient.runDecay();
+      return json(200, { success: true, ...result });
+    } catch (err) {
+      return json(500, { error: err.message });
+    }
   }
 
   if (request.method === "GET" && matchPath(request.pathname, /^\/api\/merchants$/)) {
@@ -1525,8 +1799,9 @@ async function loadAudienceProfiles(audiences, audienceInstances, profileClientF
         return [audience.id, { error: "Marble profile sidecar is not configured for this audience." }];
       }
       const summary = await profileClient.getSummary();
-      const debug = profileClient.getDebug ? await profileClient.getDebug() : { data: null };
-      return [audience.id, { summary: summary.data ?? null, debug: debug.data ?? null }];
+      const debugRaw = profileClient.getDebug ? await profileClient.getDebug() : null;
+      const debug = debugRaw?.data ?? (debugRaw?.user ? debugRaw : null);
+      return [audience.id, { summary: summary.data ?? null, debug }];
     } catch (error) {
       return [audience.id, { error: error.message }];
     }
@@ -1539,12 +1814,19 @@ async function resolveProfileClient({ repository, profileClientFactory, audience
   if (typeof profileClientFactory !== "function") {
     return null;
   }
-  const resolvedAudience = audience ?? await repository.getAudience(audienceId);
+  let resolvedAudience = audience;
+  if (!resolvedAudience) {
+    resolvedAudience = await safeLoad(() => repository.getAudience(audienceId), null);
+    if (!resolvedAudience) {
+      const all = await safeLoad(() => repository.listAudiences(), []);
+      resolvedAudience = all.find((a) => a.audience_key === audienceId) ?? null;
+    }
+  }
   if (!resolvedAudience) {
     return null;
   }
   const instance = typeof repository.getInstanceByAudience === "function"
-    ? await safeLoad(() => repository.getInstanceByAudience(audienceId), null)
+    ? await safeLoad(() => repository.getInstanceByAudience(resolvedAudience.id), null)
     : null;
   return profileClientFactory({ audience: resolvedAudience, instance });
 }
@@ -1754,7 +2036,8 @@ function renderDashboard(model) {
         deployment: selectedDeployment,
         deployments,
         chatHistory: model.chatHistory ?? [],
-        protagonistImages: model.protagonistImages ?? new Map()
+        protagonistImages: model.protagonistImages ?? new Map(),
+        heroImageUrl: model.heroImageUrl ?? null
       })
     : "";
   const workspace = activeTab === "stories"
@@ -2406,7 +2689,7 @@ function renderAudiencesWorkspace({ model, deployments, selectedAudience, select
   return `<div>
     <div class="mb-5 flex items-center justify-between">
       <div>
-        <h1 class="text-lg font-semibold text-gray-900 dark:text-gray-100">Audiences</h1>
+        <h1 class="text-lg font-semibold text-gray-900 dark:text-gray-100">Audience Directory</h1>
         <p class="text-sm text-gray-500 dark:text-gray-400 mt-0.5">${escapeHtml(String(audiences.length))} audience${audiences.length !== 1 ? "s" : ""} · Marble profile and runtime delivery.</p>
       </div>
       <button onclick="openAudienceWizard()" class="btn btn-accent btn-sm">+ New Audience</button>
@@ -2517,6 +2800,38 @@ function renderAudienceDirectory(audiences, deployments, audienceProfiles, selec
         <p class="text-xs text-gray-500 dark:text-gray-400 leading-snug line-clamp-2">${escapeHtml(formatStructuredText(summary.reasoning_summary ?? audience.family_context, "No summary."))}</p>
       </a>`;
     }).join("")}
+  </div>`;
+}
+
+function renderKGLayers(debug) {
+  if (!debug) {
+    return `<p class="text-xs text-gray-400 dark:text-gray-500 italic">No Marble debug payload available.</p>`;
+  }
+  const u = debug.user ?? {};
+  const summaryClass = "cursor-pointer text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400 select-none";
+  const preClass = "mt-2 rounded-md bg-gray-100 dark:bg-gray-900 p-3 text-xs font-mono overflow-x-auto leading-relaxed";
+
+  function section(key, value, openByDefault = false) {
+    const count = Array.isArray(value) ? value.length : null;
+    const label = key + (count !== null ? ` (${count})` : "");
+    return `<details${openByDefault ? " open" : ""}>
+      <summary class="${summaryClass}">${escapeHtml(label)}</summary>
+      <pre class="${preClass}">${escapeHtml(JSON.stringify(value, null, 2))}</pre>
+    </details>`;
+  }
+
+  const OPEN_WHEN_NONEMPTY = ["interests", "goals", "daily_signals", "beliefs", "preferences"];
+  const sections = Object.entries(u)
+    .filter(([k]) => k !== "id")
+    .map(([k, v]) => {
+      const hasContent = Array.isArray(v) ? v.length > 0 : (v != null && v !== "");
+      return section(k, v, OPEN_WHEN_NONEMPTY.includes(k) && hasContent);
+    })
+    .join("");
+
+  return `<div class="space-y-1 mt-2">
+    <p class="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-2">Knowledge Graph — click any section to expand/collapse</p>
+    ${sections}
   </div>`;
 }
 
@@ -2667,10 +2982,7 @@ function renderAudienceWorkspaceCanvas(audience, instance, profileState = {}) {
           <button type="submit" class="rounded-md bg-white dark:bg-gray-700 px-3 py-1.5 text-sm font-medium text-gray-700 dark:text-gray-200 ring-1 ring-inset ring-gray-300 dark:ring-gray-600 hover:bg-gray-50 transition-colors cursor-pointer">Store Enrichment Event</button>
         </div>
       </form>
-      <details class="group">
-        <summary class="cursor-pointer text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400 select-none">Graph Debug</summary>
-        <pre class="mt-2 rounded-md bg-gray-100 dark:bg-gray-900 p-3 text-xs font-mono overflow-x-auto leading-relaxed">${debugJson || "No Marble debug payload available."}</pre>
-      </details>
+      ${renderKGLayers(debug)}
     </div>
 
     <div class="border-t border-gray-200 dark:border-gray-700 p-6 space-y-4">
@@ -2818,7 +3130,7 @@ function renderDeploymentIndex(deployments) {
   </div>`;
 }
 
-function renderAudienceDrawer({ audience, instance, profileState = {}, deployment, deployments = [], chatHistory = [], protagonistImages = new Map() }) {
+function renderAudienceDrawer({ audience, instance, profileState = {}, deployment, deployments = [], chatHistory = [], protagonistImages = new Map(), heroImageUrl = null }) {
   const closeHref = "/?tab=audiences";
   const audienceKey = audience.audience_key ?? audience.id;
   const photo = audience.photo_url ?? null;
@@ -2889,8 +3201,8 @@ function renderAudienceDrawer({ audience, instance, profileState = {}, deploymen
       ${renderOperatorConsole(audience, deployment, chatHistory)}
     </div>`;
 
-  const heroPhotoBlock = audience.hero_image_url
-    ? `<img src="${escapeAttribute(audience.hero_image_url)}" alt="" class="w-16 h-16 rounded-lg object-cover flex-shrink-0" />`
+  const heroPhotoBlock = heroImageUrl
+    ? `<img src="${escapeAttribute(heroImageUrl)}" alt="" class="w-16 h-16 rounded-lg object-cover flex-shrink-0" />`
     : `<div class="w-16 h-16 rounded-lg bg-gray-100 dark:bg-gray-700 flex items-center justify-center text-2xl flex-shrink-0">👤</div>`;
 
   const protagonistCards = Object.entries(CATEGORY_META).map(([cat, meta]) => {
@@ -2970,16 +3282,20 @@ function renderAudienceDrawer({ audience, instance, profileState = {}, deploymen
 
       <div class="border-b border-gray-200 dark:border-gray-700 flex" role="tablist">
         <button class="audience-drawer-tab px-5 py-3 text-sm font-medium border-b-2 border-indigo-600 text-indigo-600 dark:text-indigo-400 dark:border-indigo-400 -mb-px" data-tab="details" role="tab" aria-selected="true">Details</button>
+        <button class="audience-drawer-tab px-5 py-3 text-sm font-medium border-b-2 border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 -mb-px" data-tab="marble" role="tab" aria-selected="false">Marble KG</button>
         <button class="audience-drawer-tab px-5 py-3 text-sm font-medium border-b-2 border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 -mb-px" data-tab="links" role="tab" aria-selected="false">Links</button>
         <button class="audience-drawer-tab px-5 py-3 text-sm font-medium border-b-2 border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 -mb-px" data-tab="chat" role="tab" aria-selected="false">Chat</button>
         <button class="audience-drawer-tab px-5 py-3 text-sm font-medium border-b-2 border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 -mb-px" data-tab="images" role="tab" aria-selected="false">Images</button>
+        <button class="audience-drawer-tab px-5 py-3 text-sm font-medium border-b-2 border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 -mb-px" data-tab="runtime" role="tab" aria-selected="false">Runtime</button>
       </div>
 
       <div class="flex-1 overflow-y-auto">
         <div data-tab-panel="details">${detailsTab}</div>
+        <div data-tab-panel="marble" class="hidden">${renderAudienceWorkspaceCanvas(audience, instance, profileState)}</div>
         <div data-tab-panel="links" class="hidden">${linksTab}</div>
         <div data-tab-panel="chat" class="hidden">${chatTab}</div>
         <div data-tab-panel="images" class="hidden">${imagesTab}</div>
+        <div data-tab-panel="runtime" class="hidden"><div class="p-5 space-y-4">${renderAudienceInspector(audience, deployment, deployments, chatHistory)}</div></div>
       </div>
 
     </aside>

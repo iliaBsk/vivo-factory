@@ -73,6 +73,10 @@ export function createRepository(seed = {}) {
       state.audiences.set(audienceId, updated);
       return dataUrl;
     },
+    async getHeroImageUrl(audienceId) {
+      const audience = state.audiences.get(audienceId);
+      return audience?.photo_url ?? null;
+    },
     async getProtagonistImages(_audienceId) {
       return new Map();
     },
@@ -564,6 +568,64 @@ export function createRepository(seed = {}) {
       return updated;
     },
 
+    createIntentCell(audienceId, cell) {
+      const record = {
+        id: crypto.randomUUID(),
+        audience_id: audienceId,
+        extracted_at: cell.extracted_at ?? nowIso(),
+        horizon: cell.horizon,
+        domain: cell.domain,
+        goals: cell.goals ?? [],
+        desires: cell.desires ?? [],
+        fears: cell.fears ?? [],
+        anti_goals: cell.anti_goals ?? [],
+        needs: cell.needs ?? [],
+        relevant_to_know: cell.relevant_to_know ?? [],
+        status: cell.status ?? "normal",
+        raw_response: cell.raw_response ?? null
+      };
+      const idx = state.intentMatrix.findIndex(
+        r => r.audience_id === audienceId && r.extracted_at === record.extracted_at &&
+             r.horizon === cell.horizon && r.domain === cell.domain
+      );
+      if (idx >= 0) state.intentMatrix.splice(idx, 1, record);
+      else state.intentMatrix.push(record);
+      return record;
+    },
+    listIntentMatrix(audienceId, { date } = {}) {
+      return state.intentMatrix.filter(r => {
+        if (r.audience_id !== audienceId) return false;
+        if (date && !r.extracted_at.startsWith(date)) return false;
+        return true;
+      });
+    },
+    createIntentDiff(audienceId, diff) {
+      const record = { id: crypto.randomUUID(), audience_id: audienceId, ...diff };
+      state.intentDiffs.push(record);
+      return record;
+    },
+    listIntentDiffs(audienceId, { date, minSignificance = 0 } = {}) {
+      return state.intentDiffs.filter(r => {
+        if (r.audience_id !== audienceId) return false;
+        if (date && !r.computed_at.startsWith(date)) return false;
+        if ((r.significance_score ?? 0) < minSignificance) return false;
+        return true;
+      });
+    },
+    createDataGap(audienceId, gap) {
+      const record = {
+        id: crypto.randomUUID(),
+        audience_id: audienceId,
+        noticed_at: nowIso(),
+        resolution_status: "open",
+        ...gap
+      };
+      state.dataGaps.push(record);
+      return record;
+    },
+
+    flushIntentToProfile() {},
+
     exportState() {
       return exportState(state);
     }
@@ -811,7 +873,7 @@ export function createSupabaseRepository(options) {
         contentType: photo.mime_type ?? "image/jpeg"
       });
 
-      const storageRows = await client.insert("vivo_storage_objects", {
+      const storageRows = await client.upsert("vivo_storage_objects", {
         bucket_name: bucket,
         object_path: objectPath,
         file_name: photo.file_name ?? `photo.${ext}`,
@@ -826,6 +888,14 @@ export function createSupabaseRepository(options) {
         hero_image_asset_storage_id: storageObject.id
       });
       return storageObject.id;
+    },
+    async getHeroImageUrl(audienceId) {
+      const audiences = await client.select("vivo_audiences", { id: `eq.${audienceId}`, limit: "1" });
+      const storageId = audiences[0]?.hero_image_asset_storage_id;
+      if (!storageId) return null;
+      const objs = await client.select("vivo_storage_objects", { id: `eq.${storageId}`, limit: "1" });
+      if (!objs.length) return null;
+      return client.signObjectUrl(objs[0].bucket_name ?? DEFAULT_STORAGE_BUCKET, objs[0].object_path);
     },
     async createStory(story, options = {}) {
       if (!story.story_key) throw new Error("story_key is required");
@@ -1227,6 +1297,90 @@ export function createSupabaseRepository(options) {
       const rows = await client.upsert("vivo_merchant_audience_overrides", body);
       return rows[0];
     },
+    createIntentCell(audienceId, cell) {
+      const record = {
+        id: crypto.randomUUID(),
+        audience_id: audienceId,
+        extracted_at: cell.extracted_at,
+        horizon: cell.horizon,
+        domain: cell.domain,
+        goals: cell.goals ?? [],
+        desires: cell.desires ?? [],
+        fears: cell.fears ?? [],
+        anti_goals: cell.anti_goals ?? [],
+        needs: cell.needs ?? [],
+        relevant_to_know: cell.relevant_to_know ?? [],
+        status: cell.status ?? "normal",
+        raw_response: cell.raw_response ?? null
+      };
+      const idx = localState.intentMatrix.findIndex(
+        r => r.audience_id === audienceId && r.extracted_at === record.extracted_at &&
+             r.horizon === cell.horizon && r.domain === cell.domain
+      );
+      if (idx >= 0) localState.intentMatrix.splice(idx, 1, record);
+      else localState.intentMatrix.push(record);
+      return record;
+    },
+    async listIntentMatrix(audienceId, { date } = {}) {
+      const local = localState.intentMatrix.filter(r => {
+        if (r.audience_id !== audienceId) return false;
+        if (date && !r.extracted_at.startsWith(date)) return false;
+        return true;
+      });
+      if (local.length > 0) return local;
+      try {
+        const audience = await this.getAudience(audienceId);
+        const stored = audience?.profile_snapshot?.intent_matrix;
+        if (!stored?.cells?.length) return [];
+        if (date && stored.extracted_at && !stored.extracted_at.startsWith(date)) return [];
+        return stored.cells;
+      } catch { return []; }
+    },
+    createIntentDiff(audienceId, diff) {
+      const record = { id: crypto.randomUUID(), audience_id: audienceId, ...diff };
+      localState.intentDiffs.push(record);
+      return record;
+    },
+    async listIntentDiffs(audienceId, { date, minSignificance = 0 } = {}) {
+      const local = localState.intentDiffs.filter(r => {
+        if (r.audience_id !== audienceId) return false;
+        if (date && !r.computed_at.startsWith(date)) return false;
+        if ((r.significance_score ?? 0) < minSignificance) return false;
+        return true;
+      });
+      if (local.length > 0) return local;
+      try {
+        const audience = await this.getAudience(audienceId);
+        const stored = audience?.profile_snapshot?.intent_matrix;
+        if (!stored?.diffs?.length) return [];
+        return stored.diffs.filter(d =>
+          (d.significance_score ?? 0) >= minSignificance &&
+          (!date || (d.computed_at ?? "").startsWith(date))
+        );
+      } catch { return []; }
+    },
+    createDataGap(audienceId, gap) {
+      const record = { id: crypto.randomUUID(), audience_id: audienceId, resolution_status: "open", ...gap };
+      localState.dataGaps.push(record);
+      return record;
+    },
+    async flushIntentToProfile(audienceId) {
+      const cells = localState.intentMatrix.filter(r => r.audience_id === audienceId);
+      if (cells.length === 0) return;
+      const diffs = localState.intentDiffs.filter(r => r.audience_id === audienceId);
+      const gaps = localState.dataGaps.filter(r => r.audience_id === audienceId);
+      const extractedAt = cells[0]?.extracted_at ?? new Date().toISOString();
+      const audience = await this.getAudience(audienceId);
+      if (!audience) return;
+      const existing = audience.profile_snapshot ?? {};
+      await client.update("vivo_audiences", { id: `eq.${audienceId}` }, {
+        profile_snapshot: {
+          ...existing,
+          intent_matrix: { extracted_at: extractedAt, cells, diffs, data_gaps: gaps }
+        }
+      });
+    },
+
     exportState() {
       return exportState(localState);
     }
@@ -1252,7 +1406,10 @@ function normalizeState(seed) {
       Object.entries(seed.conversations ?? {}).map(([k, v]) => [k, { ...v, _messages: [] }])
     ),
     merchants: new Map((seed.merchants ?? []).map((item) => [item.merchant_id, { ...item }])),
-    merchantOverrides: new Map((seed.merchantOverrides ?? []).map((item) => [`${item.merchant_id}:${item.audience_id}`, { ...item }]))
+    merchantOverrides: new Map((seed.merchantOverrides ?? []).map((item) => [`${item.merchant_id}:${item.audience_id}`, { ...item }])),
+    intentMatrix: [...(seed.intentMatrix ?? [])],
+    intentDiffs: [...(seed.intentDiffs ?? [])],
+    dataGaps: [...(seed.dataGaps ?? [])]
   };
 }
 
@@ -1275,7 +1432,10 @@ function exportState(state) {
       Object.entries(state.conversations).map(([k, { _messages, ...rest }]) => [k, rest])
     ),
     merchants: [...state.merchants.values()],
-    merchantOverrides: [...state.merchantOverrides.values()]
+    merchantOverrides: [...state.merchantOverrides.values()],
+    intentMatrix: [...state.intentMatrix],
+    intentDiffs: [...state.intentDiffs],
+    dataGaps: [...state.dataGaps]
   };
 }
 
@@ -1615,7 +1775,7 @@ function createSupabaseClient(options) {
         body: JSON.stringify({ expiresIn })
       });
       if (!response.ok) {
-        throw new Error(await response.text());
+        return null;
       }
       const payload = typeof response.json === "function"
         ? await response.json()
@@ -1624,7 +1784,7 @@ function createSupabaseClient(options) {
       if (!signedPath) {
         return null;
       }
-      return signedPath.startsWith("http") ? signedPath : `${baseUrl}${signedPath}`;
+      return signedPath.startsWith("http") ? signedPath : `${baseUrl}/storage/v1${signedPath}`;
     }
   };
 }
@@ -1653,6 +1813,17 @@ async function hydrateSupabaseStories(client, stories) {
   const reviewsByStoryId = groupBy(reviews, (item) => item.story_id);
   const publicationsByStoryId = groupBy(publications, (item) => item.story_id);
 
+  const heroStorageIds = uniqueValues(stories.map((s) => s.hero_image_asset_storage_id).filter(Boolean));
+  const heroStorageObjects = heroStorageIds.length > 0
+    ? await client.select("vivo_storage_objects", { id: `in.(${heroStorageIds.join(",")})` })
+    : [];
+  const heroUrlById = new Map(
+    await Promise.all(heroStorageObjects.map(async (obj) => {
+      const url = await client.signObjectUrl(obj.bucket_name ?? DEFAULT_STORAGE_BUCKET, obj.object_path);
+      return [obj.id, url];
+    }))
+  );
+
   return stories.map((story) => {
     const storyAssets = assetsByStoryId.get(story.id) ?? [];
     return {
@@ -1662,7 +1833,8 @@ async function hydrateSupabaseStories(client, stories) {
       assets: storyAssets,
       reviews: reviewsByStoryId.get(story.id) ?? [],
       publications: publicationsByStoryId.get(story.id) ?? [],
-      selected_asset_id: storyAssets.find((asset) => asset.is_selected)?.id ?? null
+      selected_asset_id: storyAssets.find((asset) => asset.is_selected)?.id ?? null,
+      hero_image_url: story.hero_image_asset_storage_id ? (heroUrlById.get(story.hero_image_asset_storage_id) ?? null) : null
     };
   });
 }

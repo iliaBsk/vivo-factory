@@ -191,6 +191,8 @@ function renderComposeFile({ openClawImage, profileEngine, envFile, serviceNames
       - ${envFile}
 ${portSection}    extra_hosts:
       - "host.docker.internal:host-gateway"
+    networks:
+      - vivo-net
     volumes:
 ${configMount}${pluginMount}  ${serviceNames.profile}:
     image: ${profileEngine.image}
@@ -205,6 +207,10 @@ ${configMount}${pluginMount}  ${serviceNames.profile}:
 ${appMount}
 volumes:
   ${profileDataVolume}:
+
+networks:
+  vivo-net:
+    external: true
 `;
 }
 

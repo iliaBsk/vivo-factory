@@ -10,7 +10,8 @@
     "start": "node src/server.js",
     "bootstrap": "node src/bootstrap.js",
     "generate:stacks": "node src/generate-stacks.js",
-    "deploy:stacks": "node src/deploy-stacks.js"
+    "deploy:stacks": "node src/deploy-stacks.js",
+    "onboard": "node scripts/onboard.js"
   },
   "devDependencies": {
     "tailwindcss": "^3.4.19"

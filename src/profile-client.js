@@ -17,6 +17,9 @@ export function createProfileClient(options) {
     },
     selectItems(items, context = {}) {
       return postJson(fetchImpl, `${baseUrl}/user-profile/select`, { items, context });
+    },
+    runDecay() {
+      return postJson(fetchImpl, `${baseUrl}/user-profile/graph/decay`, {});
     }
   };
 }
@@ -24,9 +27,6 @@ export function createProfileClient(options) {
 function normalizeBaseUrl(input) {
   const value = input ?? "http://127.0.0.1:5400";
   const url = new URL(value);
-  if (!["127.0.0.1", "localhost"].includes(url.hostname)) {
-    throw new Error("user-profile-plugin baseUrl must use a loopback host");
-  }
   return url.origin;
 }
 
@@ -49,7 +49,7 @@ async function readEnvelope(response) {
     throw new Error(`user-profile-plugin request failed with status ${response.status ?? "unknown"}`);
   }
   const payload = await response.json();
-  if (!payload.ok) {
+  if (payload.ok === false) {
     throw new Error(payload.errors?.join(", ") || "user-profile-plugin returned an error");
   }
   return payload;

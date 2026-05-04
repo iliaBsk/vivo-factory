@@ -11,6 +11,18 @@ export function createPublishService({ fetchImpl, twitterClientFactory, reposito
   const resolveTwitterClient = twitterClientFactory ?? (() => null);
 
   return {
+    async postTweetRaw(text, audienceConfig, mediaId = null) {
+      const twitterClient = resolveTwitterClient(audienceConfig ?? {});
+      if (!twitterClient) throw new Error("Twitter not configured for this audience");
+      return twitterClient.postTweet(text, mediaId);
+    },
+
+    async uploadVideoMedia(videoBuffer, mimeType, audienceConfig) {
+      const twitterClient = resolveTwitterClient(audienceConfig ?? {});
+      if (!twitterClient?.uploadMedia) return null;
+      return twitterClient.uploadMedia(videoBuffer, mimeType);
+    },
+
     async publishStory(story, audienceConfig) {
       const botToken = String(audienceConfig?.telegram_bot_token ?? "").trim();
       const chatId = String(audienceConfig?.telegram_chat_id ?? "").trim();
@@ -22,24 +34,26 @@ export function createPublishService({ fetchImpl, twitterClientFactory, reposito
           await twitterClient.postTweet(tweetText);
         }
 
-        const message = [
-          `<b>${escapeHtml(story.title)}</b>`,
-          story.story_text ? escapeHtml(story.story_text.slice(0, 800)) : "",
-          story.primary_source_url ? `<a href="${escapeHtml(story.primary_source_url)}">Read more</a>` : ""
-        ].filter(Boolean).join("\n\n");
+        if (botToken && chatId) {
+          const message = [
+            `<b>${escapeHtml(story.title)}</b>`,
+            story.story_text ? escapeHtml(story.story_text.slice(0, 800)) : "",
+            story.primary_source_url ? `<a href="${escapeHtml(story.primary_source_url)}">Read more</a>` : ""
+          ].filter(Boolean).join("\n\n");
 
-        const sendRes = await fetchImpl(
-          `https://api.telegram.org/bot${botToken}/sendMessage`,
-          {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({ chat_id: chatId, text: message, parse_mode: "HTML" })
+          const sendRes = await fetchImpl(
+            `https://api.telegram.org/bot${botToken}/sendMessage`,
+            {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ chat_id: chatId, text: message, parse_mode: "HTML" })
+            }
+          );
+
+          if (!sendRes.ok) {
+            const errText = await sendRes.text().catch(() => "");
+            throw new Error(`Telegram sendMessage failed: ${sendRes.status} ${errText.slice(0, 100)}`);
           }
-        );
-
-        if (!sendRes.ok) {
-          const errText = await sendRes.text().catch(() => "");
-          throw new Error(`Telegram sendMessage failed: ${sendRes.status} ${errText.slice(0, 100)}`);
         }
 
         const now = clock();
