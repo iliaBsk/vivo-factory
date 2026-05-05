@@ -112,6 +112,7 @@ export function renderDockerCompose(manifests) {
       OPENAI_MODEL: \${OPENAI_MODEL:-gpt-4o-mini}
       STORAGE_PATH: ${manifest.runtime.vault.storage_path}
       PORT: "${manifest.runtime.vault.port}"
+      MEDIA_ENRICH_WEBHOOK_URL: \${MEDIA_ENRICH_WEBHOOK_URL:-}
     ports:
       - "${manifest.runtime.vault.port}:${manifest.runtime.vault.port}"
     volumes:

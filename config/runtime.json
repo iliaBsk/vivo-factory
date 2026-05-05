@@ -48,7 +48,8 @@
       "twitter_access_token_secret": "",
       "profile_public_url": "http://192.168.1.79:5402",
       "vault_base_url": "http://192.168.1.79:4876",
-      "vault_port": 4876
+      "vault_port": 4876,
+      "media_enrich_webhook_url": "http://192.168.1.79:5678/webhook/vivo-media-enrich"
     },
     "aleks-barcelona-tech-ai-30s": {
       "telegram_bot_token": "",
@@ -65,7 +66,8 @@
       "twitter_access_token_secret": "",
       "profile_public_url": "http://192.168.1.79:5401",
       "vault_base_url": "http://192.168.1.79:4877",
-      "vault_port": 4877
+      "vault_port": 4877,
+      "media_enrich_webhook_url": "http://192.168.1.79:5678/webhook/vivo-media-enrich"
     },
     "chontang": {
       "telegram_bot_token": "",
@@ -516,7 +518,8 @@
       ],
       "profile_public_url": "http://192.168.1.79:5403",
       "vault_base_url": "http://192.168.1.79:4878",
-      "vault_port": 4878
+      "vault_port": 4878,
+      "media_enrich_webhook_url": "http://192.168.1.79:5678/webhook/vivo-media-enrich"
     },
     "andrew-chen-unknown": {
       "telegram_bot_token": "",
@@ -723,7 +726,8 @@
         }
       ],
       "vault_base_url": "http://192.168.1.79:4879",
-      "vault_port": 4879
+      "vault_port": 4879,
+      "media_enrich_webhook_url": "http://192.168.1.79:5678/webhook/vivo-media-enrich"
     },
     "creative-freelancer-unknown": {
       "telegram_bot_token": "test-token",
