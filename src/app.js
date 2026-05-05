@@ -1196,7 +1196,7 @@ async function handleRequest(context) {
     if (!runtimeCfg?.vault_base_url) return json(404, { error: "Vault not configured" });
     if (!/^[\w-]{1,128}$/.test(jobId)) return json(400, { error: "Invalid job ID" });
     const vaultUrl = String(runtimeCfg.vault_base_url).replace(/\/+$/, "");
-    return { __hijack: true, type: "vault-sse", vaultUrl: `${vaultUrl}/personal/job/${jobId}/stream` };
+    return { __hijack: true, type: "vault-sse", vaultUrl: `${vaultUrl}/personal/job/${jobId}/stream`, fetchImpl };
   }
 
   // POST /api/audiences/:id/vault-sources — register sources for audience via vault service

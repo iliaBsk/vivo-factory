@@ -244,7 +244,7 @@ const server = http.createServer(async (request, response) => {
       "connection": "keep-alive",
     });
     try {
-      const upstream = await globalThis.fetch(vaultUrl);
+      const upstream = await result.fetchImpl(vaultUrl);
       Readable.fromWeb(upstream.body).pipe(response);
     } catch (err) {
       response.write(`data: ${JSON.stringify({ error: String(err) })}\n\n`);
