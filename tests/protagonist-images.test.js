@@ -206,6 +206,6 @@ test("GET /api/audiences/:id/vault-status/:jobId — returns 400 for invalid job
     fetchImpl: async () => { throw new Error("unexpected fetch"); },
     audienceRuntimeConfig: { "test-audience": { vault_base_url: "http://fake-vault" } }
   });
-  const res = await app.handle({ method: "GET", pathname: "/api/audiences/test-audience/vault-status/../etc/passwd", headers: {}, body: null, query: {} });
+  const res = await app.handle({ method: "GET", pathname: "/api/audiences/test-audience/vault-status/bad.id<script>", headers: {}, body: null, query: {} });
   assert.equal(res.status, 400);
 });
