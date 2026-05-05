@@ -3,6 +3,7 @@ import path from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { readFile } from "node:fs/promises";
+import { Readable } from "node:stream";
 
 import { createApp } from "./app.js";
 import { createAudienceImportService } from "./audience-import.js";
@@ -226,11 +227,29 @@ const server = http.createServer(async (request, response) => {
     method: request.method ?? "GET",
     pathname: url.pathname,
     query: Object.fromEntries(url.searchParams.entries()),
+    headers: request.headers ?? {},
     body
   });
 
   if (result.__hijack === true && result.type === "sse") {
     onboardingRelay.streamSSE(result.jobId, response);
+    return;
+  }
+
+  if (result.__hijack === true && result.type === "vault-sse") {
+    const { vaultUrl } = result;
+    response.writeHead(200, {
+      "content-type": "text/event-stream",
+      "cache-control": "no-cache",
+      "connection": "keep-alive",
+    });
+    try {
+      const upstream = await globalThis.fetch(vaultUrl);
+      Readable.fromWeb(upstream.body).pipe(response);
+    } catch (err) {
+      response.write(`data: ${JSON.stringify({ error: String(err) })}\n\n`);
+      response.end();
+    }
     return;
   }
 

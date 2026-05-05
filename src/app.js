@@ -1166,10 +1166,15 @@ async function handleRequest(context) {
     const runtimeCfg = audienceRuntimeConfig?.[audienceKey] ?? null;
     if (!runtimeCfg?.vault_base_url) return json(404, { error: "Vault not configured for this audience" });
     const vaultUrl = String(runtimeCfg.vault_base_url).replace(/\/+$/, "");
+    const headers = {};
+    const ct = request.headers?.['content-type'] || request.headers?.get?.('content-type');
+    if (ct) headers['content-type'] = ct;
+    const cl = request.headers?.['content-length'] || request.headers?.get?.('content-length');
+    if (cl) headers['content-length'] = cl;
     try {
       const upstream = await fetchImpl(`${vaultUrl}/personal/upload-mbox`, {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers,
         body: request.body ?? "{}"
       });
       const upstreamBody = await upstream.text();
@@ -1178,38 +1183,41 @@ async function handleRequest(context) {
       return json(upstream.status, parsed);
     } catch (err) {
       console.error("[vault/upload-mbox] fetch error:", err.message);
-      return json(502, { error: "Vault upstream unavailable" });
+      return json(502, { ok: false, error: String(err) });
     }
   }
 
-  // GET /api/audiences/:id/vault-status/:jobId — relay job status from vault service
+  // GET /api/audiences/:id/vault-status/:jobId — relay job status SSE stream from vault service
   if (request.method === "GET" && matchPath(request.pathname, /^\/api\/audiences\/([^/]+)\/vault-status\/([^/]+)$/)) {
     const parts = request.pathname.split("/");
     const audienceKey = parts[3];
     const jobId = parts[5];
     const runtimeCfg = audienceRuntimeConfig?.[audienceKey] ?? null;
-    if (!runtimeCfg?.vault_base_url) return json(404, { error: "Vault not configured for this audience" });
+    if (!runtimeCfg?.vault_base_url) return json(404, { error: "Vault not configured" });
+    if (!/^[\w-]{1,128}$/.test(jobId)) return json(400, { error: "Invalid job ID" });
     const vaultUrl = String(runtimeCfg.vault_base_url).replace(/\/+$/, "");
-    try {
-      const upstream = await fetchImpl(`${vaultUrl}/personal/job/${jobId}/stream`);
-      const upstreamBody = await upstream.text();
-      let parsed;
-      try { parsed = JSON.parse(upstreamBody); } catch { parsed = { raw: upstreamBody }; }
-      return json(upstream.status, parsed);
-    } catch (err) {
-      console.error("[vault/vault-status] fetch error:", err.message);
-      return json(502, { error: "Vault upstream unavailable" });
-    }
+    return { __hijack: true, type: "vault-sse", vaultUrl: `${vaultUrl}/personal/job/${jobId}/stream` };
   }
 
-  // POST /api/audiences/:id/vault-sources — register sources for audience via catalog
+  // POST /api/audiences/:id/vault-sources — register sources for audience via vault service
   if (request.method === "POST" && matchPath(request.pathname, /^\/api\/audiences\/([^/]+)\/vault-sources$/)) {
     const audienceKey = request.pathname.split("/")[3];
     const runtimeCfg = audienceRuntimeConfig?.[audienceKey] ?? null;
-    if (!runtimeCfg?.vault_base_url) return json(404, { error: "Vault not configured for this audience" });
+    if (!runtimeCfg?.vault_base_url) return json(404, { error: "Vault not configured" });
     const body = readBody(request.body);
-    const sources = Array.isArray(body.sources) ? body.sources : [];
-    return json(200, { ok: true, data: { added: sources.length } });
+    const sources = Array.isArray(body?.sources) ? body.sources : [];
+    const vaultUrl = String(runtimeCfg.vault_base_url).replace(/\/+$/, "");
+    try {
+      await fetchImpl(`${vaultUrl}/personal/sources`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ sources }),
+      });
+      return json(200, { ok: true, data: { added: sources.length } });
+    } catch (err) {
+      console.error("[vault/vault-sources] fetch error:", err.message);
+      return json(500, { ok: false, error: String(err) });
+    }
   }
 
   if (request.method === "POST" && matchPath(request.pathname, /^\/api\/audiences\/([^/]+)\/publish-recap$/)) {
