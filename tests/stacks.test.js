@@ -65,6 +65,11 @@ test("generateStackManifests provisions isolated ports, volumes, and secrets per
   assert.equal(manifests[0].runtime.openclaw.plugin_path, "/plugins/user-profile");
   assert.equal(manifests[0].runtime.telegram.chat_id, "-1001");
   assert.equal(manifests[0].runtime.telegram.bot_token, "token-1");
+  assert.deepEqual(
+    manifests.map((manifest) => manifest.runtime.vault.port),
+    [4876, 4877, 4878, 4879, 4880]
+  );
+  assert.equal(new Set(manifests.map((manifest) => manifest.runtime.vault.data_volume)).size, 5);
 });
 
 test("renderDockerCompose emits separate services per audience", async () => {
@@ -115,6 +120,11 @@ test("renderDockerCompose emits separate services per audience", async () => {
   assert.match(compose, /TELEGRAM_CHAT_ID: "-1001"/);
   assert.match(compose, /TELEGRAM_BOT_TOKEN: token-1/);
   assert.match(compose, /OPENCLAW_ADMIN_URL: http:\/\/127\.0\.0\.1:7601/);
+  assert.match(compose, /aud-1-vault:/);
+  assert.match(compose, /aud-2-vault:/);
+  assert.match(compose, /4876/);
+  assert.match(compose, /aud-1-vault-data/);
+  assert.match(compose, /aud-2-vault-data/);
 });
 
 test("generateStackManifests carries profile engine runtime overrides", async () => {

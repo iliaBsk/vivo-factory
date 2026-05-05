@@ -26,6 +26,14 @@ export function generateStackManifests(audiences, options) {
           port: 7200 + index,
           data_volume: `${audience.audience_id}-profile-data`,
           secret_name: `${audience.audience_id}-profile-secret`
+        },
+        vault: {
+          image: options.vaultEngineImage ?? "ghcr.io/openclaw/vault-engine:latest",
+          command: options.vaultEngineCommand ?? "python -m user_profile_engine.main",
+          health_path: "/healthz",
+          storage_path: "/data/vault",
+          port: 4876 + index,
+          data_volume: `${audience.audience_id}-vault-data`
         }
       }
     };
@@ -70,6 +78,7 @@ export function renderDockerCompose(manifests) {
     .map((manifest) => {
       const openClawService = `${manifest.audience_id}-openclaw`;
       const profileService = `${manifest.audience_id}-profile`;
+      const vaultService = `${manifest.audience_id}-vault`;
       return `  ${openClawService}:
     image: ${manifest.runtime.openclaw.image}
     environment:
@@ -89,12 +98,33 @@ export function renderDockerCompose(manifests) {
     command: ["sh", "-lc", "${escapeComposeCommand(manifest.runtime.profile.command)}"]
     network_mode: "service:${openClawService}"
     volumes:
-      - ${manifest.runtime.profile.data_volume}:${manifest.runtime.profile.storage_path}`;
+      - ${manifest.runtime.profile.data_volume}:${manifest.runtime.profile.storage_path}
+  ${vaultService}:
+    image: ${manifest.runtime.vault.image}
+    command: ${manifest.runtime.vault.command}
+    environment:
+      OPENAI_API_KEY: \${OPENAI_API_KEY}
+      OPENAI_MODEL: \${OPENAI_MODEL:-gpt-4o-mini}
+      STORAGE_PATH: ${manifest.runtime.vault.storage_path}
+      PORT: "${manifest.runtime.vault.port}"
+    ports:
+      - "${manifest.runtime.vault.port}:${manifest.runtime.vault.port}"
+    volumes:
+      - "${manifest.audience_id}-vault-data:${manifest.runtime.vault.storage_path}"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:${manifest.runtime.vault.port}/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3`;
     })
     .join("\n");
 
   const volumes = manifests
-    .map((manifest) => `  ${manifest.runtime.profile.data_volume}:`)
+    .flatMap((manifest) => [
+      `  ${manifest.runtime.profile.data_volume}:`,
+      `  ${manifest.runtime.vault.data_volume}:`
+    ])
     .join("\n");
   const audienceServices = services ? `\n${services}` : "";
   const audienceVolumes = volumes ? `\nvolumes:\n${volumes}\n` : "\n";
