@@ -46,7 +46,9 @@
       "twitter_api_secret": "",
       "twitter_access_token": "",
       "twitter_access_token_secret": "",
-      "profile_public_url": "http://192.168.1.79:5402"
+      "profile_public_url": "http://192.168.1.79:5402",
+      "vault_base_url": "http://192.168.1.79:4876",
+      "vault_port": 4876
     },
     "aleks-barcelona-tech-ai-30s": {
       "telegram_bot_token": "",
@@ -61,7 +63,9 @@
       "twitter_api_secret": "",
       "twitter_access_token": "",
       "twitter_access_token_secret": "",
-      "profile_public_url": "http://192.168.1.79:5401"
+      "profile_public_url": "http://192.168.1.79:5401",
+      "vault_base_url": "http://192.168.1.79:4877",
+      "vault_port": 4877
     },
     "chontang": {
       "telegram_bot_token": "",
@@ -510,7 +514,9 @@
           "location": "global"
         }
       ],
-      "profile_public_url": "http://192.168.1.79:5403"
+      "profile_public_url": "http://192.168.1.79:5403",
+      "vault_base_url": "http://192.168.1.79:4878",
+      "vault_port": 4878
     },
     "andrew-chen-unknown": {
       "telegram_bot_token": "",
@@ -715,7 +721,9 @@
           "weight": 0.8,
           "location": "global"
         }
-      ]
+      ],
+      "vault_base_url": "http://192.168.1.79:4879",
+      "vault_port": 4879
     },
     "creative-freelancer-unknown": {
       "telegram_bot_token": "test-token",
