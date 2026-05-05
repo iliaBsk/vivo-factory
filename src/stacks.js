@@ -1,9 +1,14 @@
 export function generateStackManifests(audiences, options) {
-  const manifests = audiences.map((audience, index) => {
+  const fullyConfigured = audiences.filter((audience) => {
     const runtimeConfig = options.audienceRuntimeConfig?.[audience.audience_id];
-    if (!runtimeConfig?.telegram_bot_token || !runtimeConfig?.telegram_chat_id || !runtimeConfig?.openclaw_admin_url) {
-      throw new Error(`Missing runtime config for audience ${audience.audience_id}`);
+    const ready = !!(runtimeConfig?.telegram_bot_token && runtimeConfig?.telegram_chat_id && runtimeConfig?.openclaw_admin_url);
+    if (!ready) {
+      console.warn(`[stacks] Skipping ${audience.audience_id}: missing telegram_bot_token, telegram_chat_id, or openclaw_admin_url`);
     }
+    return ready;
+  });
+  const manifests = fullyConfigured.map((audience, index) => {
+    const runtimeConfig = options.audienceRuntimeConfig?.[audience.audience_id];
     return {
       audience_id: audience.audience_id,
       runtime: {

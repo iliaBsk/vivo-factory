@@ -173,16 +173,14 @@ test("renderDockerCompose emits only the dashboard when no audience manifests ex
   assert.doesNotMatch(compose, /^volumes:/m);
 });
 
-test("generateStackManifests rejects audiences missing telegram runtime config", async () => {
+test("generateStackManifests skips audiences missing telegram runtime config", async () => {
   const { generateStackManifests } = await loadStacksModule();
 
-  assert.throws(
-    () =>
-      generateStackManifests([{ audience_id: "aud-1" }], {
-        openClawImage: "ghcr.io/openclaw/openclaw:latest",
-        profilePluginPath: "/plugins/user-profile",
-        audienceRuntimeConfig: {}
-      }),
-    /Missing runtime config/
-  );
+  const manifests = generateStackManifests([{ audience_id: "aud-1" }], {
+    openClawImage: "ghcr.io/openclaw/openclaw:latest",
+    profilePluginPath: "/plugins/user-profile",
+    audienceRuntimeConfig: {}
+  });
+
+  assert.equal(manifests.length, 0, "incomplete audiences are skipped, not thrown");
 });
