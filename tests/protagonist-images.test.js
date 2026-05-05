@@ -187,3 +187,15 @@ test("renderAudienceDrawer Images tab shows category grid with 11 categories", a
     assert.ok(body.includes(`data-upload-category="${cat}"`), `missing upload target for ${cat}`);
   }
 });
+
+test("GET /api/audiences/:id/vault-status/:jobId — returns 404 when vault not configured", async () => {
+  const app = makeApp();
+  const res = await handle(app, "GET", "/api/audiences/aud-1/vault-status/job-123");
+  assert.equal(res.status, 404);
+});
+
+test("POST /api/audiences/:id/upload-mbox — returns 404 when vault not configured", async () => {
+  const app = makeApp();
+  const res = await handle(app, "POST", "/api/audiences/aud-1/upload-mbox", {});
+  assert.equal(res.status, 404);
+});

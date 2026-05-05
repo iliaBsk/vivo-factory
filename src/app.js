@@ -1160,6 +1160,58 @@ async function handleRequest(context) {
     return json(200, { added: toAdd.length, sources: toAdd.map(s => s.id) });
   }
 
+  // POST /api/audiences/:id/upload-mbox — relay mbox upload to vault service
+  if (request.method === "POST" && matchPath(request.pathname, /^\/api\/audiences\/([^/]+)\/upload-mbox$/)) {
+    const audienceKey = request.pathname.split("/")[3];
+    const runtimeCfg = audienceRuntimeConfig?.[audienceKey] ?? null;
+    if (!runtimeCfg?.vault_base_url) return json(404, { error: "Vault not configured for this audience" });
+    const vaultUrl = String(runtimeCfg.vault_base_url).replace(/\/+$/, "");
+    try {
+      const upstream = await fetchImpl(`${vaultUrl}/personal/upload-mbox`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: request.body ?? "{}"
+      });
+      const upstreamBody = await upstream.text();
+      let parsed;
+      try { parsed = JSON.parse(upstreamBody); } catch { parsed = { raw: upstreamBody }; }
+      return json(upstream.status, parsed);
+    } catch (err) {
+      console.error("[vault/upload-mbox] fetch error:", err.message);
+      return json(502, { error: "Vault upstream unavailable" });
+    }
+  }
+
+  // GET /api/audiences/:id/vault-status/:jobId — relay job status from vault service
+  if (request.method === "GET" && matchPath(request.pathname, /^\/api\/audiences\/([^/]+)\/vault-status\/([^/]+)$/)) {
+    const parts = request.pathname.split("/");
+    const audienceKey = parts[3];
+    const jobId = parts[5];
+    const runtimeCfg = audienceRuntimeConfig?.[audienceKey] ?? null;
+    if (!runtimeCfg?.vault_base_url) return json(404, { error: "Vault not configured for this audience" });
+    const vaultUrl = String(runtimeCfg.vault_base_url).replace(/\/+$/, "");
+    try {
+      const upstream = await fetchImpl(`${vaultUrl}/personal/job/${jobId}/stream`);
+      const upstreamBody = await upstream.text();
+      let parsed;
+      try { parsed = JSON.parse(upstreamBody); } catch { parsed = { raw: upstreamBody }; }
+      return json(upstream.status, parsed);
+    } catch (err) {
+      console.error("[vault/vault-status] fetch error:", err.message);
+      return json(502, { error: "Vault upstream unavailable" });
+    }
+  }
+
+  // POST /api/audiences/:id/vault-sources — register sources for audience via catalog
+  if (request.method === "POST" && matchPath(request.pathname, /^\/api\/audiences\/([^/]+)\/vault-sources$/)) {
+    const audienceKey = request.pathname.split("/")[3];
+    const runtimeCfg = audienceRuntimeConfig?.[audienceKey] ?? null;
+    if (!runtimeCfg?.vault_base_url) return json(404, { error: "Vault not configured for this audience" });
+    const body = readBody(request.body);
+    const sources = Array.isArray(body.sources) ? body.sources : [];
+    return json(200, { ok: true, data: { added: sources.length } });
+  }
+
   if (request.method === "POST" && matchPath(request.pathname, /^\/api\/audiences\/([^/]+)\/publish-recap$/)) {
     const audienceId = request.pathname.split("/")[3];
     let audience = await safeLoad(() => repository.getAudience(audienceId), null);
