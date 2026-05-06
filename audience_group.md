@@ -19,3 +19,7 @@ Luxury traveler couple in early 50s living in Marbella. Wants resort style inspi
 <audience>
 Young parents in Seville with two children. Price-sensitive, practical, interested in family fashion and seasonal local activities.
 </audience>
+
+<audience id="ilia-barcelona">
+Product owner in Barcelona, creator of vivo-factory. Interested in software, startups, gadgets, productivity tools, and Mediterranean lifestyle.
+</audience>

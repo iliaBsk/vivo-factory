@@ -738,6 +738,24 @@
       "telegram_bot_token": "test-token-123",
       "telegram_chat_id": "test-chat-123",
       "telegram_report_chat_id": "test-chat-123"
+    },
+    "ilia-barcelona": {
+      "telegram_bot_token": "",
+      "telegram_chat_id": "",
+      "telegram_report_chat_id": "",
+      "openclaw_admin_url": "http://192.168.1.79:18806",
+      "openclaw_health_path": "/healthz",
+      "openclaw_report_path": "/operator/report",
+      "openclaw_chat_path": "/operator/chat",
+      "plugin_base_url": "http://192.168.1.79:5406",
+      "twitter_api_key": "",
+      "twitter_api_secret": "",
+      "twitter_access_token": "",
+      "twitter_access_token_secret": "",
+      "profile_public_url": "http://192.168.1.79:5406",
+      "vault_base_url": "http://192.168.1.79:4880",
+      "vault_port": 4880,
+      "media_enrich_webhook_url": "http://192.168.1.79:5678/webhook/vivo-media-enrich"
     }
   },
   "n8n": {
